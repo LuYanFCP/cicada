@@ -77,9 +77,66 @@ struct AIProviderTests {
         #expect(!AIConfig(provider: .ling, base: c.base, textModel: "m", hearModel: "x", hearBase: c.base).transcribes)
     }
 
+    @Test func sentenceConfigurationUsesOpenAIParametersWithoutEnablingAudio() {
+        let c = AIConfig.sentence(base: "https://API.OPENAI.COM/v1", model: "  gpt-5.4-nano\n")
+        #expect(c.provider.id == .openai && c.textModel == "gpt-5.4-nano")
+        #expect(c.base?.absoluteString.lowercased() == "https://api.openai.com/v1/")
+        #expect(!c.hasVoices && !c.transcribes && !c.provider.clones && !c.provider.hearsAudio)
+        #expect(c.voiceBase == nil && c.hearBase == nil)
+        var body: [String: Any] = [:]
+        c.shape(&body, maxTokens: 400)
+        #expect(body["max_completion_tokens"] as? Int == 400)
+        #expect(body["reasoning_effort"] as? String == "none")
+        #expect(body["max_tokens"] == nil && body["temperature"] == nil && body["chat_template_kwargs"] == nil)
+    }
+
+    @Test func sentenceConfigurationNormalizesCompatibleAddressesAndModelNames() {
+        let c = AIConfig.sentence(base: "  127.0.0.1:11434/v1\n", model: "  org/my-model \n")
+        #expect(c.provider.id == .custom && c.textModel == "org/my-model")
+        #expect(c.base?.absoluteString == "http://127.0.0.1:11434/v1/")
+        #expect(!c.hasVoices && !c.transcribes)
+        var body: [String: Any] = [:]
+        c.shape(&body, maxTokens: 400)
+        #expect(body["max_tokens"] as? Int == 400)
+        #expect((body["chat_template_kwargs"] as? [String: Bool])?["enable_thinking"] == false)
+        #expect(AIConfig.sentence(base: "http://remote.example.com/v1", model: "m").base == nil)
+        #expect(AIConfig.sentence(base: "  ", model: "m").base == nil)
+        #expect(AIConfig.sentence(base: "https://api.openai.com.example.com/v1", model: "m").provider.id == .custom)
+    }
+
     @Test func onlyLingClonesAndHearsAudio() {
         for p in AIProvider.all { #expect(p.clones == (p.id == .ling) && p.hearsAudio == (p.id == .ling)) }
         #expect(!AIProvider.openai.hasVoices && AIProvider.zenmux.hasVoices && AIProvider.openrouter.hasVoices)
+    }
+
+    @Test func audioUnderstandingHasItsOwnModelAndFormatWithoutEnablingTTS() {
+        let official = AIConfig.audio(base: "https://API.OPENAI.COM/v1", model: "  gpt-audio\n", format: .openai)
+        #expect(official.provider.id == .openai && official.textModel == "gpt-audio")
+        #expect(official.audioInputFormat == .openai && official.acceptsAudio)
+        #expect(!official.hasVoices && !official.transcribes && official.voiceModel == nil && official.hearModel == nil)
+        let ming = AIConfig.audio(base: "https://api.ant-ling.com/v1", model: "Ming-3.0-audio-flash", format: .ming)
+        #expect(ming.provider.id == .ling && ming.audioInputFormat == .ming && ming.acceptsAudio)
+        let own = AIConfig.audio(base: "  localhost:8000/v1\n", model: "  qwen-omni  ", format: .openai)
+        #expect(own.provider.id == .custom && own.base?.absoluteString == "http://localhost:8000/v1/")
+        #expect(own.textModel == "qwen-omni" && own.acceptsAudio && !own.hasVoices && !own.transcribes)
+        #expect(!AIConfig.sentence(base: "https://api.openai.com/v1", model: "m").acceptsAudio)
+        #expect(AIConfig(provider: .ling, base: AIProvider.ling.base, textModel: "m").acceptsAudio)
+        #expect(!AIConfig(provider: .custom, base: own.base, textModel: "m").acceptsAudio)
+        #expect(AIConfig.audio(base: "http://remote.example.com/v1", model: "m", format: .openai).base == nil)
+        #expect(AIConfig.audio(base: "https://api.ant-ling.com.example.com/v1", model: "m", format: .ming).provider.id == .custom)
+    }
+
+    @Test func audioCatalogIncludesUnknownModelsButRejectsKnownIncompatibleOnes() {
+        let json = """
+        {"data":[{"id":"gpt-audio","input_modalities":["text","audio"],"output_modalities":["text","audio"]},
+        {"id":"a-audio","architecture":{"input_modalities":["audio"],"output_modalities":["text"]}},
+        {"id":"custom-unknown"},{"id":"a-audio"},{"id":"text-chat","input_modalities":["text"]},
+        {"id":"audio-out","input_modalities":["audio"],"output_modalities":["audio"]},
+        {"id":"Ming-3.0-tts-0.5B"},{"id":"qwen3-asr"},{"id":"text-embedding-3-small"},
+        {"id":"whisper-1"},{"id":"gpt-transcribe"},{"id":"audio:batch"}]}
+        """
+        #expect(AIConfig.audioModels(fromCatalog: Data(json.utf8)) == ["a-audio", "custom-unknown", "gpt-audio"])
+        #expect(AIConfig.audioModels(fromCatalog: Data("{}".utf8)).isEmpty)
     }
 
     @Test func wavHeaderIsStripped() {

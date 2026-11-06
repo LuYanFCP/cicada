@@ -84,20 +84,20 @@ final class ListenEngine {
     private var cloudFailures = 0
     /// Who was hearing the meeting when it went to a service, and whether it was the user's own
     /// recognition server (rather than 先用○○听): a change in settings must not move the audio elsewhere.
-    private var cloudVia: (provider: AIProvider.Kind?, server: Bool)?
+    private var cloudVia: (config: AIConfig, server: Bool)?
     /// The user's own service stopped answering in this meeting: listening went back to this Mac.
     private var serverFellBack = false
     /// The meeting is recognized by the user's own service (`Recognition.serverPreferred`).
     var serverHears: Bool {
-        Recognition.serverPreferred && !serverFellBack && translator?.ling.transcribes == true
+        Recognition.serverPreferred && !serverFellBack && translator?.audio.transcribes == true
     }
     /// Back on this Mac after the service listened (its name), shown for a few seconds.
     private(set) var cloudBack: (name: String, at: Date)?
     /// The service that can hear audio (Ling's Ming, or a custom service's speech model); nil when
     /// there is none.
     var cloudService: String? {
-        guard let ling = translator?.ling, ling.hearsAudio || ling.transcribes else { return nil }
-        return ling.config().provider.name
+        guard let ling = translator?.audio, ling.hearsAudio || ling.transcribes else { return nil }
+        return ling.provider.id == .custom ? (ling.config().base?.host ?? ling.serviceName) : ling.provider.name
     }
     /// 先用○○听 is offered: a model listening needs has been downloading a while, or couldn't be had.
     var offersCloud: Bool {
@@ -325,7 +325,7 @@ final class ListenEngine {
         }
         // An Intel Mac hears only through the service: without its key there is nothing to listen with.
         guard !Recognition.cloudOnly || cloudService != nil else {
-            setStatus(L("请先在设置 › AI 服务里填入 Ling key"))
+            setStatus(L("请先在设置 › AI 服务里配置语音理解"))
             return
         }
         languageConfirmed = false
@@ -749,7 +749,7 @@ final class ListenEngine {
             let conf = result.confidence ?? 1
             // Heard by the service: its translation came with the line. Not when it was asked for the
             // language the line turned out to be in (the target follows it): that one is translated again.
-            let given = translationOff() || result.translation == text && result.language != resolvedTarget ? nil : result.translation
+            let given = settings.sentenceTranslation || translationOff() || result.translation == text && result.language != resolvedTarget ? nil : result.translation
             let provisional = given ?? (volatileTranslation.isEmpty ? nil : volatileTranslation)
             var seg = Segment(id: nextSegmentID, text: text, sourceCode: result.language ?? activeLang?.code ?? "auto",
                               translation: provisional)
@@ -1090,12 +1090,12 @@ final class ListenEngine {
     // MARK: Listening through the service
 
     /// 先用○○听: the service hears the meeting until the model being downloaded is on the Mac.
-    func startCloud() {
+    func startCloud(replayHeldAudio: Bool = true) {
         guard isRunning, !cloudListening, cloudService != nil, let translator else { return }
         let awaiting = downloading?.lang ?? modelProblem?.lang
         debugLog("cloud: on (\(cloudService ?? "?")), replacing \(recognizer == nil ? "nothing" : activeLang?.locale ?? "?"), awaiting \(awaiting?.locale ?? "none")")
         // Held lines were a model's guesses at a language it may not know: the held audio goes to the service instead.
-        let replay = languageConfirmed && recognizer != nil ? 0 : 30.0
+        let replay = !replayHeldAudio || languageConfirmed && recognizer != nil ? 0 : 30.0
         let replaced = (lang: activeLang, confirmed: languageConfirmed)
         // The analyzer's format keeps the audio held for it replayable.
         let format = recognizer?.format
@@ -1109,7 +1109,7 @@ final class ListenEngine {
             Task { await old.cancel() }
         }
         cloudListening = true
-        cloudVia = (translator.ling.provider.id, serverHears)
+        cloudVia = (translator.audio.config(), serverHears)
         cloudReplaced = replaced
         cloudAwaiting = awaiting
         cloudLang = nil
@@ -1130,8 +1130,10 @@ final class ListenEngine {
                 } catch LingClient.Failure.rateLimited {
                     // Ling's ~2 requests a second are shared with notes and translation: one more try.
                     try await Task.sleep(for: .seconds(1))
+                    guard gen == self.generation, self.cloudListening else { return nil }
                     heard = try await translator.hear(wav: wav, seconds: seconds, target: self.resolvedTarget, hint: self.cloudHint)
                 }
+                guard gen == self.generation, self.cloudListening else { return nil }
                 if self.cloudFailures >= 3 { self.setStatus(L("\(self.cloudService ?? "AI") 在听")) }
                 self.cloudFailures = 0
                 return heard
@@ -1187,10 +1189,20 @@ final class ListenEngine {
     /// 本机, takes the meeting back to this Mac rather than sending its audio to a service nobody chose.
     func aiServiceChanged() {
         guard cloudListening, let via = cloudVia else { return }
-        let provider = translator?.ling.provider.id
-        guard provider != via.provider || (via.server && !Recognition.serverPreferred) else { return }
-        debugLog("cloud: the AI service changed (\(via.provider?.rawValue ?? "?") → \(provider?.rawValue ?? "?")), back to this Mac")
-        stopCloud()
+        guard translator?.audio.config() != via.config || (via.server && !Recognition.serverPreferred) else { return }
+        debugLog("cloud: the audio service changed")
+        if !Recognition.cloudOnly { stopCloud(); return }
+        // Intel has no local recognizer. Start a fresh stream without replaying audio captured
+        // for the previous endpoint into the newly selected service.
+        generation += 1
+        router.detach()
+        resultsTask?.cancel()
+        resultsTask = nil
+        if let old = recognizer { Task { await old.cancel() } }
+        recognizer = nil
+        resetCloud()
+        if cloudService != nil { startCloud(replayHeldAudio: false) }
+        else { setStatus(L("请先在设置 › AI 服务里配置语音理解")) }
     }
 
     private func resetCloud() {

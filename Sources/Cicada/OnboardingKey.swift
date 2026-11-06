@@ -1,10 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Onboarding step 3: connect a Ling key. Notes, Ling translation and Ming voices all need it, but it
-/// comes after the sample video, once people have seen what the app does. Skipping is allowed: "先不接"
-/// first shows what still works and what waits for a key (the notes window asks again later).
-/// Ling is the whole path; "用不了 Ling？" opens another service as a way out, saying what it lacks.
+/// Choose the text service before connecting it. Translation and notes share a service,
+/// while the audio service's key entry stays available alongside it.
 struct OnboardingKeyStep: View {
     @ObservedObject var model: AppModel
     @ObservedObject var ling: LingClient
@@ -25,14 +23,20 @@ struct OnboardingKeyStep: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            if other && !skipping {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("用其他服务").font(.system(size: 26, weight: .bold)).foregroundStyle(Palette.ink)
-                    Text("纪要和翻译都能用，模型已经选好。").font(.system(size: 14)).foregroundStyle(Palette.secondary)
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("接上 Ling，一个 key 用上全部功能").font(.system(size: 26, weight: .bold)).foregroundStyle(Palette.ink)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("选择 AI 服务").font(.system(size: 26, weight: .bold)).foregroundStyle(Palette.ink)
+                Text(L("翻译和纪要可用 \(settings.provider.name) 或 OpenAI 兼容接口"))
+                    .font(.system(size: 14)).foregroundStyle(Palette.secondary).lineLimit(1)
+            }
+            SentenceTranslationSettings(model: model, settings: settings, client: model.sentenceAI,
+                                        serviceTitle: settings.provider.name,
+                                        onEditingChanged: { model.onboardingTranslationEdits = $0 })
+            if settings.sentenceTranslation {
+                Button("配置语音理解") { model.openSettings(.ai) }
+                    .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Palette.secondary).underline()
+            }
+            if !settings.sentenceTranslation {
+                if !other || skipping {
                     HStack(spacing: 6) {
                         let items = Recognition.cloudOnly
                             ? [L("实时翻译字幕"), L("实时纪要"), L("自然的同传声音"), L("用你自己的声音")]
@@ -44,23 +48,23 @@ struct OnboardingKeyStep: View {
                         }
                     }
                 }
-            }
-            if case .ok = ling.keyState { connected } else if skipping { withoutKey } else if other { otherEntry } else { entry }
-            if !skipping, !isConnected {
-                HStack(spacing: 10) {
-                    if other {
-                        Button(L("‹ 还是用 Ling")) { switchTo(.ling) }.buttonStyle(.plain)
-                            .font(.system(size: 12)).foregroundStyle(Palette.secondary)
-                    } else {
-                        Text("Ling 每月赠送 ¥10 额度").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.accentInk)
-                            .padding(.horizontal, 9).padding(.vertical, 3)
-                            .background(Capsule().fill(Palette.accentPale))
-                        Text("约够 10–50 小时会议")
-                            .font(.system(size: 12)).foregroundStyle(Palette.secondary)
-                        Spacer()
-                        if !Recognition.cloudOnly {
-                            Button(L("用不了 Ling？")) { switchTo(.openrouter) }.buttonStyle(.plain)
-                                .font(.system(size: 12)).foregroundStyle(Palette.secondary).underline()
+                if case .ok = ling.keyState { connected } else if skipping { withoutKey } else if other { otherEntry } else { entry }
+                if !skipping, !isConnected {
+                    HStack(spacing: 10) {
+                        if other {
+                            Button(L("‹ 还是用 Ling")) { switchTo(.ling) }.buttonStyle(.plain)
+                                .font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                        } else {
+                            Text("Ling 每月赠送 ¥10 额度").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.accentInk)
+                                .padding(.horizontal, 9).padding(.vertical, 3)
+                                .background(Capsule().fill(Palette.accentPale))
+                            Text("约够 10–50 小时会议")
+                                .font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                            Spacer()
+                            if !Recognition.cloudOnly {
+                                Button(L("用不了 Ling？")) { switchTo(.openrouter) }.buttonStyle(.plain)
+                                    .font(.system(size: 12)).foregroundStyle(Palette.secondary).underline()
+                            }
                         }
                     }
                 }
@@ -241,15 +245,16 @@ struct OnboardingKeyStep: View {
     /// Honest about both sides, so skipping is a choice rather than a dead end.
     private var withoutKey: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if Recognition.cloudOnly {
-                Text("Intel 版 Mac 需要接上 Ling 才能识别语音").font(.system(size: 16, weight: .semibold)).foregroundStyle(Palette.ink)
+            if Recognition.cloudOnly && (!model.audioAI.hearsAudio || model.audioAI.aiCheck.failure != nil
+                                        || (settings.audioUnderstanding && !model.audioAI.aiCheck.passed)) {
+                Text("Intel 版 Mac 需要先配置语音理解").font(.system(size: 16, weight: .semibold)).foregroundStyle(Palette.ink)
                 HStack(alignment: .top, spacing: 10) {
                     column(L("现在可用"), [L("查看以往的会议记录")],
                            head: Palette.secondary, fill: Palette.ground, check: true)
-                    column(L("接上 Ling 才有"), [L("实时翻译字幕和双语记录"), L("实时纪要和会后总结"), L("同声传译")],
+                    column(L("连接后可用"), [L("实时翻译字幕和双语记录"), L("实时纪要和会后总结"), L("同声传译")],
                            head: Palette.accentInk, fill: Palette.accentPale, check: false)
                 }
-                Text("可以先进入应用，开会前在设置 › AI 服务里填上 Ling key 即可。")
+                Text("可以先进入应用，开会前在设置 › AI 服务中配置语音理解。")
                     .font(.system(size: 12)).foregroundStyle(Palette.secondary)
             } else {
                 Text("先不接也行，基础功能照常能用").font(.system(size: 16, weight: .semibold)).foregroundStyle(Palette.ink)
@@ -364,11 +369,12 @@ struct OnboardingKeyStep: View {
 struct OnboardingKeyFooter: View {
     @ObservedObject var ling: LingClient
     @Binding var skipping: Bool
+    var pendingChanges = false
     var next: () -> Void
 
     var body: some View {
         HStack(spacing: 16) {
-            if case .ok = ling.keyState {
+            if case .ok = ling.keyState, !pendingChanges {
                 primary(L("继续"), arrow: true, action: next)
             } else if skipping {
                 Button { skipping = false } label: {
@@ -383,7 +389,7 @@ struct OnboardingKeyFooter: View {
                 primary(L("好，先这样"), arrow: false) { skipping = false; next() }
             } else {
                 Button("先不接") { skipping = true }.buttonStyle(.plain).foregroundStyle(Palette.secondary)
-                Text("接上后继续")
+                Text(pendingChanges ? L("保存并检查后继续") : L("接上后继续"))
                     .font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.secondary)
                     .padding(.horizontal, 24).frame(height: 44)
                     .background(RoundedRectangle(cornerRadius: 12).fill(Color(white: 0.87)))

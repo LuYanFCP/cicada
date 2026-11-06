@@ -230,6 +230,7 @@ final class SpeakTester: ObservableObject {
 
     let speak: SpeakEngine
     let ling: LingClient
+    var audioClient: (() -> LingClient)?
     let settings: AppSettings
     /// The app's translation chain (for the back-translation without a Ling key).
     var translate: ((_ text: String, _ from: String, _ to: String) async -> String?)?
@@ -420,8 +421,8 @@ final class SpeakTester: ObservableObject {
             r.problem = L("麦克风几乎没收到声音：检查系统设置里的输入设备")
         } else if p.text.isEmpty {
             r.broken = .recognize
-            // An Intel Mac hears only through Ming: without a Ling key nothing could have been heard.
-            r.problem = Recognition.cloudOnly && !ling.hearsAudio ? L("请先在设置 › AI 服务里填入 Ling key")
+            r.problem = Recognition.cloudOnly && !(audioClient?() ?? ling).hearsAudio
+                ? L("请先在设置 › AI 服务里配置语音理解")
                 : L("没听出说了什么：靠近麦克风再说一次")
         } else if p.translation == nil {
             r.broken = .translate

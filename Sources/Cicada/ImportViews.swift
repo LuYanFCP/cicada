@@ -133,7 +133,7 @@ struct ImportStatusStrip: View {
 
     private func helper(_ status: FileImporter.Status) -> String? {
         guard status == .running else { return nil }
-        guard model.settings.importNotes, model.ling.hasKey else { return nil }
+        guard model.settings.importNotes, model.textAI.hasKey else { return nil }
         return L("纪要等文字记录转完再整理；正在听的会议优先")
     }
 }

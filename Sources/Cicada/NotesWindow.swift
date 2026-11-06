@@ -71,6 +71,7 @@ final class NotesWindowController: NSObject, NSWindowDelegate {
             p.backgroundColor = .white
             p.contentView = FirstClickHostingView(rootView: NotesWindowView(
                 model: model, engine: model.notes, store: model.store, settings: model.settings,
+                mainAI: model.ling, sentenceAI: model.sentenceAI,
                 commands: commands.eraseToAnyPublisher(),
                 setWidth: { [weak self] w, h in self?.resize(width: w, height: h) }))
             p.setFrameAutosaveName(Self.autosave)
@@ -224,6 +225,8 @@ struct NotesWindowView: View {
     @ObservedObject var engine: NotesEngine
     @ObservedObject var store: SessionStore
     @ObservedObject var settings: AppSettings
+    @ObservedObject var mainAI: LingClient
+    @ObservedObject var sentenceAI: LingClient
     let commands: AnyPublisher<NotesWindowController.Command, Never>
     let setWidth: (CGFloat, CGFloat?) -> Void
 
@@ -231,6 +234,7 @@ struct NotesWindowView: View {
     @State private var query = ""
     @State private var jumpTo: Double?
     @State private var keyDraft = ""
+    @State private var keyError: String?
     /// Session time when the window was collapsed to the card, and the topics and points the
     /// notes had then: the card offers what was added since.
     @State private var collapsedAt: Double = 0
@@ -243,6 +247,7 @@ struct NotesWindowView: View {
     @State private var width: CGFloat = 460
     /// "结束" was clicked during a meeting with lines: the confirmation strip is showing.
     @State private var confirmEnd = false
+
     @State private var languageOpen = false
     /// The voice whose editor is open under the people row.
     @State private var editingVoice: Int?
@@ -251,6 +256,7 @@ struct NotesWindowView: View {
     @State private var notesScrolledAt = Date.distantPast
     @FocusState private var searchFocused: Bool
 
+    private var textAI: LingClient { settings.sentenceTranslation ? sentenceAI : mainAI }
     private var session: Session? { store.session(store.liveID ?? engine.shownID) }
     private var live: Bool { store.liveID != nil }
     private var heard: Int { session?.lines.count ?? 0 }
@@ -665,29 +671,35 @@ struct NotesWindowView: View {
 
     @ViewBuilder
     private var banner: some View {
-        switch engine.state {
-        case .noKey where session?.lines.isEmpty == false || live:
-            keyEntry
-        case .invalidKey:
-            notice(lastCovered > 0 ? L("key 已失效（被删或额度用完），纪要暂停在 \(NotesEngine.clock(lastCovered))。")
-                                   : L("key 已失效（被删或额度用完），换个 key 就能开始写纪要。"), tint: Palette.errorPale) {
-                SoftButton(L("更换 key"), dark: true) { model.openSettings(.ai) }
+        if textAI.aiCheck.failure?.reason == .noJSON {
+            notice(L("这个服务不支持 JSON，纪要写不了；翻译照常。"), tint: Palette.errorPale) {
+                SoftButton(L("配置 AI 服务")) { model.openSettings(.ai) }
             }
-        // The rest is about a round of the meeting going on now: a record opened later has none.
-        case .rateLimited where live:
-            notice(L("\(serviceLabel) 很忙，纪要稍后补上。字幕照常。"), tint: Palette.warnPale) { EmptyView() }
-        // Both: the notes' own request failed, and the service doesn't answer anything. Notes that
-        // only timed out while translations still came back aren't "can't reach"; the next round retries.
-        case .unreachable where live && model.ling.aiCheck.failure?.reason == .unreachable:
-            // The network or the proxy, not the notes: say which, and that it picks up by itself.
-            notice(lastCovered > 0 ? L("连不上 \(serviceLabel)，纪要暂停在 \(NotesEngine.clock(lastCovered))，连上后自动继续。")
-                                   : L("连不上 \(serviceLabel)，连上后开始写纪要。"), tint: Palette.errorPale) {
-                SoftButton(L("设置")) { model.openSettings(.ai) }
+        } else {
+            switch engine.state {
+            case .noKey where session?.lines.isEmpty == false || live:
+                keyEntry
+            case .invalidKey:
+                notice(lastCovered > 0 ? L("key 已失效（被删或额度用完），纪要暂停在 \(NotesEngine.clock(lastCovered))。")
+                                       : L("key 已失效（被删或额度用完），换个 key 就能开始写纪要。"), tint: Palette.errorPale) {
+                    SoftButton(L("更换 key"), dark: true) { model.openSettings(.ai) }
+                }
+            // The rest is about a round of the meeting going on now: a record opened later has none.
+            case .rateLimited where live:
+                notice(L("\(serviceLabel) 很忙，纪要稍后补上。字幕照常。"), tint: Palette.warnPale) { EmptyView() }
+            // Both: the notes' own request failed, and the service doesn't answer anything. Notes that
+            // only timed out while translations still came back aren't "can't reach"; the next round retries.
+            case .unreachable where live && textAI.aiCheck.failure?.reason == .unreachable:
+                // The network or the proxy, not the notes: say which, and that it picks up by itself.
+                notice(lastCovered > 0 ? L("连不上 \(serviceLabel)，纪要暂停在 \(NotesEngine.clock(lastCovered))，连上后自动继续。")
+                                       : L("连不上 \(serviceLabel)，连上后开始写纪要。"), tint: Palette.errorPale) {
+                    SoftButton(L("设置")) { model.openSettings(.ai) }
+                }
+            case .failed where live:
+                notice(L("这轮没整理好，下一轮会自动重试。"), tint: Palette.fill) { EmptyView() }
+            default:
+                EmptyView()
             }
-        case .failed where live:
-            notice(L("这轮没整理好，下一轮会自动重试。"), tint: Palette.fill) { EmptyView() }
-        default:
-            EmptyView()
         }
     }
 
@@ -729,7 +741,7 @@ struct NotesWindowView: View {
 
     /// Who the banners name: a custom service by its address, which says more than 这个服务.
     private var serviceLabel: String {
-        let ling = model.ling
+        let ling = textAI
         return ling.provider.id == .custom && !ling.serviceHost.isEmpty ? ling.serviceHost : ling.serviceName
     }
 
@@ -756,35 +768,56 @@ struct NotesWindowView: View {
 
     private var keyEntry: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(Recognition.cloudOnly ? L("识别语音和生成纪要需要 Ling key") : L("生成纪要需要 API key")).font(.system(size: 15, weight: .bold))
-            Text(Recognition.cloudOnly
-                 ? L("填好 \(model.ling.provider.name) 的 key 后，立即开始识别语音、出双语字幕和实时纪要。")
-                 : L("文字记录仍在保存。填好 \(model.ling.provider.name) 的 key 后，会从头整理出整场纪要。"))
-                .font(.system(size: 12)).foregroundStyle(Palette.secondary).lineSpacing(2)
-            HStack(spacing: 8) {
-                SecureField("sk-…", text: $keyDraft)
-                    .textFieldStyle(.plain).font(.system(size: 13, design: .monospaced))
-                    .padding(.horizontal, 10).frame(height: 34)
-                    .background(RoundedRectangle(cornerRadius: 9).fill(Color.white))
-                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(Palette.line, lineWidth: 1))
-                    .onSubmit(saveKey)
-                SoftButton(L("保存并开始"), dark: true, action: saveKey)
-            }
-            if let site = model.ling.provider.site {
-                Button(L("获取 \(model.ling.provider.name) key ↗")) { NSWorkspace.shared.open(site) }
-                    .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Palette.secondary)
+            if textNeedsSetup {
+                Text("先配置翻译和纪要").font(.system(size: 15, weight: .bold))
+                Text("文字记录仍在保存。前往设置填好接口地址、模型和 key 后，会从头整理纪要。")
+                    .font(.system(size: 12)).foregroundStyle(Palette.secondary).lineSpacing(2)
+                SoftButton(L("配置 AI 服务"), dark: true) { model.openSettings(.ai) }
+            } else {
+                let audioKey = Recognition.cloudOnly && !settings.sentenceTranslation && !settings.audioUnderstanding
+                Text(audioKey ? L("识别语音和生成纪要需要 Ling key") : L("生成纪要需要 API key")).font(.system(size: 15, weight: .bold))
+                Text(audioKey
+                     ? L("填好 \(model.ling.provider.name) 的 key 后，立即开始识别语音、出双语字幕和实时纪要。")
+                     : L("文字记录仍在保存。填好 \(serviceLabel) 的 key 后，会从头整理出整场纪要。"))
+                    .font(.system(size: 12)).foregroundStyle(Palette.secondary).lineSpacing(2)
+                HStack(spacing: 8) {
+                    SecureField("sk-…", text: $keyDraft)
+                        .textFieldStyle(.plain).font(.system(size: 13, design: .monospaced))
+                        .padding(.horizontal, 10).frame(height: 34)
+                        .background(RoundedRectangle(cornerRadius: 9).fill(Color.white))
+                        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Palette.line, lineWidth: 1))
+                        .onSubmit(saveKey)
+                    SoftButton(L("保存并开始"), dark: true, action: saveKey)
+                }
+                if let keyError {
+                    Text(keyError).font(.system(size: 12)).foregroundStyle(Palette.error)
+                }
+                if let site = textAI.provider.site {
+                    Button(L("获取 \(textAI.provider.name) key ↗")) { NSWorkspace.shared.open(site) }
+                        .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                }
             }
         }
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 16).fill(Palette.raised))
     }
 
+    private var textNeedsSetup: Bool {
+        let config = textAI.config()
+        return config.base == nil || config.textModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private func saveKey() {
-        let k = keyDraft
+        let client = textAI
+        guard client.saveKey(keyDraft, for: client.config()) else {
+            keyError = L("key 没有保存，请重试")
+            return
+        }
         keyDraft = ""
+        keyError = nil
         Task {
-            await model.ling.setKey(k)
-            if model.ling.usable { model.notes.updateNow() }
+            await client.check()
+            if client === textAI, client.usable { model.notes.updateNow() }
         }
     }
 

@@ -38,7 +38,7 @@ struct AICheckSteps: View {
                 Text(AICheck.title(step.id, host: host)).font(.system(size: 13, weight: .medium))
                     .foregroundStyle(step.state == .skipped || step.state == .untested ? Palette.tertiary : Palette.ink)
                 if case .ok = step.state, step.id == .text {
-                    Text(model.settings.textModel).font(.system(size: 11)).foregroundStyle(Palette.tertiary)
+                    Text(ling.config().textModel).font(.system(size: 11)).foregroundStyle(Palette.tertiary)
                 }
                 if step.state == .untested, step.id == .text, check.passed {
                     Text("开会用过一次后确认").font(.system(size: 11)).foregroundStyle(Palette.tertiary)
@@ -54,7 +54,7 @@ struct AICheckSteps: View {
     }
 
     @ViewBuilder private func problem(_ state: AICheck.State) -> some View {
-        let model = self.model.settings.textModel
+        let model = ling.config().textModel
         if let why = check.message(service: service, host: host, model: model) {
             Text(why).font(.system(size: 12)).foregroundStyle(state == .busy ? Palette.warn : Palette.error)
                 .fixedSize(horizontal: false, vertical: true)
@@ -98,8 +98,15 @@ struct AICheckSteps: View {
         case .noCredit:
             return [Action(title: L("去充值")) { NSWorkspace.shared.open(AICheckSteps.topUp(p)) }] + recheck
         case .noModel:
-            guard let rec = p.textModels.first?.id, rec != model.settings.textModel else { return recheck }
-            return [Action(title: L("换成推荐的 \(rec)")) { model.useRecommendedTextModel() }]
+            guard let rec = p.textModels.first?.id, rec != ling.config().textModel else { return recheck }
+            return [Action(title: L("换成推荐的 \(rec)")) {
+                if ling === model.sentenceAI {
+                    model.settings.sentenceModel = rec
+                    model.applySentenceTranslation()
+                } else {
+                    model.useRecommendedTextModel()
+                }
+            }]
         case .serverError:
             return recheck
         case .badAddress, .noJSON, .busy:
@@ -149,6 +156,11 @@ struct AIServiceStrip: View {
     }
 
     private var words: (String, String)? {
+        let configuration = ling.config()
+        if model.settings.sentenceTranslation,
+           configuration.base == nil || configuration.textModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return (L("先配置翻译和纪要"), L("填上地址和模型"))
+        }
         let c = ling.aiCheck
         guard ling.hasKey, c.needsUser else { return nil }
         let name = ling.serviceName
@@ -156,8 +168,9 @@ struct AIServiceStrip: View {
         guard let f = c.failure else {
             return c.balanceLine(service: name).map { ($0, L("用完后纪要会停下")) }
         }
+        if f.reason == .noJSON { return (L("这个服务不支持 JSON"), L("纪要暂不可用；逐句翻译照常")) }
         if f.reason == .unreachable { return (c.localNetworkDenied ? L("知了没有本地网络权限") : L("连不上 \(name)"), stopped) }
-        return Self.blocking(ling, textModel: model.settings.textModel).map { ($0, stopped) }
+        return Self.blocking(ling, textModel: ling.config().textModel).map { ($0, stopped) }
     }
 
     /// What stops the notes until you change something (not the network, not a busy service):
@@ -169,7 +182,9 @@ struct AIServiceStrip: View {
         case .invalidKey, .mgmtKey: return L("\(name) 的 key 用不了")
         case .noCredit: return L("\(name) 账户余额不足。")
         case .noModel: return L("\(name) 上找不到 \(textModel) 这个模型。")
-        case .badAddress, .noJSON: return L("AI 服务的设置要改一下")
+        case .badAddress: return L("AI 服务的设置要改一下")
+        case .noJSON:
+            return ling.config().audioInputFormat == nil ? L("这个服务不支持 JSON") : L("音频模型的返回格式不正确，请检查模型和接口格式")
         case .unreachable, .busy, .serverError: return nil
         }
     }

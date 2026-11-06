@@ -137,6 +137,42 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
+    /// An optional text service shared by notes and finished subtitles. The stored names also
+    /// retain existing translation configurations; Ming's audio routes keep their own service.
+    @Published var sentenceTranslation: Bool {
+        didSet { save() }
+    }
+    @Published var sentenceBase: String {
+        didSet { save() }
+    }
+    @Published var sentenceModel: String {
+        didSet { save() }
+    }
+
+    var sentenceConfig: AIConfig? {
+        guard sentenceTranslation else { return nil }
+        return AIConfig.sentence(base: sentenceBase, model: sentenceModel)
+    }
+
+    /// Optional audio understanding for cloud hearing and speak-back; TTS keeps its own route.
+    @Published var audioUnderstanding: Bool {
+        didSet { save() }
+    }
+    @Published var audioBase: String {
+        didSet { save() }
+    }
+    @Published var audioModel: String {
+        didSet { save() }
+    }
+    @Published var audioFormat: String {
+        didSet { save() }
+    }
+
+    var audioConfig: AIConfig? {
+        guard audioUnderstanding else { return nil }
+        return AIConfig.audio(base: audioBase, model: audioModel, format: AudioInputFormat(rawValue: audioFormat) ?? .openai)
+    }
+
     var provider: AIProvider { AIProvider.named(aiProvider) }
 
     /// What `LingClient` calls with: the service, its address and models.
@@ -244,6 +280,13 @@ final class AppSettings: ObservableObject {
         aiCustomHearModel = defaults.string(forKey: "aiCustomHearModel") ?? ""
         aiCustomHearBase = defaults.string(forKey: "aiCustomHearBase") ?? ""
         aiCustomRecognize = defaults.bool(forKey: "aiCustomRecognize")
+        sentenceTranslation = defaults.bool(forKey: "sentenceTranslation")
+        sentenceBase = defaults.string(forKey: "sentenceBase") ?? ""
+        sentenceModel = defaults.string(forKey: "sentenceModel") ?? ""
+        audioUnderstanding = defaults.bool(forKey: "audioUnderstanding")
+        audioBase = defaults.string(forKey: "audioBase") ?? ""
+        audioModel = defaults.string(forKey: "audioModel") ?? ""
+        audioFormat = defaults.string(forKey: "audioFormat") ?? "openai"
         displayMode = defaults.string(forKey: "displayMode") ?? "notes"
         speakVoices = defaults.dictionary(forKey: "speakVoices") as? [String: String] ?? [:]
         endWithApp = defaults.object(forKey: "endWithApp") as? Bool ?? true
@@ -296,6 +339,13 @@ final class AppSettings: ObservableObject {
         defaults.set(aiCustomHearModel, forKey: "aiCustomHearModel")
         defaults.set(aiCustomHearBase, forKey: "aiCustomHearBase")
         defaults.set(aiCustomRecognize, forKey: "aiCustomRecognize")
+        defaults.set(sentenceTranslation, forKey: "sentenceTranslation")
+        defaults.set(sentenceBase, forKey: "sentenceBase")
+        defaults.set(sentenceModel, forKey: "sentenceModel")
+        defaults.set(audioUnderstanding, forKey: "audioUnderstanding")
+        defaults.set(audioBase, forKey: "audioBase")
+        defaults.set(audioModel, forKey: "audioModel")
+        defaults.set(audioFormat, forKey: "audioFormat")
         defaults.set(displayMode, forKey: "displayMode")
         defaults.set(speakVoices, forKey: "speakVoices")
         defaults.set(endWithApp, forKey: "endWithApp")

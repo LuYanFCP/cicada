@@ -1224,3 +1224,75 @@
 "知了没有本地网络权限" = "Cicada isn't allowed on the local network";
 "没有本地网络权限" = "Local network not allowed";
 "局域网里的服务器：macOS 会问一次能否访问本地网络，点“允许”。" = "A server on your local network: macOS asks once whether Cicada may use the local network. Click Allow.";
+
+/* SentenceTranslationSettings */
+"OpenAI 兼容接口" = "OpenAI-compatible API";
+"跟随 AI 服务" = "Follow AI service";
+"已保存 key；留空保留" = "Key saved; leave blank to keep";
+"填写 API key" = "Enter API key";
+"仅用于会议字幕和导入录音的整句翻译" = "Full sentences in meeting subtitles and imported recordings only";
+"填写模型名称" = "Enter model name";
+"接口繁忙，请稍后再试" = "The API is busy. Try again shortly.";
+"检查通过，整句翻译将使用此接口" = "Check passed. Sentences will use this API.";
+"连不上翻译接口，请检查地址或网络" = "Cannot reach the translation API. Check its address or your network.";
+"翻译接口的 key 无效，请重新填写" = "The translation API key is invalid. Enter it again.";
+"这个 key 不能调用模型，请更换 API key" = "This key cannot call models. Use a different API key.";
+"翻译接口的账户余额不足" = "The translation API account has insufficient credit.";
+"找不到这个模型，请检查模型名称" = "Model not found. Check its name.";
+"翻译接口的返回格式不正确" = "The translation API returned an invalid response.";
+"接口暂时出错（HTTP %lld）" = "The API has a temporary error (HTTP %lld).";
+"翻译接口暂时出错，请稍后再试" = "The translation API has a temporary error. Try again shortly.";
+"请填写有效地址；公网用 https，本机或局域网可用 http" = "Enter a valid address: https for public servers; http is allowed locally.";
+"请填写模型名称" = "Enter a model name.";
+"模型名称不能含空格或换行" = "Model names cannot contain spaces or line breaks.";
+"key 不能含空格或换行" = "Keys cannot contain spaces or line breaks.";
+"请填写 API key" = "Enter an API key.";
+"配置翻译接口" = "Configure translation API";
+
+/* OnboardingKey */
+"选择 AI 服务" = "Choose AI service";
+"整句翻译可用 %@ 或 OpenAI 兼容接口" = "Use %@ or an OpenAI-compatible API for full sentences.";
+
+/* OnboardingKey */
+"保存并检查后继续" = "Save and check to continue";
+
+/* Text service */
+"纪要和文字记录的逐句翻译共用此接口" = "Notes and per-sentence Transcript translations use this API.";
+"检查通过，翻译和纪要将使用此接口" = "Check passed. Translation and notes use this API.";
+"翻译和纪要可用 %@ 或 OpenAI 兼容接口" = "Use %@ or an OpenAI-compatible API for translation and notes.";
+"下一步接上 AI 服务就有" = "Connect an AI service in the next step.";
+"前往 设置 › AI 服务 配置翻译和纪要后即可生成。" = "Configure translation and notes in Settings › AI Service to generate them.";
+"配置 AI 服务" = "Configure AI service";
+"key 没有保存，请重试" = "The key was not saved. Try again.";
+"填好地址、模型和 key 后可用" = "Available after adding the address, model and key.";
+"先配置翻译和纪要" = "Set up translation and notes";
+"文字记录仍在保存。前往设置填好接口地址、模型和 key 后，会从头整理纪要。" = "The transcript is still being saved. Add the API address, model and key in Settings to create notes from the beginning.";
+"纪要暂不可用；逐句翻译照常" = "Notes are unavailable; sentence translation continues.";
+
+"配置 AI 服务后可生成纪要；文字记录照常保存" = "Configure an AI service to create notes; transcripts are still saved.";
+
+/* AudioUnderstandingSettings */
+"语音理解" = "Audio understanding";
+"默认服务（Ming）" = "Default service (Ming)";
+"接收音频并返回原文和译文，发声仍用原来的声音" = "Audio in, original and translation out; your voice stays the same.";
+"填写音频模型名称" = "Enter audio model name";
+"接口格式" = "API format";
+"Ming 兼容" = "Ming-compatible";
+"音频模型的返回格式不正确，请检查模型和接口格式" = "Invalid audio response. Check the model and API format.";
+"检查通过，可接收音频并返回原文和译文" = "Check passed. Audio can return originals and translations.";
+"请填写音频模型名称" = "Enter an audio model name.";
+"未连接，发声可使用本机语音" = "Not connected; speech can use a Mac voice.";
+"填好语音理解接口后可用" = "Available after setting up audio understanding.";
+"语音理解使用独立配置的接口，费用以各服务为准。" = "Audio understanding uses its own API configuration. Each service sets its fees.";
+"配置语音理解" = "Configure audio understanding";
+"Intel 版 Mac 需要先配置语音理解" = "Intel Macs need audio understanding configured first.";
+"连接后可用" = "Available after connecting";
+"可以先进入应用，开会前在设置 › AI 服务中配置语音理解。" = "You can enter the app now. Configure audio understanding in Settings › AI Service before a meeting.";
+"先在设置 › AI 服务中配置语音理解，示例会议才能识别出实时字幕。" = "Configure audio understanding in Settings › AI Service to transcribe the sample meeting.";
+
+"请先在设置 › AI 服务里配置语音理解" = "Configure audio understanding in Settings › AI Service first.";
+
+/* AudioUnderstandingSettings */
+"读取模型" = "Read models";
+"正在读取…" = "Reading…";
+"读不到模型列表，请手动填写" = "Cannot read the model list. Enter a model name manually.";

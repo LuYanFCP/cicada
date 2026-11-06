@@ -8,6 +8,8 @@ struct AISettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var ling: LingClient
     @ObservedObject var settings: AppSettings
+    @ObservedObject private var sentence: LingClient
+    @ObservedObject private var audio: LingClient
     @State private var draft = ""
     @State private var editing = false
     @State private var baseDraft = ""
@@ -20,8 +22,20 @@ struct AISettingsView: View {
 
     @State private var open: Set<String> = []
 
+    init(model: AppModel, ling: LingClient, settings: AppSettings) {
+        self.model = model
+        self.ling = ling
+        self.settings = settings
+        self.sentence = model.sentenceAI
+        self.audio = model.audioUnderstandingAI
+    }
+
     var body: some View {
-        if provider.id == .custom { customPage } else { servicePage }
+        VStack(alignment: .leading, spacing: 14) {
+            SentenceTranslationSettings(model: model, settings: settings, client: model.sentenceAI)
+            AudioUnderstandingSettings(model: model, settings: settings, client: model.audioUnderstandingAI)
+            if provider.id == .custom { customPage } else { servicePage }
+        }
     }
 
     private var servicePage: some View {
@@ -482,7 +496,8 @@ struct AISettingsView: View {
         case .ok(let s): ling.aiCheck.busy ? L("\(name) 现在很忙") : AICheckSummary.text(ling.aiCheck).map { "\(settings.textModel) · \($0)" }
             ?? L("\(settings.textModel) · 响应约 \(String(format: "%.1f", s)) 秒")
         case .invalid, .unreachable: nil
-        case .none: Recognition.cloudOnly ? L("填入 Ling key 后才能识别语音、出字幕和纪要") : L("不填 key 时，字幕和翻译仍可正常使用")
+        case .none: Recognition.cloudOnly && !settings.audioUnderstanding ? L("填入 Ling key 后才能识别语音、出字幕和纪要")
+            : settings.audioUnderstanding ? L("未连接，发声可使用本机语音") : L("不填 key 时，字幕和翻译仍可正常使用")
         default: nil
         }
     }
@@ -495,17 +510,29 @@ struct AISettingsView: View {
         let reason = ling.aiCheck.failure?.reason
         let down = ling.hasKey && [.unreachable, .badAddress, .invalidKey, .mgmtKey, .noCredit].contains(reason)
         let on = ling.usable && !down
-        let textOn = on && reason != .noModel
-        let notesOn = textOn && reason != .noJSON
         let uses = L("用 \(name)")
         let later = down ? (reason == .unreachable ? L("连上 \(name) 后可用") : L("换好 key 后可用")) : L("填好 key 后可用")
-        if notesOn, ling.aiCheck.busy {
+        let textClient = settings.sentenceTranslation ? sentence : ling
+        let textReason = textClient.aiCheck.failure?.reason
+        let textConfig = textClient.config()
+        let textConfigured = textConfig.base != nil && !textConfig.textModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let textDown = [.unreachable, .badAddress, .invalidKey, .mgmtKey, .noCredit].contains(textReason)
+        let textOn = textConfigured && textClient.usable && !textDown && textReason != .noModel
+        let notesOn = textOn && textReason != .noJSON
+        let textUses = settings.sentenceTranslation ? L("OpenAI 兼容接口") : uses
+        let textLater = !textConfigured ? L("填好地址、模型和 key 后可用")
+            : textDown ? (textReason == .unreachable ? L("连上 \(textClient.serviceName) 后可用") : L("换好 key 后可用")) : L("填好 key 后可用")
+        if notesOn, textClient.aiCheck.busy {
             usageRow(L("实时纪要"), tag: L("很忙"), style: .warn, note: L("会自动重试，纪要可能晚一点"))
         } else {
-            usageRow(L("实时纪要"), tag: notesOn ? uses : ling.hasKey ? L("暂不可用") : L("需要 key"), style: notesOn ? .ok : .off,
-                     note: notesOn ? L("会中每 45 秒更新") : reason == .noJSON ? L("这个服务不支持 JSON") : reason == .noModel ? L("换一个模型后可用") : later)
+            usageRow(L("实时纪要"), tag: notesOn ? textUses : textClient.hasKey ? L("暂不可用") : L("需要 key"), style: notesOn ? .ok : .off,
+                     note: notesOn ? L("会中每 45 秒更新") : textReason == .noJSON ? L("这个服务不支持 JSON") : textReason == .noModel ? L("换一个模型后可用") : textLater)
         }
-        if Recognition.cloudOnly {
+        if settings.sentenceTranslation {
+            usageRow(L("翻译"), tag: textOn ? textUses : "Google", style: textOn ? .ok : .off,
+                     note: textOn ? (Recognition.hasOnDeviceTranslation ? L("整句用它；不行时换 Google、本机") : L("整句用它；不行时换 Google"))
+                                 : L("先用 Google 翻译"))
+        } else if Recognition.cloudOnly {
             usageRow(L("翻译"), tag: textOn ? uses : ling.hasKey ? L("暂不可用") : L("需要 key"), style: textOn ? .ok : .off,
                      note: textOn ? L("随语音识别一步翻出；不行时换 Google") : later)
         } else {
@@ -522,12 +549,13 @@ struct AISettingsView: View {
             usageRow(L("你自己的声音"), tag: L("只有 Ling"), style: .ling, note: L("换用 Ling 才有"))
         }
         if Recognition.cloudOnly {
-            if provider.hearsAudio {
-                usageRow(L("语音识别"), tag: on ? uses : ling.hasKey ? L("暂不可用") : L("需要 key"), style: on ? .ok : .off,
-                         note: on ? L("识别和翻译一步完成") : later, divider: false)
-            } else {
-                usageRow(L("语音识别"), tag: L("只有 Ling"), style: .ling, note: L("换用 Ling 才有"), divider: false)
-            }
+            let audioClient = settings.audioUnderstanding ? audio : ling
+            let audioOn = settings.audioUnderstanding
+                ? audioClient.usable && audioClient.aiCheck.passed && audioClient.aiCheck.hear?.ok == true
+                : audioClient.hearsAudio || audioClient.transcribes
+            let audioUses = settings.audioUnderstanding ? L("OpenAI 兼容接口") : uses
+            usageRow(L("语音识别"), tag: audioOn ? audioUses : audioClient.hasKey ? L("暂不可用") : L("需要 key"), style: audioOn ? .ok : .off,
+                     note: audioOn ? L("识别和翻译一步完成") : L("填好语音理解接口后可用"), divider: false)
         } else {
             usageRow(L("语音识别"), tag: L("本机"), style: .off, note: L("更快，不花钱"), divider: false)
         }
@@ -586,6 +614,7 @@ struct AISettingsView: View {
     }
 
     private var footnote: String {
+        if settings.audioUnderstanding { return L("语音理解使用独立配置的接口，费用以各服务为准。") }
         if Recognition.cloudOnly, provider.id != .custom {
             return L("一小时会议约 ¥0.15–1（目前优惠价）。说话的声音分段发给 Ling 识别和翻译；会议录音和文字记录只存在这台 Mac 上。")
         }

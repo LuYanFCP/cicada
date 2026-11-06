@@ -30,7 +30,7 @@ enum CloudHearing {
     static func trouble(_ error: Error, service: String) -> String {
         switch error as? LingClient.Failure {
         case .invalidKey?: L("key 已失效，到设置 › AI 服务里重填")
-        case .noKey?: L("请先在设置 › AI 服务里填入 Ling key")
+        case .noKey?: L("请先在设置 › AI 服务里配置语音理解")
         case .http(let code)? where code >= 500: L("\(service) 暂时出错（HTTP \(code)），稍后再试。")
         default: L("\(service) 暂时连不上，正在重试")
         }
