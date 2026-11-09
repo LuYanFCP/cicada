@@ -673,7 +673,7 @@ struct NotesWindowView: View {
     private var banner: some View {
         if textAI.aiCheck.failure?.reason == .noJSON {
             notice(L("这个服务不支持 JSON，纪要写不了；翻译照常。"), tint: Palette.errorPale) {
-                SoftButton(L("配置 AI 服务")) { model.openSettings(.ai) }
+                SoftButton(L("配置 AI 服务")) { model.openTextAISettings() }
             }
         } else {
             switch engine.state {
@@ -682,7 +682,7 @@ struct NotesWindowView: View {
             case .invalidKey:
                 notice(lastCovered > 0 ? L("key 已失效（被删或额度用完），纪要暂停在 \(NotesEngine.clock(lastCovered))。")
                                        : L("key 已失效（被删或额度用完），换个 key 就能开始写纪要。"), tint: Palette.errorPale) {
-                    SoftButton(L("更换 key"), dark: true) { model.openSettings(.ai) }
+                    SoftButton(L("更换 key"), dark: true) { model.openTextAISettings() }
                 }
             // The rest is about a round of the meeting going on now: a record opened later has none.
             case .rateLimited where live:
@@ -693,7 +693,7 @@ struct NotesWindowView: View {
                 // The network or the proxy, not the notes: say which, and that it picks up by itself.
                 notice(lastCovered > 0 ? L("连不上 \(serviceLabel)，纪要暂停在 \(NotesEngine.clock(lastCovered))，连上后自动继续。")
                                        : L("连不上 \(serviceLabel)，连上后开始写纪要。"), tint: Palette.errorPale) {
-                    SoftButton(L("设置")) { model.openSettings(.ai) }
+                    SoftButton(L("设置")) { model.openTextAISettings() }
                 }
             case .failed where live:
                 notice(L("这轮没整理好，下一轮会自动重试。"), tint: Palette.fill) { EmptyView() }
@@ -772,7 +772,7 @@ struct NotesWindowView: View {
                 Text("先配置翻译和纪要").font(.system(size: 15, weight: .bold))
                 Text("文字记录仍在保存。前往设置填好接口地址、模型和 key 后，会从头整理纪要。")
                     .font(.system(size: 12)).foregroundStyle(Palette.secondary).lineSpacing(2)
-                SoftButton(L("配置 AI 服务"), dark: true) { model.openSettings(.ai) }
+                SoftButton(L("配置 AI 服务"), dark: true) { model.openTextAISettings() }
             } else {
                 let audioKey = Recognition.cloudOnly && !settings.sentenceTranslation && !settings.audioUnderstanding
                 Text(audioKey ? L("识别语音和生成纪要需要 Ling key") : L("生成纪要需要 API key")).font(.system(size: 15, weight: .bold))

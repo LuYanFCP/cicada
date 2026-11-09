@@ -416,10 +416,27 @@ struct SettingsView: View {
     var body: some View {
         HStack(spacing: 0) {
             sidebar.frame(width: 190)
-            ScrollView { page }
+            ScrollViewReader { proxy in
+                ScrollView { page }
+                    .onAppear { scroll(proxy) }
+                    .onChange(of: model.settingsAnchor) { _, _ in scroll(proxy) }
+            }
         }
         .frame(width: 720, height: 600)
         .background(Color(red: 0.965, green: 0.969, blue: 0.976))
+    }
+
+    /// To the part of the page that was asked for, once it is laid out (a new section redraws it),
+    /// and again once rows that open by themselves have settled the page's height.
+    private func scroll(_ proxy: ScrollViewProxy) {
+        guard let anchor = model.settingsAnchor else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(anchor, anchor: .top) }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            proxy.scrollTo(anchor, anchor: .top)
+            model.settingsAnchor = nil
+        }
     }
 
     /// The current section without the scroll view (also drawn by the `settingsRender` debug command).

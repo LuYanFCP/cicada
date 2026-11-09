@@ -148,7 +148,9 @@ struct AIServiceStrip: View {
                     Text(detail).font(.system(size: 11)).foregroundStyle(Palette.secondary)
                 }
                 Spacer()
-                SoftButton(L("打开设置"), dark: true) { model.openSettings(.ai) }
+                SoftButton(L("打开设置"), dark: true) {
+                    if ling === model.sentenceAI { model.openTextAISettings() } else { model.openSettings(.ai) }
+                }
             }
             .padding(10).frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 9).fill(Palette.accentPale))

@@ -1387,7 +1387,7 @@ struct SessionNotesView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("这个服务不支持 JSON，纪要写不了；翻译照常。")
                             .font(.system(size: 13)).foregroundStyle(Palette.secondary)
-                        SoftButton(L("配置 AI 服务"), dark: true) { model.openSettings(.ai) }
+                        SoftButton(L("配置 AI 服务"), dark: true) { model.openTextAISettings() }
                     }
                     .padding(20).frame(maxWidth: .infinity, alignment: .leading)
                     .background(RoundedRectangle(cornerRadius: 18).fill(Palette.raised))
@@ -1410,7 +1410,7 @@ struct SessionNotesView: View {
                                     }
                                     .disabled(generating)
                                 } else {
-                                    SoftButton(L("配置 AI 服务"), dark: true) { model.openSettings(.ai) }
+                                    SoftButton(L("配置 AI 服务"), dark: true) { model.openTextAISettings() }
                                 }
                             }
                         }

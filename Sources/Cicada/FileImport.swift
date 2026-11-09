@@ -163,7 +163,7 @@ final class FileImporter: ObservableObject {
         let target = settings.resolvedTarget(source: lang.code)
         debugLog("import: \(job.id) \(lang.locale) → \(target)")
         // Intel needs a working audio service; an unfinished file offers 重新转写 once configured.
-        if Recognition.cloudOnly, !translator.audio.hearsAudio && !translator.audio.transcribes {
+        if Recognition.cloudOnly, !translator.hearing.hearsAudio && !translator.hearing.transcribes {
             debugLog("import: \(job.id) needs an audio service")
             return
         }

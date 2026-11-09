@@ -61,6 +61,11 @@ final class TranslationService {
     var sentenceClient: (() -> LingClient?)?
     var audioClient: (() -> LingClient?)?
     var audio: LingClient { audioClient?() ?? ling }
+    /// The meeting's own speech server (语音识别 › 自建服务), nil when it is not chosen.
+    var speechClient: (() -> LingClient?)?
+    /// Who hears the meeting when it isn't heard on this Mac: the speech server when chosen, else
+    /// the audio model (Ming, or 语音理解's own).
+    var hearing: LingClient { speechClient?() ?? audio }
     /// Names and terms the notes have settled on, e.g. "江充 (Jiang Chong)".
     var glossary: () -> [String] = { [] }
     private var googleBackoffUntil = Date.distantPast
@@ -203,8 +208,8 @@ final class TranslationService {
     /// call failed, so listening can tell a service that is down from a quiet meeting.
     func hear(wav: Data, seconds: Double, target: String, hint: String?,
               priority: LingClient.Priority = .translate) async throws -> CloudHeard? {
-        let ling = audio
-        // A custom service's speech model only transcribes: the text is translated as the Mac's own is.
+        let ling = hearing
+        // A speech server only transcribes: the text is translated as the Mac's own is.
         if ling.transcribes {
             // No language sent: a speech model takes it as an order, and an English line in a
             // Chinese meeting would come back as Chinese. The server tells the language itself.

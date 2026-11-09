@@ -139,6 +139,26 @@ struct AIProviderTests {
         #expect(AIConfig.audioModels(fromCatalog: Data("{}".utf8)).isEmpty)
     }
 
+    @Test func speechServerConfigIsItsOwnAndStartsFromQwen3ASROnThisMac() throws {
+        let rec = AIConfig.recommendedSpeech
+        let c = AIConfig.speech(base: rec.base, model: " \(rec.model) ")
+        #expect(c.provider.id == .custom && c.transcribes && c.hearModel == rec.model)
+        #expect(c.base == c.hearBase && c.base?.absoluteString == "http://localhost:8000/v1/")
+        #expect(!c.acceptsAudio && c.textModel.isEmpty && !c.hasVoices)
+        #expect(!AIConfig.speech(base: rec.base, model: "").transcribes)
+        // http only nearby: a public address must be https.
+        #expect(!AIConfig.speech(base: "http://asr.example.com/v1", model: "m").transcribes)
+        #expect(AIConfig.speech(base: "192.168.1.20:8000/v1", model: "m").transcribes)
+    }
+
+    @Test func speechCatalogPrefersRecognizersAndKeepsUnknownNamesOtherwise() {
+        let mixed = #"{"data":[{"id":"mlx-community/Kokoro-82M-bf16"},{"id":"mlx-community/Qwen3-ASR-1.7B-8bit"},{"id":"whisper-1"}]}"#
+        #expect(AIConfig.speechModels(fromCatalog: Data(mixed.utf8)) == ["mlx-community/Qwen3-ASR-1.7B-8bit", "whisper-1"])
+        let plain = #"{"data":[{"id":"b"},{"id":"a"}]}"#
+        #expect(AIConfig.speechModels(fromCatalog: Data(plain.utf8)) == ["a", "b"])
+        #expect(AIConfig.speechModels(fromCatalog: Data("{}".utf8)).isEmpty)
+    }
+
     @Test func wavHeaderIsStripped() {
         var wav = Data("RIFF".utf8) + Data([36, 0, 0, 0]) + Data("WAVE".utf8)
         wav += Data("fmt ".utf8) + Data([16, 0, 0, 0]) + Data(repeating: 0, count: 16)

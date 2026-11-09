@@ -161,6 +161,20 @@ struct AIConfig: Equatable {
                         audioInputFormat: format)
     }
 
+    /// The meeting's own speech recognition server (`/audio/transcriptions`, Settings › AI 服务 ›
+    /// 语音识别 › 自建服务), whatever the main service: nothing else is asked of it, and its key is
+    /// its own. Its address is `base` too, so a server on this Mac or the local network needs no key.
+    static func speech(base raw: String, model: String) -> AIConfig {
+        let base = AIProvider.customBase(raw)
+        let name = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return AIConfig(provider: .custom, base: base, textModel: "", hearModel: name.isEmpty ? nil : name, hearBase: base)
+    }
+
+    /// What 自建服务 starts with: Qwen3-ASR on this Mac through mlx-audio's server (`mlx_audio.server`,
+    /// port 8000), on Apple silicon. 1.7B over 0.6B: clearly better Chinese and mixed speech, and an
+    /// M-series Mac still answers a stretch well within the meeting's 12 s.
+    static let recommendedSpeech = (base: "http://localhost:8000/v1", model: "mlx-community/Qwen3-ASR-1.7B-8bit")
+
     var provider: AIProvider
     /// nil: a custom service without a valid address yet.
     var base: URL?
@@ -242,6 +256,18 @@ struct AIConfig: Equatable {
         }
         let rest = ids.filter { !recommended.contains($0) }.sorted()
         return recommended + rest
+    }
+
+    /// Speech recognition models from `/models`: mlx-audio lists what it has loaded, TTS too, so
+    /// the recognizers come first; a server whose names say nothing keeps them all.
+    static func speechModels(fromCatalog data: Data) -> [String] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let list = root["data"] as? [[String: Any]] else { return [] }
+        let ids = Set(list.compactMap { $0["id"] as? String })
+        let speech = ids.filter {
+            $0.lowercased().range(of: #"(asr|whisper|transcrib|paraformer|sensevoice|parakeet|stt)"#, options: .regularExpression) != nil
+        }
+        return (speech.isEmpty ? ids : speech).sorted()
     }
 
     /// Keep models that can hear audio and answer in text. Many compatible servers list only
