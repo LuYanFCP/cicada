@@ -134,8 +134,47 @@ struct CloudVoice: Equatable {
     let gender: String
 }
 
+enum AudioInputFormat: String {
+    case openai, ming
+}
+
 /// What one call needs to know about the service in use, resolved from settings each time.
 struct AIConfig: Equatable {
+    /// OpenAI's own endpoint needs its parameter names; compatible servers keep the standard
+    /// request shape. This configuration never enables audio or shares the main service's key.
+    static func sentence(base raw: String, model: String) -> AIConfig {
+        let base = AIProvider.customBase(raw)
+        let provider: AIProvider = base?.host?.lowercased() == "api.openai.com" ? .openai : .custom
+        return AIConfig(provider: provider, base: base, textModel: model.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// Audio understanding uses chat completions, separate from transcription and voice output.
+    static func audio(base raw: String, model: String, format: AudioInputFormat) -> AIConfig {
+        let base = AIProvider.customBase(raw)
+        let provider: AIProvider
+        switch base?.host?.lowercased() {
+        case "api.openai.com": provider = .openai
+        case "api.ant-ling.com": provider = .ling
+        default: provider = .custom
+        }
+        return AIConfig(provider: provider, base: base, textModel: model.trimmingCharacters(in: .whitespacesAndNewlines),
+                        audioInputFormat: format)
+    }
+
+    /// The meeting's own speech recognition server (`/audio/transcriptions`, Settings › AI 服务 ›
+    /// 语音识别 › 自建服务), whatever the main service: nothing else is asked of it, and its key is
+    /// its own. Its address is `base` too, so a server on this Mac or the local network needs no key.
+    static func speech(base raw: String, model: String) -> AIConfig {
+        let base = AIProvider.customBase(raw)
+        let name = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return AIConfig(provider: .custom, base: base, textModel: "", hearModel: name.isEmpty ? nil : name, hearBase: base)
+    }
+
+    /// What 自建服务 starts with: Qwen3-ASR on this Mac through mlx-audio's server (`mlx_audio.server`,
+    /// port 8000), on Apple silicon. 1.7B over 0.6B: clearly better Chinese and mixed speech, and an
+    /// M-series Mac still answers a stretch well within the meeting's 12 s.
+    static let recommendedSpeech = (base: "http://localhost:8000/v1", model: "mlx-community/Qwen3-ASR-1.7B-8bit")
+
     var provider: AIProvider
     /// nil: a custom service without a valid address yet.
     var base: URL?
@@ -149,8 +188,10 @@ struct AIConfig: Equatable {
     /// when recognition stays on this Mac.
     var hearModel: String? = nil
     var hearBase: URL? = nil
+    var audioInputFormat: AudioInputFormat? = nil
 
     var hasVoices: Bool { voiceModel != nil && voiceBase != nil }
+    var acceptsAudio: Bool { provider.hearsAudio || audioInputFormat != nil }
     /// The meeting is recognized by the custom service instead of on this Mac.
     var transcribes: Bool { provider.id == .custom && hearModel != nil && hearBase != nil }
 
@@ -215,5 +256,37 @@ struct AIConfig: Equatable {
         }
         let rest = ids.filter { !recommended.contains($0) }.sorted()
         return recommended + rest
+    }
+
+    /// Speech recognition models from `/models`: mlx-audio lists what it has loaded, TTS too, so
+    /// the recognizers come first; a server whose names say nothing keeps them all.
+    static func speechModels(fromCatalog data: Data) -> [String] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let list = root["data"] as? [[String: Any]] else { return [] }
+        let ids = Set(list.compactMap { $0["id"] as? String })
+        let speech = ids.filter {
+            $0.lowercased().range(of: #"(asr|whisper|transcrib|paraformer|sensevoice|parakeet|stt)"#, options: .regularExpression) != nil
+        }
+        return (speech.isEmpty ? ids : speech).sorted()
+    }
+
+    /// Keep models that can hear audio and answer in text. Many compatible servers list only
+    /// an id, so unknown capabilities remain selectable and the audio check proves support.
+    static func audioModels(fromCatalog data: Data) -> [String] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let list = root["data"] as? [[String: Any]] else { return [] }
+        var ids: Set<String> = []
+        for m in list {
+            guard let id = m["id"] as? String, !id.hasSuffix(":batch") else { continue }
+            if id.lowercased().range(of: #"(embed|whisper|tts|asr|transcrib|dall-e|moderation|realtime|sora)"#,
+                                    options: .regularExpression) != nil { continue }
+            let arch = m["architecture"] as? [String: Any]
+            let input = (m["input_modalities"] ?? arch?["input_modalities"]) as? [String]
+            let output = (m["output_modalities"] ?? arch?["output_modalities"]) as? [String]
+            if let input, !input.contains("audio") { continue }
+            if let output, !output.contains("text") { continue }
+            ids.insert(id)
+        }
+        return ids.sorted()
     }
 }

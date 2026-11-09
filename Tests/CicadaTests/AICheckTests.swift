@@ -108,6 +108,5 @@ struct AICheckTests {
         var h = AICheck()
         h.hear = .localNetworkDenied
         #expect(h.needsLocalNetwork)
-        #expect(h.hearLine(host: "192.168.1.20", model: "m")?.contains("本地网络") == true)
     }
 }

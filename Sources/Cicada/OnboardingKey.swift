@@ -4,7 +4,9 @@ import SwiftUI
 /// Onboarding step 3: connect a Ling key. Notes, Ling translation and Ming voices all need it, but it
 /// comes after the sample video, once people have seen what the app does. Skipping is allowed: "先不接"
 /// first shows what still works and what waits for a key (the notes window asks again later).
-/// Ling is the whole path; "用不了 Ling？" opens another service as a way out, saying what it lacks.
+/// Ling is the whole path; "用不了 Ling？" opens another service as a way out, saying what it lacks:
+/// an aggregator with its models chosen, or any OpenAI-compatible address (a gateway, a local model).
+/// Giving translation and notes or audio a service of their own is for Settings, not a first run.
 struct OnboardingKeyStep: View {
     @ObservedObject var model: AppModel
     @ObservedObject var ling: LingClient
@@ -15,11 +17,17 @@ struct OnboardingKeyStep: View {
     @State private var clipboardEmpty = false
     /// A pasted key that belongs elsewhere: what it is, and (for another service's key) where it fits.
     @State private var keyHint: (text: String, service: AIProvider.Kind?, key: String)?
+    /// 兼容接口: its address and model as typed, what went wrong with them, and the models it lists.
+    @State private var baseDraft = ""
+    @State private var modelDraft = ""
+    @State private var formError: String?
+    @State private var fetched: [String] = []
+    @State private var fetching = false
     /// Showing another service instead of Ling: follows the setting, so a change made in Settings
     /// while this step is open (or a reused window) never leaves the Ling title over another service.
     private var other: Bool { settings.provider.id != .ling }
 
-    private static let others: [AIProvider] = [.openrouter, .zenmux, .openai]
+    private static let others: [AIProvider] = [.openrouter, .zenmux, .openai, .custom]
 
     static let platform = URL(string: "https://chat.ant-ling.com/platform/api")!
 
@@ -28,7 +36,9 @@ struct OnboardingKeyStep: View {
             if other && !skipping {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("用其他服务").font(.system(size: 26, weight: .bold)).foregroundStyle(Palette.ink)
-                    Text("纪要和翻译都能用，模型已经选好。").font(.system(size: 14)).foregroundStyle(Palette.secondary)
+                    Text(settings.provider.id == .custom ? L("兼容 OpenAI 的服务都能接，包括这台 Mac 和局域网里的模型。")
+                                                         : L("纪要和翻译都能用，模型已经选好。"))
+                        .font(.system(size: 14)).foregroundStyle(Palette.secondary)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 10) {
@@ -66,6 +76,7 @@ struct OnboardingKeyStep: View {
                 }
             }
         }
+        .onAppear(perform: syncCustom)
     }
 
     private var isConnected: Bool { if case .ok = ling.keyState { true } else { false } }
@@ -74,6 +85,8 @@ struct OnboardingKeyStep: View {
         draft = ""
         clipboardEmpty = false
         keyHint = nil
+        formError = nil
+        syncCustom()
         guard settings.aiProvider != p.id.rawValue else { return }
         settings.aiProvider = p.id.rawValue
         model.applyAIService()
@@ -85,7 +98,7 @@ struct OnboardingKeyStep: View {
         let p = settings.provider
         return VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Segments(options: Self.others.map { ($0.id.rawValue, $0.name) }, value: p.id.rawValue) { id in
+                Segments(options: Self.others.map { ($0.id.rawValue, $0.id == .custom ? L("兼容接口") : $0.name) }, value: p.id.rawValue) { id in
                     switchTo(AIProvider.named(id))
                 }
                 Spacer()
@@ -103,11 +116,13 @@ struct OnboardingKeyStep: View {
                     .buttonStyle(.plain)
                 }
             }
-            keyField(placeholder: L("粘贴 \(p.name) 的 key"))
+            if p.id == .custom { customFields } else { keyField(placeholder: L("粘贴 \(p.name) 的 key")) }
             status
             HStack(spacing: 4) {
                 Text("少了：").foregroundStyle(Palette.secondary)
-                Text(p.hasVoices ? L("用你自己的声音") : L("自然的同传声音、你自己的声音")).fontWeight(.semibold).foregroundStyle(Palette.ink)
+                // A custom service can name a speech model in Settings; only the cloned voice is Ling's alone.
+                Text(p.hasVoices || p.id == .custom ? L("用你自己的声音") : L("自然的同传声音、你自己的声音"))
+                    .fontWeight(.semibold).foregroundStyle(Palette.ink)
                 Text("（只有 Ling 支持）").foregroundStyle(Palette.secondary)
             }
             .font(.system(size: 12))
@@ -117,6 +132,104 @@ struct OnboardingKeyStep: View {
         .padding(22)
         .background(RoundedRectangle(cornerRadius: 16).fill(Color.white))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(Palette.line, lineWidth: 1))
+    }
+
+    /// 兼容接口: the address, the model (typed, or picked from what the address lists) and a key
+    /// when it needs one. Saved as the custom service, as Settings › AI 服务 › 其他 would.
+    private var customFields: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            labeled(L("地址")) {
+                TextField("http://192.168.1.20:8000/v1", text: $baseDraft).modifier(FieldStyle()).onSubmit(saveCustom)
+            }
+            labeled(L("模型")) {
+                ModelNameField(value: $modelDraft, placeholder: L("例如 qwen3:14b"), choices: fetched,
+                               fetching: fetching, onFetch: readModels, onSubmit: saveCustom)
+            }
+            labeled("key") {
+                SecureField(AIProvider.isNearby(baseDraft) ? L("本机和局域网服务可不填") : "sk-…", text: $draft)
+                    .modifier(FieldStyle()).onSubmit(saveCustom)
+            }
+            HStack(spacing: 10) {
+                Button(action: saveCustom) {
+                    Text("保存并检查").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                        .padding(.horizontal, 14).frame(height: 32)
+                        .background(RoundedRectangle(cornerRadius: 9).fill(Palette.ink))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if let formError {
+                    Text(formError).font(.system(size: 12)).foregroundStyle(Palette.accentInk).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.leading, 52)
+        }
+        .onChange(of: baseDraft) { _, _ in formError = nil; fetched = [] }
+        .onChange(of: modelDraft) { _, _ in formError = nil }
+        .onChange(of: draft) { _, _ in formError = nil }
+    }
+
+    private func labeled<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 8) {
+            Text(label).font(.system(size: 12)).foregroundStyle(Palette.secondary).frame(width: 44, alignment: .leading)
+            content()
+        }
+    }
+
+    private func syncCustom() {
+        baseDraft = settings.aiCustomBase
+        modelDraft = settings.aiModels["custom"] ?? ""
+        fetched = []
+    }
+
+    private func readModels() {
+        let address = baseDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let secret = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = AIProvider.customBase(address) else {
+            formError = L("请填写有效地址；公网用 https，本机或局域网可用 http")
+            return
+        }
+        let c = AIConfig(provider: .custom, base: url, textModel: "")
+        guard !secret.isEmpty || ling.hasStoredKey(for: c) || AIProvider.isNearby(url.absoluteString) else {
+            formError = L("先填 key 再读取模型")
+            return
+        }
+        formError = nil
+        fetching = true
+        Task {
+            defer { fetching = false }
+            let ids = (try? await ling.availableTextModels(for: c, key: secret)) ?? []
+            guard address == baseDraft.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+            fetched = ids
+            if ids.isEmpty { formError = L("读不到模型列表，请手动填写") }
+        }
+    }
+
+    private func saveCustom() {
+        let address = baseDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = modelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let k = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = AIProvider.customBase(address) else {
+            formError = L("请填写有效地址；公网用 https，本机或局域网可用 http")
+            return
+        }
+        guard !name.isEmpty else { formError = L("请填写模型名称"); return }
+        guard !name.contains(where: \.isWhitespace) else { formError = L("模型名称不能含空格或换行"); return }
+        guard !k.contains(where: \.isWhitespace) else { formError = L("key 不能含空格或换行"); return }
+        let c = AIConfig(provider: .custom, base: url, textModel: name)
+        guard !k.isEmpty || ling.hasStoredKey(for: c) || AIProvider.isNearby(url.absoluteString) else {
+            formError = L("请填写 API key")
+            return
+        }
+        // Saved before the address changes, so the check that follows uses it.
+        if !k.isEmpty, !ling.saveKey(k, for: c) {
+            formError = L("key 没有保存，请重试")
+            return
+        }
+        formError = nil
+        draft = ""
+        settings.aiCustomBase = address
+        settings.aiModels["custom"] = name
+        model.applyAIService()
     }
 
     // MARK: Not connected yet
@@ -195,10 +308,16 @@ struct OnboardingKeyStep: View {
                 line(Palette.error, other ? L("剪贴板里没有 sk- 开头的 key，请先去 \(settings.provider.name) 复制。")
                                           : L("剪贴板里没有 sk- 开头的 key，先在 Ling 开放平台复制。"), Palette.accentInk)
             } else {
-                Label(L("只保存在这台 Mac 上，只发给 \(settings.provider.name)"), systemImage: "lock")
+                Label(L("只保存在这台 Mac 上，只发给 \(receiver)"), systemImage: "lock")
                     .font(.system(size: 12)).foregroundStyle(Palette.tertiary)
             }
         }
+    }
+
+    /// Who a key goes to: a custom service by its address.
+    private var receiver: String {
+        guard settings.provider.id == .custom else { return settings.provider.name }
+        return AIProvider.customBase(baseDraft)?.host ?? L("你填的地址")
     }
 
     // MARK: Connected
@@ -241,7 +360,7 @@ struct OnboardingKeyStep: View {
     /// Honest about both sides, so skipping is a choice rather than a dead end.
     private var withoutKey: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if Recognition.cloudOnly {
+            if Recognition.cloudOnly && !model.hearingReady {
                 Text("Intel 版 Mac 需要接上 Ling 才能识别语音").font(.system(size: 16, weight: .semibold)).foregroundStyle(Palette.ink)
                 HStack(alignment: .top, spacing: 10) {
                     column(L("现在可用"), [L("查看以往的会议记录")],
@@ -249,7 +368,7 @@ struct OnboardingKeyStep: View {
                     column(L("接上 Ling 才有"), [L("实时翻译字幕和双语记录"), L("实时纪要和会后总结"), L("同声传译")],
                            head: Palette.accentInk, fill: Palette.accentPale, check: false)
                 }
-                Text("可以先进入应用，开会前在设置 › AI 服务里填上 Ling key 即可。")
+                Text("可以先进入应用，开会前在设置 › AI 服务里填上 Ling key，或在“按功能换服务”里接上语音识别。")
                     .font(.system(size: 12)).foregroundStyle(Palette.secondary)
             } else {
                 Text("先不接也行，基础功能照常能用").font(.system(size: 16, weight: .semibold)).foregroundStyle(Palette.ink)

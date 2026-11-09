@@ -560,5 +560,19 @@
   "share_js_chapters_lines": "Chapters and dialogue",
   "share_js_show_src": "Show original",
   "share_js_expand_all": "Open all dialogue",
-  "share_js_collapse_all": "Close all"
+  "share_js_collapse_all": "Close all",
+  "lasr_h": "Run speech recognition on this Mac",
+  "lasr_p": "Cicada uses macOS's own on-device recognition by default. For more accurate Chinese, dialects and mixed-language speech, run Qwen3-ASR with mlx-audio on an Apple silicon Mac: the meeting's audio still stays on this Mac. It takes one install in Terminal, and the server running during meetings.",
+  "lasr1_small": "Step 1",
+  "lasr1_h": "Install mlx-audio",
+  "lasr1_p": "Open Terminal and run <code>uv tool install --upgrade \"mlx-audio[stt,server]\"</code>. Without uv, use <code>pip3 install -U \"mlx-audio[stt,server]\"</code> (Python 3.10 or later).",
+  "lasr2_small": "Step 2",
+  "lasr2_h": "Start the recognition server",
+  "lasr2_p": "Run <code>mlx_audio.server --port 8000</code> and keep that Terminal window open during meetings; closing it stops the server.",
+  "lasr3_small": "Step 3",
+  "lasr3_h": "Connect it in Cicada",
+  "lasr3_p": "In Settings › AI Service › Per-feature services › Speech recognition, choose Your service: the address and model (<code>mlx-community/Qwen3-ASR-1.7B-8bit</code>) are already filled in, so click Save and check. The first check downloads about 2.5 GB of model and takes a few minutes.",
+  "lasr4_small": "If it can't be reached",
+  "lasr4_h": "Listening carries on",
+  "lasr4_p": "It is used from the next meeting; when the server is off or unreachable, Cicada goes back to this Mac's recognition by itself. If the first check says the model can't be found, the download most likely failed: see the Terminal window running the server; if large downloads fail through a proxy, start it with <code>HF_HUB_DISABLE_XET=1</code>. To save memory, use <code>mlx-community/Qwen3-ASR-0.6B-8bit</code> (about 1 GB). Intel Macs can't run mlx-audio, but can use another Apple silicon Mac on the local network (start it there with <code>--host 0.0.0.0</code>)."
 }

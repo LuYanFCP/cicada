@@ -56,6 +56,9 @@ struct AICheck: Equatable {
     var translate: Speed?
     /// A custom service that recognizes the meeting: whether its speech model took audio.
     var hear: Hearing?
+    /// A speech server took the connection but answered nothing in time: on this Mac, usually a
+    /// model still downloading or loading, not a server that isn't there.
+    var timedOut = false
 
     struct Speed: Equatable {
         let seconds: Double
@@ -232,16 +235,6 @@ struct AICheck: Equatable {
         }
         return t.thinks ? L("这个模型先思考再回答，翻一句要 \(secs) 秒，超过 6 秒会改用 Google。在服务端关掉思考，或换一个不思考的模型。")
             : L("翻一句要 \(secs) 秒，超过 6 秒会改用 Google。换一个更小的模型会快一些。")
-    }
-
-    /// The speech model's problem, in one sentence.
-    func hearLine(host: String, model: String) -> String? {
-        switch hear {
-        case .unreachable?: return L("这台 Mac 访问不到 \(host)，开会时先用本机识别。")
-        case .localNetworkDenied?: return L("知了没有本地网络权限，连不上 \(host)，开会时先用本机识别。")
-        case .fail(let code)?: return L("\(model) 没接受音频（HTTP \(code ?? 0)），开会时先用本机识别。")
-        default: return nil
-        }
     }
 
     /// The proxy line under "can't reach": what this Mac's proxy looks like, and what to do.

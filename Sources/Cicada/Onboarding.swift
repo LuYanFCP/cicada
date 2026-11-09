@@ -357,15 +357,15 @@ struct OnboardingView: View {
         nonmutating set { model.onboardingStep = newValue }
     }
     var onFinish: () -> Void
-    /// System audio, sample video, Ling key, speaking; then a closing page (step 5) outside the count.
+    /// System audio, sample video, AI service, speaking; then a closing page (step 5) outside the count.
     /// The video comes before the key so people see the subtitles before being sent to sign up anywhere.
     static let steps = 4
     static let done = 5
 
     private var stepNames: [String] {
         Recognition.cloudOnly
-            ? [L("听声音"), L("接 Ling"), L("看效果"), L("同声传译")]
-            : [L("听声音"), L("看效果"), L("接 Ling"), L("同声传译")]
+            ? [L("听声音"), L("AI 服务"), L("看效果"), L("同声传译")]
+            : [L("听声音"), L("看效果"), L("AI 服务"), L("同声传译")]
     }
     private var keyStep: Int { Recognition.cloudOnly ? 2 : 3 }
     private var tryStep: Int { Recognition.cloudOnly ? 3 : 2 }
@@ -448,7 +448,7 @@ struct OnboardingView: View {
                     .padding(.horizontal, 24).frame(height: 44)
                     .background(RoundedRectangle(cornerRadius: 12).fill(Color(white: 0.87)))
             case keyStep:
-                OnboardingKeyFooter(ling: model.ling, skipping: $model.onboardingKeySkip, next: { step = keyStep + 1 })
+                OnboardingKeyFooter(ling: model.textAI, skipping: $model.onboardingKeySkip, next: { step = keyStep + 1 })
             case 4 where !speakSetupShown:
                 // The two cards above are the choice; nothing to confirm here.
                 EmptyView()
@@ -586,7 +586,8 @@ struct OnboardingView: View {
                 ChoiceRow(label: L("翻译成"), value: targetName(model.listen.resolvedTarget),
                           badge: settings.target == "system" ? L("跟随系统") : nil, options: targetOptions) { model.targetSelection = $0 }
             }
-            OnboardingNotesTeaser(ling: model.ling)
+            OnboardingNotesTeaser(ling: model.textAI, hearing: model.hearingAI, ready: model.hearingReady,
+                                  own: settings.speechServer || settings.audioUnderstanding)
         }
     }
 
@@ -805,12 +806,18 @@ struct OnboardingView: View {
 /// with one, where the subtitle bar can go.
 struct OnboardingNotesTeaser: View {
     @ObservedObject var ling: LingClient
+    /// Who hears the meeting on an Intel Mac (observed so the line follows its check), whether it
+    /// can, and whether it is a service of its own rather than Ling.
+    @ObservedObject var hearing: LingClient
+    let ready: Bool
+    let own: Bool
 
     var body: some View {
-        if ling.hasKey {
+        if Recognition.cloudOnly && !ready {
+            Text(own ? L("听会议的服务还没接通，示例会议识别不出字幕。") : L("先在上一步接上 Ling key，示例会议才能识别出实时字幕。"))
+                .font(.system(size: 12)).foregroundStyle(Palette.accentInk)
+        } else if ling.hasKey {
             Text("字幕条可任意拖动，拖拽右下角可调整大小。").font(.system(size: 12)).foregroundStyle(Palette.secondary)
-        } else if Recognition.cloudOnly {
-            Text("先在上一步接上 Ling key，示例会议才能识别出实时字幕。").font(.system(size: 12)).foregroundStyle(Palette.accentInk)
         } else {
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
@@ -822,7 +829,7 @@ struct OnboardingNotesTeaser: View {
                 .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("开会时，这些字幕还能整理成纪要").font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.ink)
-                    Text("下一步接上 Ling 就有").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                    Text("下一步接上 AI 服务就有").font(.system(size: 12)).foregroundStyle(Palette.secondary)
                 }
                 Spacer(minLength: 0)
             }

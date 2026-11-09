@@ -425,19 +425,28 @@ struct SpeakerUndo: Identifiable {
 final class SpeakerNamer: ObservableObject {
     @Published private(set) var busy: Set<String> = []
     private var askedAt: [String: Int] = [:]
-    private let ling: LingClient
+    private let defaultLing: LingClient
+    var client: (() -> LingClient)?
+    private var ling: LingClient { client?() ?? defaultLing }
     private let store: SessionStore
 
     init(ling: LingClient, store: SessionStore) {
-        self.ling = ling
+        self.defaultLing = ling
         self.store = store
     }
 
-    var available: Bool { ling.hasKey }
+    var available: Bool { canName(with: ling) }
+
+    private func canName(with client: LingClient) -> Bool {
+        let config = client.config()
+        return client.hasKey && config.base != nil && !config.textModel.isEmpty && client.aiCheck.failure?.reason != .noJSON
+    }
 
     /// `force`: the meeting just ended, so read it all once more.
     func guess(_ id: String, force: Bool = false) {
-        guard ling.hasKey, !busy.contains(id), let s = store.session(id) else { return }
+        let ling = self.ling
+        guard canName(with: ling),
+              !busy.contains(id), let s = store.session(id) else { return }
         guard force || s.lines.count >= (askedAt[id] ?? -1000) + 20, let content = SpeakerNameGuess.content(s) else { return }
         // Everyone already has a name the user gave: nothing to ask.
         let numbers = SpeakerLabels.voiceNumbers(s.lines)

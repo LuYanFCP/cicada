@@ -222,7 +222,7 @@ struct MenuPanelView: View {
             if model.running { LanguageNotice(model: model) }
             if model.hybridMicDenied { hybridMicStrip }
             if let next = model.roomMicLost { roomMicLostStrip(next) }
-            AIServiceStrip(model: model, ling: model.ling)
+            AIServiceStrip(model: model, ling: model.textAI)
             // Right under the header: below the settings it was easy to miss.
             UpdateBanner(updates: model.updates, model: model)
 
@@ -278,7 +278,7 @@ struct MenuPanelView: View {
                     }
                 }
                 .fixedSize(horizontal: false, vertical: true)
-                if settings.displayMode != "notes" || !model.ling.hasKey { displayCard }
+                if settings.displayMode != "notes" || !model.textAI.hasKey { displayCard }
             }
 
             Divider()
@@ -390,8 +390,9 @@ extension MenuPanelView {
                     .font(.system(size: 12)).foregroundStyle(Palette.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             default:
-                // Shown only without a Ling key: the notes window itself opens and closes from the tile.
-                Text(Recognition.cloudOnly ? L("填入 Ling key 后才能识别语音、出字幕和纪要") : L("填入 API key 后可生成纪要；文字记录照常保存"))
+                // The notes window itself opens and closes from the tile once text AI is ready.
+                Text(Recognition.cloudOnly && !settings.sentenceTranslation && !settings.audioUnderstanding ? L("填入 Ling key 后才能识别语音、出字幕和纪要")
+                     : L("配置 AI 服务后可生成纪要；文字记录照常保存"))
                     .font(.system(size: 12)).foregroundStyle(Palette.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1024,7 +1025,7 @@ struct MainWindowView: View {
                         }
                 } else if tab == "notes", importer.status(of: s) == nil {
                     HStack(spacing: 0) {
-                        SessionNotesView(model: model, engine: model.notes, ling: model.ling, session: s,
+                        SessionNotesView(model: model, engine: model.notes, ling: model.textAI, session: s,
                                          header: AnyView(header(s)), bar: { toTop in AnyView(pinnedBar(s, column: 600, inset: 44, toTop: toTop)) }) { t in
                             // Beside the notes, a topic's time scrolls the column; otherwise it opens the transcript.
                             if sideBySide { quoteJump = t } else { jumpTo = t; tab = "transcript" }
@@ -1484,6 +1485,10 @@ struct SessionNotesView: View {
     private var live: Bool { session.id == model.store.liveID }
     private var notes: MeetingNotes? { live ? engine.notes : session.notes }
     private var generating: Bool { engine.generatingID == session.id }
+    private var notesReady: Bool {
+        let config = ling.config()
+        return ling.usable && config.base != nil && !config.textModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -1493,26 +1498,34 @@ struct SessionNotesView: View {
                 if let notes, !notes.isEmpty {
                     NotesContentView(notes: SpeakerLabels.named(notes, SpeakerLabels.names(session)), fresh: live ? engine.fresh : [], live: live, document: true,
                                      endedAt: session.lines.last?.t, onJump: onJump)
-                } else if generating || (live && ling.hasKey && !session.lines.isEmpty && engine.state == .updating) {
+                } else if ling.aiCheck.failure?.reason == .noJSON {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("这个服务不支持 JSON，纪要写不了；翻译照常。")
+                            .font(.system(size: 13)).foregroundStyle(Palette.secondary)
+                        SoftButton(L("配置 AI 服务"), dark: true) { model.openTextAISettings() }
+                    }
+                    .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 18).fill(Palette.raised))
+                } else if generating || (live && notesReady && !session.lines.isEmpty && engine.state == .updating) {
                     NotesGeneratingView(heard: session.lines.count)
-                } else if live && ling.hasKey {
+                } else if live && notesReady {
                     NotesListeningView(heard: session.lines.count)
                 } else {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(generating ? L("正在整理纪要…") : live ? L("纪要会在会议进行中自动生成") : L("这场会议还没有纪要"))
                             .font(.system(size: 15, weight: .bold))
-                        Text(ling.hasKey ? L("用 \(ling.provider.name) 整理出总结、议题、结论和人名，约半分钟。")
-                                         : L("前往 设置 › AI 服务 填入 Ling 的 API key 后即可生成。"))
+                        Text(notesReady ? L("用 \(ling.provider.name) 整理出总结、议题、结论和人名，约半分钟。")
+                                         : L("前往 设置 › AI 服务 配置翻译和纪要后即可生成。"))
                             .font(.system(size: 13)).foregroundStyle(Palette.secondary)
                         if !live {
                             HStack(spacing: 8) {
-                                if ling.hasKey {
+                                if notesReady {
                                     SoftButton(generating ? L("正在生成…") : L("生成纪要"), dark: true) {
                                         engine.generate(for: session.id)
                                     }
                                     .disabled(generating)
                                 } else {
-                                    SoftButton(L("去填 key"), dark: true) { model.openSettings(.ai) }
+                                    SoftButton(L("配置 AI 服务"), dark: true) { model.openTextAISettings() }
                                 }
                             }
                         }

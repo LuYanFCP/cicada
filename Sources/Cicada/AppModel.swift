@@ -144,6 +144,21 @@ final class AppModel: ObservableObject {
     private var shortcutsSuspended = false
     let installer = VirtualMicInstaller()
     let ling = LingClient()
+    let sentenceAI = LingClient(keyNamespace: "sentence")
+    var textAI: LingClient { settings.sentenceTranslation ? sentenceAI : ling }
+    let audioUnderstandingAI = LingClient(keyNamespace: "audio", checksJSON: false, checksAudio: true)
+    var audioAI: LingClient { settings.audioUnderstanding ? audioUnderstandingAI : ling }
+    /// 语音识别 › 自建服务: the meeting heard by the user's own speech server (Qwen3-ASR on this Mac).
+    let speechAI = LingClient(keyNamespace: "asr", checksJSON: false, checksTranscription: true)
+    /// Who hears the meeting when this Mac doesn't (always, on an Intel Mac).
+    var hearingAI: LingClient { settings.speechServer ? speechAI : audioAI }
+    /// It can hear now: Ming with a working key, or a model or server of its own once a check
+    /// has put audio through it.
+    var hearingReady: Bool {
+        let h = hearingAI
+        guard h.hearsAudio || h.transcribes, h.aiCheck.failure == nil else { return false }
+        return h === ling || h.aiCheck.passed
+    }
     /// Network changes (a proxy app turned on, Wi-Fi back): the AI service is looked at again
     /// when it was unreachable. No timer: nothing is checked while the network stays the same.
     private let networkMonitor = NWPathMonitor()
@@ -251,12 +266,47 @@ final class AppModel: ObservableObject {
         ling.onCall = { [weak self] in self?.diagnostics.record($0) }
         ling.proxyHint = { await ProxyProbe.hint() }
         ling.localNetworkProbe = { await LocalNetworkProbe.denied($0) }
+        sentenceAI.onCall = { [weak self] in self?.diagnostics.record($0) }
+        sentenceAI.proxyHint = { await ProxyProbe.hint() }
+        sentenceAI.localNetworkProbe = { await LocalNetworkProbe.denied($0) }
+        audioUnderstandingAI.onCall = { [weak self] in self?.diagnostics.record($0) }
+        audioUnderstandingAI.proxyHint = { await ProxyProbe.hint() }
+        audioUnderstandingAI.localNetworkProbe = { await LocalNetworkProbe.denied($0) }
+        speechAI.onCall = { [weak self] in self?.diagnostics.record($0) }
+        speechAI.proxyHint = { await ProxyProbe.hint() }
+        speechAI.localNetworkProbe = { await LocalNetworkProbe.denied($0) }
         watchNetwork()
         translator.onDraft = { [weak self] in self?.diagnostics.recordDraft(seconds: $0, ok: $1) }
         translator.onHealth = { [weak self] in self?.translationHealth = $0 }
         translator.proxyHint = { await ProxyProbe.hint() }
 
         ling.config = { [weak self] in self?.settings.aiConfig ?? AIConfig(provider: .ling, base: AIProvider.ling.base, textModel: "Ling-3.1-flash") }
+        sentenceAI.config = { [weak self] in
+            self?.settings.sentenceConfig ?? AIConfig(provider: .custom, base: nil, textModel: "")
+        }
+        audioUnderstandingAI.config = { [weak self] in
+            self?.settings.audioConfig ?? AIConfig(provider: .custom, base: nil, textModel: "")
+        }
+        speechAI.config = { [weak self] in
+            self?.settings.speechConfig ?? AIConfig(provider: .custom, base: nil, textModel: "")
+        }
+        // Recognition set up under the custom service: its key comes along to 自建服务, once.
+        if settings.speechMovedFromCustom, let key = AIKey.read("custom"), let c = settings.speechConfig,
+           !speechAI.hasStoredKey(for: c) {
+            speechAI.saveKey(key, for: c)
+        }
+        translator.audioClient = { [weak self] in self?.audioAI }
+        translator.speechClient = { [weak self] in
+            guard let self, self.settings.speechServer else { return nil }
+            return self.speechAI
+        }
+        speakTester.audioClient = { [weak self, fallback = ling] in self?.audioAI ?? fallback }
+        translator.sentenceClient = { [weak self] in
+            guard let self, self.settings.sentenceTranslation else { return nil }
+            return self.sentenceAI
+        }
+        notes.client = { [weak self, fallback = ling] in self?.textAI ?? fallback }
+        speakerNamer.client = { [weak self, fallback = ling] in self?.textAI ?? fallback }
         listen.translator = translator
         roomListen.translator = translator
         roomListen.voiceMic = voiceMic
@@ -298,6 +348,9 @@ final class AppModel: ObservableObject {
         listen.translationOff = { [weak self] in self?.subtitles == "original" }
         roomListen.translationOff = { [weak self] in self?.subtitles == "original" }
         applyAIService()
+        applySentenceTranslation()
+        applyAudioUnderstanding()
+        applySpeechServer()
 
         installer.speakThrough = { [weak self] text, lang, device in
             await self?.speak.speak(text, language: lang, device: device)
@@ -578,7 +631,11 @@ final class AppModel: ObservableObject {
             micDeniedSince = denied ? Date() : nil
             overlay.setAlert(denied ? L("听不到会议室 · 麦克风没允许") : nil)
         }
-        let p = denied ? L("听会议室要先允许麦克风") : AIServiceStrip.blocking(ling, textModel: settings.textModel)
+        let hearer = hearingAI
+        let audioProblem = Recognition.cloudOnly
+            ? AIServiceStrip.blocking(hearer, textModel: hearer.config().hearModel ?? hearer.audioModel) : nil
+        let p = denied ? L("听会议室要先允许麦克风")
+            : audioProblem ?? AIServiceStrip.blocking(textAI, textModel: textAI.config().textModel)
         if p != problem { problem = p }
         // With the notes window up its banner says so; put away, a notification after 10 s
         // (long enough for a quick fix in the panel), once a meeting.
@@ -637,11 +694,21 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func openSettings(_ section: SettingsSection? = nil) {
+    /// Where the settings page scrolls once it is up (`overrides`: AI 服务 › 按功能换服务), then nil.
+    @Published var settingsAnchor: String?
+
+    func openSettings(_ section: SettingsSection? = nil, at anchor: String? = nil) {
         if let section { settingsSection = section }
         // The 诊断 tab only exists while its switch is on.
         if settingsSection == .diagnostics && !settings.diagnostics { settingsSection = .overlay }
+        settingsAnchor = anchor
         openSettingsWindow?()
+    }
+
+    /// AI 服务, at the service the notes and translation use: with one of their own, its row is
+    /// at the bottom of the page, under the main service.
+    func openTextAISettings() {
+        openSettings(.ai, at: settings.sentenceTranslation ? "overrides" : nil)
     }
 
     func ensureListening() {
@@ -1111,7 +1178,15 @@ final class AppModel: ObservableObject {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.networkDebounce?.cancel()
-                    let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.ling.networkChanged(); self?.translator.networkChanged() } }
+                    let work = DispatchWorkItem { [weak self] in
+                        MainActor.assumeIsolated {
+                            self?.ling.networkChanged()
+                            self?.sentenceAI.networkChanged()
+                            self?.audioUnderstandingAI.networkChanged()
+                            self?.speechAI.networkChanged()
+                            self?.translator.networkChanged()
+                        }
+                    }
                     self.networkDebounce = work
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
                 }
@@ -1120,7 +1195,12 @@ final class AppModel: ObservableObject {
         networkMonitor.start(queue: DispatchQueue(label: "cicada.ai-network"))
         // Turning the local network permission on doesn't change the path: look again on coming back.
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.ling.recheckLocalNetwork() }
+            MainActor.assumeIsolated {
+                self?.ling.recheckLocalNetwork()
+                self?.sentenceAI.recheckLocalNetwork()
+                self?.audioUnderstandingAI.recheckLocalNetwork()
+                self?.speechAI.recheckLocalNetwork()
+            }
         }
     }
 
@@ -1148,6 +1228,29 @@ final class AppModel: ObservableObject {
         applyAIService()
     }
 
+    func applySentenceTranslation(check: Bool = true) {
+        sentenceAI.reconfigure(check: check)
+        notes.updateNow()
+        objectWillChange.send()
+    }
+
+    func applyAudioUnderstanding() {
+        audioUnderstandingAI.reconfigure()
+        listen.aiServiceChanged()
+        roomListen.aiServiceChanged()
+        objectWillChange.send()
+    }
+
+    /// 语音识别 changed: the next meeting is heard by the speech server (or this Mac again); one
+    /// already running goes back to this Mac rather than on to another server (`aiServiceChanged`).
+    func applySpeechServer() {
+        speechAI.reconfigure()
+        Recognition.serverPreferred = settings.speechConfig?.transcribes == true
+        listen.aiServiceChanged()
+        roomListen.aiServiceChanged()
+        objectWillChange.send()
+    }
+
     /// Settings changed the AI service, its address or a model: voices follow, the key is checked again.
     func applyAIService() {
         let c = settings.aiConfig
@@ -1161,9 +1264,8 @@ final class AppModel: ObservableObject {
             guard let id = self?.settings.provider.id, id != .ling else { return "ming" }
             return id.rawValue
         }
-        // Takes effect from the next meeting: one already running keeps how it listens, except that
-        // its audio never goes on to a service other than the one hearing it (`aiServiceChanged`).
-        Recognition.serverPreferred = c.transcribes
+        // 语音和文字只发给你的服务 acts on the custom service only. Recognition by a speech server is
+        // set apart from the main service (`applySpeechServer`).
         translator.googleOff = c.provider.id == .custom && settings.aiCustomOnly
         ling.reconfigure()
         listen.aiServiceChanged()
@@ -1634,7 +1736,7 @@ final class AppModel: ObservableObject {
 
     private func importFinished(_ id: String) {
         guard let s = store.session(id) else { return }
-        let notesToo = settings.importNotes && ling.hasKey && !s.lines.isEmpty
+        let notesToo = settings.importNotes && textAI.hasKey && textAI.aiCheck.failure?.reason != .noJSON && !s.lines.isEmpty
         if notesToo { notes.generate(for: id) }
         let content = UNMutableNotificationContent()
         content.title = L("\(s.displayTitle) 转好了")
@@ -1902,8 +2004,10 @@ final class AppModel: ObservableObject {
             }
         case "micVerify": installer.install(verifyOnly: true)
         case "settings":
-            settingsSection = SettingsSection(rawValue: arg) ?? settingsSection
-            openSettings(settingsSection)
+            // settings:<section>[@<anchor>], e.g. settings:ai@overrides.
+            let p = arg.split(separator: "@", maxSplits: 1).map(String.init)
+            settingsSection = SettingsSection(rawValue: p.first ?? "") ?? settingsSection
+            openSettings(settingsSection, at: p.count > 1 ? p[1] : nil)
         case "diagnostics":
             setDiagnostics(arg != "off")
             debugLog("diagnostics \(settings.diagnostics ? "on" : "off")")
@@ -2152,11 +2256,38 @@ final class AppModel: ObservableObject {
             // localNetworkProbe:<url>: whether the local network permission holds back a connection to it (log).
             if let url = URL(string: arg) { Task { _ = await LocalNetworkProbe.denied(url) } }
         // AI service: aiProvider:<ling|openrouter|zenmux|openai|custom>, aiTextModel:<id>, aiVoiceModel:<id|"">,
-        // aiCustomBase:<url>, aiCustomVoiceBase:<url|"">, aiCustomVoice:<name>, aiCustomHearModel:<name>,
-        // aiCustomHearBase:<url|"">, aiCustomRecognize:on|off.
+        // aiCustomBase:<url>, aiCustomVoiceBase:<url|"">, aiCustomVoice:<name>; the meeting's speech server:
+        // speechService:<custom|default>, speechBase:<url>, speechModel:<id>, speechState.
         case "aiProvider": settings.aiProvider = AIProvider.named(arg).id.rawValue; applyAIService()
         // switchToLing: the 改用 Ling on a status line (logs why when it isn't offered).
         case "switchToLing": debugLog("switchToLing offered=\(canSwitchToLing)"); switchToLing()
+        case "sentenceService": settings.sentenceTranslation = arg == "custom"; applySentenceTranslation()
+        case "sentenceBase": settings.sentenceBase = arg; applySentenceTranslation()
+        case "sentenceModel": settings.sentenceModel = arg; applySentenceTranslation()
+        case "audioService": settings.audioUnderstanding = arg == "custom"; applyAudioUnderstanding()
+        case "audioBase": settings.audioBase = arg; applyAudioUnderstanding()
+        case "audioModel": settings.audioModel = arg; applyAudioUnderstanding()
+        case "audioFormat": settings.audioFormat = AudioInputFormat(rawValue: arg)?.rawValue ?? "openai"; applyAudioUnderstanding()
+        case "speechService": settings.speechServer = arg == "custom"; applySpeechServer()
+        case "speechBase": settings.speechBase = arg; applySpeechServer()
+        case "speechModel": settings.speechModel = arg; applySpeechServer()
+        case "speechState":
+            debugLog("speech enabled=\(settings.speechServer) preferred=\(Recognition.serverPreferred) "
+                     + "model=\(settings.speechConfig?.hearModel ?? "-") check=[\(speechAI.aiCheck.summary)] "
+                     + "hearing=\(listen.cloudService ?? "none") serverHears=\(listen.serverHears)")
+        case "audioState":
+            debugLog("audio enabled=\(settings.audioUnderstanding) model=\(audioAI.audioModel) check=[\(audioAI.aiCheck.summary)] "
+                     + "voice=\(settings.aiConfig.voiceModel ?? "-")")
+        case "sentenceState":
+            let c = settings.sentenceConfig
+            debugLog("sentence enabled=\(settings.sentenceTranslation) model=\(c?.textModel ?? "-") "
+                     + "check=[\(sentenceAI.aiCheck.summary)] ming=\(ling.hearsAudio) voice=\(settings.aiConfig.voiceModel ?? "-")")
+        case "sentenceTest":
+            Task {
+                let trace = TranslateTrace()
+                let out = await translator.translate("We will ship on Friday.", source: "en", target: "zh-CN", kind: .sentence, trace: trace)
+                debugLog("sentence test via=\(trace.via) translated=\(out != nil)")
+            }
         case "aiTextModel":
             if settings.provider.id == .ling { settings.aiModel = arg } else { settings.aiModels[settings.aiProvider] = arg }
             applyAIService()
@@ -2164,9 +2295,6 @@ final class AppModel: ObservableObject {
         case "aiCustomBase": settings.aiCustomBase = arg; applyAIService()
         case "aiCustomVoiceBase": settings.aiCustomVoiceBase = arg; applyAIService()
         case "aiCustomVoice": settings.aiCustomVoice = arg; applyAIService()
-        case "aiCustomHearModel": settings.aiCustomHearModel = arg; applyAIService()
-        case "aiCustomHearBase": settings.aiCustomHearBase = arg; applyAIService()
-        case "aiCustomRecognize": settings.aiCustomRecognize = arg == "on"; applyAIService()
         case "aiCustomOnly": settings.aiCustomOnly = arg == "on"; applyAIService()
         case "subtitles": setSubtitles(arg)
         case "meetingSubtitles": setSubtitles(arg, meetingOnly: true)

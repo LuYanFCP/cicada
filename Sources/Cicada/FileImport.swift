@@ -162,9 +162,9 @@ final class FileImporter: ObservableObject {
         guard !Task.isCancelled else { return }
         let target = settings.resolvedTarget(source: lang.code)
         debugLog("import: \(job.id) \(lang.locale) → \(target)")
-        // Nothing hears it on an Intel Mac without a Ling key: left unfinished, it offers 重新转写 once there is one.
-        if Recognition.cloudOnly, !translator.ling.hearsAudio {
-            debugLog("import: \(job.id) needs a Ling key")
+        // Intel needs a working audio service; an unfinished file offers 重新转写 once configured.
+        if Recognition.cloudOnly, !translator.hearing.hearsAudio && !translator.hearing.transcribes {
+            debugLog("import: \(job.id) needs an audio service")
             return
         }
         hearFailures = 0
@@ -183,7 +183,7 @@ final class FileImporter: ObservableObject {
                 let src = heard.flatMap { code in sourceLanguages.first { $0.code == code }?.code } ?? lang.code
                 let to = heard == nil ? target : self.settings.resolvedTarget(source: src)
                 // The service's translation covers the whole stretch: kept when the stretch is one line.
-                let given = sentences.count == 1 && to == heardTarget ? translation : nil
+                let given = !self.settings.sentenceTranslation && sentences.count == 1 && to == heardTarget ? translation : nil
                 for sentence in sentences {
                     let text = HeardText.clean(sentence.text)
                     guard text.contains(where: \.isLetter) else { continue }

@@ -37,7 +37,7 @@ Whether you're on Zoom, Teams, Feishu, or Tencent Meeting, or listening to X Spa
 
 | Platform | Requirements | Notes |
 |---|---|---|
-| Mac | macOS 14.4+, Apple silicon / Intel | Full feature set. On-device recognition on Apple silicon (works without a key); Intel needs a Ling key (speech recognized by Ming) |
+| Mac | macOS 14.4+, Apple silicon / Intel | Full feature set. On-device recognition on Apple silicon (works without a key); Intel needs a cloud audio-understanding service (Ming by default, or a compatible API) |
 | Windows | Windows 10 2004+, x64 / ARM64 | Needs an AI service key (Ling, OpenRouter, ZenMux, etc.); see [windows/](windows/README.md) |
 | Linux | Ubuntu 22.04 / 24.04 desktop | Needs an AI service key; the notes window is visible in screen sharing; see [linux/](linux/README.md) |
 | Android | Android 10+ | Needs an AI service key; subtitles for videos and streams, face-to-face interpreting; see [android/](android/README.md) |
@@ -78,9 +78,9 @@ Bilingual transcripts, notes, and raw audio recordings are saved on your compute
 
 ## Privacy & Permissions
 
-**Apple silicon Macs**: Audio capture, language detection, speech recognition, and meeting recordings all stay on your computer. The only data that leaves your Mac is the recognized text (sent for translation and meeting notes) and the short voice clips you speak while holding the talk key with a Ling key configured (if a speech model downloads slowly and you click **Use Ling for Now**, or if you switch speech recognition to a self-hosted service in **Settings › AI Service**, meeting audio is also sent to that service). Without an API key, live subtitles, translation, meeting records, and interpreting all work for free. Live notes, one-step voice translation, and voice cloning require your own Ling (Ant Group's LLM service) API key; an hour of meetings costs roughly ¥0.15 to ¥1 RMB, and Ling provides ¥10 of free credit every month, enough for 10 to 50 hours.
+**Apple silicon Macs**: Audio capture, language detection, speech recognition, and meeting recordings all stay on your computer. The only data that leaves your Mac is the recognized text (sent for translation and meeting notes) and the short voice clips you speak while holding the talk key with cloud audio understanding configured (if a speech model downloads slowly and you click **Use Ling for Now**, or if you switch speech recognition to a self-hosted service on another machine in **Settings › AI Service › Per-feature services**, meeting audio is also sent to that service; a service on this Mac keeps it here). Without an API key, live subtitles, translation, meeting records, and interpreting all work for free. Live notes and one-step voice translation need an AI service configured for them, and voice cloning requires your own Ling (Ant Group's LLM service) API key; an hour of meetings costs roughly ¥0.15 to ¥1 RMB, and Ling provides ¥10 of free credit every month, enough for 10 to 50 hours.
 
-**Intel Macs, Windows, Linux, Android**: Speech recognition runs in the cloud. Spoken audio is sent in segments to Ling's Ming or your chosen service (OpenRouter, ZenMux, etc.), so an AI service key is required. Recordings and meeting records still stay only on your device.
+**Intel Macs, Windows, Linux, Android**: Speech recognition runs in the cloud. Spoken audio is sent in segments to Ling's Ming or your chosen service (OpenRouter, ZenMux, etc.; an Intel Mac can also use a compatible audio-understanding API of its own), so an AI service key is required. Recordings and meeting records still stay only on your device.
 
 The Mac app only asks for a permission when you use the corresponding feature, and everything else works normally if you decline:
 
@@ -101,7 +101,7 @@ The table below shows the setup on Apple silicon Macs. When using a self-hosted 
 
 | Feature | With a Ling key | Without a key / fallback |
 |---|---|---|
-| Speech recognition and language detection | Apple `SpeechAnalyzer` / `SpeechTranscriber` (on device); macOS 14.4–15 uses `SFSpeechRecognizer` (on device, needs Dictation) | Same |
+| Speech recognition and language detection | Apple `SpeechAnalyzer` / `SpeechTranscriber` (on device); macOS 14.4–15 uses `SFSpeechRecognizer` (on device, needs Dictation); or Qwen3-ASR running on this Mac (see below) | Same |
 | Translating finished sentences | Ling `Ling-3.1-flash` (can be changed to `Ling-3.0-flash` in Settings › AI Service) | Google Translate → Apple `Translation` (on device, macOS 26 only) |
 | Translating the sentence still being spoken | Google Translate | Shows original text until replaced by the full-sentence translation |
 | Live notes and post-meeting full version | Ling `Ling-3.1-flash` | Not available |
@@ -110,12 +110,25 @@ The table below shows the setup on Apple silicon Macs. When using a self-hosted 
 | Interpreting: voice output and voice cloning | Ming `Ming-3.0-tts-0.5B` | Built-in Mac voices (`AVSpeechSynthesizer`), no cloning |
 | Speaker identification | WeSpeaker ResNet34-LM (bundled, runs on device via Core ML) | Same |
 
+On Mac, **Translation and notes** and **Audio understanding** can each use an OpenAI-compatible API of their own instead of the main service. At the bottom of **Settings › AI Service**, under **Per-feature services**, switch the row from **Same** to **Compatible API**, enter the address (such as `https://api.openai.com/v1`), model and key, then click **Save and check**. Type the model name, or enter the address and key first and click **Read models** next to it to pick from the list. Once the check passes the row folds into one line: the address, the model and how long a sentence takes; when something breaks it opens again and says what. **Translation and notes** takes over completed sentences in meeting subtitles and imported recordings, live and final notes, and speaker-name guesses. The check verifies translation and JSON support; an API without JSON support can still translate but cannot write notes. Partial sentences still use Google → Apple; completed sentences use the same fallback if the API fails. Speech recognition and Ming's audio understanding, interpreting voices and voice cloning stay on the main service. With **Other (OpenAI-compatible)** as the main service, translation and notes are already set up above, so that row isn't repeated. When the notes window or the menu bar reports a problem with this API, **Configure AI service** opens the page at these rows.
+
+**Audio understanding** is **Same** by default (`Ming-3.0-audio-flash` with Ling). On its own API it also needs the format your service accepts: OpenAI (`input_audio`) or Ming-compatible (`audio_url`); Ling's `api.ant-ling.com` picks Ming-compatible by itself. If translation and notes already use a compatible API, **Use the address and key from Translation and notes** brings over the same address and key and reads the model list, so you only pick an audio model. **Save and check** verifies it with one second of real audio. This handles push-to-talk audio understanding and cloud recognition on Intel Macs or when selected manually; Apple silicon Macs still recognize speech on device by default. Each row keeps its own key on the Mac with 0600 permissions, a key brought over is saved as a separate copy and never shown, and speech synthesis and voice cloning keep the existing Ming TTS configuration.
+
+**Speech recognition** stays on device by default on Apple silicon Macs. For more accurate Chinese, dialects and mixed-language speech, switch it to **Your service**: we recommend running Qwen3-ASR on this Mac with [mlx-audio](https://github.com/Blaizzy/mlx-audio), so the meeting's audio still stays on this Mac, whatever the main service is. Install it once in Terminal and start it:
+
+```bash
+uv tool install --upgrade "mlx-audio[stt,server]"   # without uv: pip3 install -U "mlx-audio[stt,server]" (Python 3.10+)
+mlx_audio.server --port 8000
+```
+
+Then under **Per-feature services › Speech recognition**, choose **Your service**: the address `http://localhost:8000/v1` and the model `mlx-community/Qwen3-ASR-1.7B-8bit` are already filled in, so click **Save and check**. The first check downloads about 2.5 GB of model and takes a few minutes. To save memory, use `mlx-community/Qwen3-ASR-0.6B-8bit` (about 1 GB). Measured on an M4 Pro, a 9-second stretch takes about 0.5 s once the model is loaded. It recognizes meetings from the next one on, and when the server is off or unreachable Cicada goes back to on-device recognition by itself. If the first check says the model can't be found, the download most likely failed: see the errors in the Terminal window running the server; if large downloads fail through a proxy, start it with `HF_HUB_DISABLE_XET=1`. Any server with `/audio/transcriptions` works (Qwen3-ASR on vLLM, Whisper…), and addresses on your local network can use http. MLX runs only on Apple silicon: an Intel Mac can use another Apple silicon Mac on the local network (start it there with `--host 0.0.0.0`). Recognition set up earlier under **Other (OpenAI-compatible)** moves here by itself; the steps are also on the website's [setup page](https://cicada.indaloop.app/en/start/#local-asr).
+
 ## Setting up a Ling API key
 
 1. Sign up and log in on the [Ling open platform](https://chat.ant-ling.com/platform/api), create a token, and copy the key starting with `sk-`.
 2. Open **Settings › AI Service** in Cicada (or the banner at the top of the notes window), paste the key, and save.
 
-**Can't sign up for Ling?** At the top right of **Settings › AI Service** (or by clicking **Can't use Ling?** during onboarding), you can switch to OpenRouter, ZenMux, OpenAI, or any OpenAI-compatible service (including local or LAN services like Ollama, vLLM, SGLang, Qwen3-ASR, and Whisper). Live notes and full-sentence translation work with all of them, and OpenRouter and ZenMux can also use natural Gemini voices for interpreting; one-step voice translation and voice cloning are supported only by Ling. When Windows, Linux, or Android switches to another service, listening to the other side also goes through that service, so subtitles run 1–2 seconds behind Ling. If a connection fails, Settings tells you directly whether it's a key, model, or proxy issue (see the [setup page](https://cicada.indaloop.app/en/start/#proxy) for proxy details).
+**Can't sign up for Ling?** At the top right of **Settings › AI Service** (or by clicking **Can't use Ling?** during onboarding), you can switch to OpenRouter, ZenMux, OpenAI, or any OpenAI-compatible service (including local or LAN services like Ollama, vLLM, and SGLang; in onboarding, **Compatible API** takes an address, model and key, and a service on this Mac or your local network needs no key). Live notes and full-sentence translation work with all of them, and OpenRouter and ZenMux can also use natural Gemini voices for interpreting; voice cloning is supported only by Ling, and on Mac one-step voice translation can also use a compatible audio-understanding API of its own. On Mac, translation and notes, speech recognition and audio understanding can each use a service of their own under **Per-feature services**, whatever the main service is. When Windows, Linux, or Android switches to another service, listening to the other side also goes through that service, so subtitles run 1–2 seconds behind Ling. If a connection fails, Settings tells you directly whether it's a key, model, or proxy issue (see the [setup page](https://cicada.indaloop.app/en/start/#proxy) for proxy details).
 
 ## Requirements & Installation
 
@@ -123,7 +136,7 @@ Installers are on the [Releases page](https://github.com/wquguru/cicada/releases
 
 ### Mac
 
-Requires macOS 14.4+ (Apple silicon and Intel). On Apple silicon with macOS 14.4–15, first go to **System Settings › Keyboard** to turn on **Dictation** and add the languages you want heard; macOS 26 uses the new on-device model directly without needing Dictation; Intel Macs use cloud-based Ming recognition and require a Ling key.
+Requires macOS 14.4+ (Apple silicon and Intel). On Apple silicon with macOS 14.4–15, first go to **System Settings › Keyboard** to turn on **Dictation** and add the languages you want heard; macOS 26 uses the new on-device model directly without needing Dictation; Intel Macs recognize speech through a cloud audio-understanding service (Ming by default, which needs a Ling key, or a compatible API).
 
 Download `Cicada-<version>-macOS-AppleSilicon.dmg` or `Cicada-<version>-macOS-Intel.dmg` and drag Cicada into Applications (verify with `shasum -a 256 Cicada-*.dmg`). The app is not notarized by Apple yet, so if the first launch is blocked, go to **System Settings › Privacy & Security** and click **Open Anyway**. Follow the onboarding guide to grant permissions and try the sample meeting.
 

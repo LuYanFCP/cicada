@@ -615,6 +615,7 @@ h2.big { margin: 0 0 14px; font-size: clamp(28px, 3.6vw, 52px); line-height: 1.2
 .aguide .card small { font-size: 12px; font-weight: 700; color: var(--orange-text); }
 .aguide .card h3 { margin-top: 6px; }
 .aguide .more { margin: 0 0 18px; }
+.aguide .card code { font: 600 0.92em ui-monospace, Menlo, monospace; color: var(--ink); overflow-wrap: anywhere; }
 
 /* Downloads */
 .dlcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; padding-bottom: 24px; }

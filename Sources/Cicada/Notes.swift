@@ -132,7 +132,9 @@ final class NotesEngine: ObservableObject {
     /// A finished meeting whose full notes are being written (main window "生成纪要").
     @Published private(set) var generatingID: String?
 
-    let ling: LingClient
+    private let defaultLing: LingClient
+    var client: (() -> LingClient)?
+    var ling: LingClient { client?() ?? defaultLing }
     let store: SessionStore
     /// The language a meeting's notes are written in (English name), set by the app from the
     /// 纪要语言 choice.
@@ -163,7 +165,7 @@ final class NotesEngine: ObservableObject {
     static let editableTopics = 2
 
     init(ling: LingClient, store: SessionStore) {
-        self.ling = ling
+        self.defaultLing = ling
         self.store = store
     }
 
@@ -265,7 +267,10 @@ final class NotesEngine: ObservableObject {
             return
         }
         guard let session = store.session(id), !session.lines.isEmpty else { return }
-        guard ling.hasKey else { state = .noKey; return }
+        let ling = self.ling
+        let config = ling.config()
+        guard ling.hasKey, config.base != nil, !config.textModel.isEmpty else { state = .noKey; return }
+        guard ling.aiCheck.failure?.reason != .noJSON else { state = .failed; return }
         inFlight = true
         lastAttempt = Date()
         state = .updating
@@ -298,7 +303,8 @@ final class NotesEngine: ObservableObject {
             // The final pass sends only the transcript, with no notes in the reader's language to
             // follow: given a long English meeting the model drifts into English. Say the language
             // again where it is read last, and try once more if the reply still isn't in it.
-            var next = final ? await longFinal(lines, names: names, language: lang, startedAt: session.lines.first?.t ?? 0) : nil
+            var next = final ? await longFinal(lines, names: names, language: lang,
+                                              startedAt: session.lines.first?.t ?? 0, client: ling) : nil
             for attempt in 1...(final || fresh ? 2 : 1) where next == nil {
                 let raw = try await ling.chat(content: prompt, instruction: "Update the notes. Write them in \(lang).",
                                               priority: .notes, json: true, maxTokens: 6000, timeout: 90, patient: final)
@@ -351,7 +357,7 @@ final class NotesEngine: ObservableObject {
     /// A long meeting's final pass: each part noted on its own, all at once, then merged into one.
     /// nil when a step fails: the caller then makes one pass over the whole transcript, as before.
     private func longFinal(_ lines: [TranscriptLine], names: [Int: String], language lang: String,
-                           startedAt: Double) async -> MeetingNotes? {
+                           startedAt: Double, client ling: LingClient) async -> MeetingNotes? {
         let parts = Self.parts(lines)
         guard parts.count > 1 else { return nil }
         let started = Date()

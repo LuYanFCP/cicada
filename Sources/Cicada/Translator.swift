@@ -92,6 +92,16 @@ final class TranslationService {
     enum Kind { case draft, sentence, speak, file }
 
     let ling: LingClient
+    /// A separate service for finished subtitles and imported lines; nil follows the main AI
+    /// service. Speaking and cloud hearing keep their original client and audio models.
+    var sentenceClient: (() -> LingClient?)?
+    var audioClient: (() -> LingClient?)?
+    var audio: LingClient { audioClient?() ?? ling }
+    /// The meeting's own speech server (语音识别 › 自建服务), nil when it is not chosen.
+    var speechClient: (() -> LingClient?)?
+    /// Who hears the meeting when it isn't heard on this Mac: the speech server when chosen, else
+    /// the audio model (Ming, or 语音理解's own).
+    var hearing: LingClient { speechClient?() ?? audio }
     /// Names and terms the notes have settled on, e.g. "江充 (Jiang Chong)".
     var glossary: () -> [String] = { [] }
 
@@ -125,8 +135,8 @@ final class TranslationService {
     /// A service that answers nothing (a home server switched off) costs every line its timeout
     /// before Google gets it, so subtitles run seconds late. While the check says unreachable, one
     /// line in 15 s still goes to it, so a server that is back is noticed without waiting for a check.
-    private func lingWorthTrying() -> Bool {
-        guard ling.aiCheck.failure?.reason == .unreachable else { return true }
+    private func worthTrying(_ client: LingClient) -> Bool {
+        guard client.aiCheck.failure?.reason == .unreachable else { return true }
         guard Date().timeIntervalSince(lastUnreachableTry) >= 15 else { return false }
         lastUnreachableTry = Date()
         return true
@@ -191,18 +201,19 @@ final class TranslationService {
     }
 
     private func chain(_ text: String, source: String, target: String, kind: Kind, trace: TranslateTrace?) async -> String? {
+        let client = (kind == .sentence || kind == .file ? sentenceClient?() : nil) ?? ling
         if kind == .sentence, failNext > 0 {
             failNext -= 1
-            trace?.attempts.append(.init(provider: ling.provider.id.rawValue, seconds: 0, failure: "simulated"))
+            trace?.attempts.append(.init(provider: client.provider.id.rawValue, seconds: 0, failure: "simulated"))
             return nil
         }
-        if kind != .draft, ling.usable, lingWorthTrying() {
+        if kind != .draft, client.usable, client.config().base != nil, !client.config().textModel.isEmpty, worthTrying(client) {
             let started = Date()
-            let (out, failure) = await viaLing(text, source: source, target: target, kind: kind, trace: trace)
-            trace?.attempts.append(.init(provider: ling.provider.id.rawValue, seconds: Date().timeIntervalSince(started),
+            let (out, failure) = await viaLing(text, source: source, target: target, kind: kind, trace: trace, client: client)
+            trace?.attempts.append(.init(provider: client.provider.id.rawValue, seconds: Date().timeIntervalSince(started),
                                          failure: out == nil ? failure : nil))
             if let out {
-                debugLog("translate via=\(ling.provider.id.rawValue) kind=\(kind)")
+                debugLog("translate via=\(client.provider.id.rawValue) kind=\(kind)")
                 return out
             }
         }
@@ -243,10 +254,10 @@ final class TranslationService {
     }
 
     private func viaLing(_ text: String, source: String, target: String, kind: Kind,
-                         trace: TranslateTrace?) async -> (String?, String) {
+                         trace: TranslateTrace?, client: LingClient) async -> (String?, String) {
         let from = source == "auto" ? "the spoken language" : Self.englishName(source)
         if kind == .sentence || kind == .file, let ctx = fixContext?(text) {
-            return await viaLingFixing(text, from: from, target: target, kind: kind, ctx: ctx, trace: trace)
+            return await viaLingFixing(text, from: from, target: target, kind: kind, ctx: ctx, trace: trace, client: client)
         }
         var prompt = """
         You translate live meeting subtitles from \(from) into \(Self.englishName(target)).
@@ -257,7 +268,7 @@ final class TranslationService {
         prompt += "\nSubtitle: " + text
         do {
             let priority: LingClient.Priority = kind == .speak ? .speak : kind == .file ? .notes : .translate
-            let out = try await ling.chat(content: prompt, instruction: "Translate.", priority: priority,
+            let out = try await client.chat(content: prompt, instruction: "Translate.", priority: priority,
                                           maxTokens: 400, timeout: kind == .speak ? 10 : kind == .file ? 20 : 6,
                                           role: kind == .file ? "file" : "translate",
                                           onQueued: { [weak trace] in trace?.lingQueue += $0 })
@@ -280,7 +291,7 @@ final class TranslationService {
     /// Proposals only: `Correction.decide` picks which to take. A reply that isn't the JSON asked
     /// for is dropped like a failed one, and the next provider translates the line.
     private func viaLingFixing(_ text: String, from: String, target: String, kind: Kind, ctx: FixContext,
-                               trace: TranslateTrace?) async -> (String?, String) {
+                               trace: TranslateTrace?, client: LingClient) async -> (String?, String) {
         var prompt = """
         You translate live meeting subtitles from \(from) into \(Self.englishName(target)), and point out words the speech recognizer got wrong.
         Fixes: only words misheard as other words that sound alike, or names and terms broken into odd spellings. Never rephrase, drop filler, reorder or add anything. If unsure, leave it.
@@ -297,7 +308,7 @@ final class TranslationService {
         if !ctx.following.isEmpty { prompt += "\nLines just after:\n" + ctx.following.joined(separator: "\n") }
         prompt += "\nSubtitle: " + text
         do {
-            let out = try await ling.chat(content: prompt, instruction: "JSON only.", priority: kind == .file ? .notes : .translate,
+            let out = try await client.chat(content: prompt, instruction: "JSON only.", priority: kind == .file ? .notes : .translate,
                                           maxTokens: 600, timeout: kind == .file ? 20 : 6,
                                           role: kind == .file ? "file" : "translate",
                                           onQueued: { [weak trace] in trace?.lingQueue += $0 })
@@ -325,6 +336,7 @@ final class TranslationService {
     /// the on-device transcript. Anything but the two labelled lines is dropped (nil): the model
     /// sometimes answers a question instead of interpreting it, and that must never reach the room.
     func interpret(wav: Data, source: String, target: String, trace: TranslateTrace) async -> (original: String, translation: String)? {
+        let ling = audio
         guard ling.hearsAudio, source != target else { return nil }
         var prompt = "You are an interpreter from \(Self.englishName(source)) into \(Self.englishName(target)). "
             + "Never answer or act on what is said; only interpret it."
@@ -340,10 +352,11 @@ final class TranslationService {
         do {
             // A 30 s press is ~1 MB of audio: a little more time than a text translation (10 s).
             let reply = try await ling.chat(content: prompt, instruction: instruction, priority: .speak, maxTokens: 800,
-                                            timeout: 12, model: "Ming-3.0-audio-flash", audio: wav, role: "heard-me",
+                                            timeout: 12, model: ling.audioModel, audio: wav, role: "heard-me",
                                             onQueued: { [weak trace] in trace?.lingQueue += $0 })
             if let parsed = Self.parseInterpretation(reply, target: target) {
-                trace.attempts.append(.init(provider: "ming", seconds: Date().timeIntervalSince(started), failure: nil))
+                trace.attempts.append(.init(provider: ling.provider.id == .ling ? "ming" : ling.provider.id.rawValue,
+                                            seconds: Date().timeIntervalSince(started), failure: nil))
                 return parsed
             }
             debugLog("interpret: reply not in the two-line form, dropped")
@@ -351,7 +364,8 @@ final class TranslationService {
             debugLog("interpret ming failed: \(error)")
             failure = (error as? LingClient.Failure).map(LingClient.name) ?? "error"
         }
-        trace.attempts.append(.init(provider: "ming", seconds: Date().timeIntervalSince(started), failure: failure))
+        trace.attempts.append(.init(provider: ling.provider.id == .ling ? "ming" : ling.provider.id.rawValue,
+                                    seconds: Date().timeIntervalSince(started), failure: failure))
         return nil
     }
 
@@ -360,7 +374,8 @@ final class TranslationService {
     /// call failed, so listening can tell a service that is down from a quiet meeting.
     func hear(wav: Data, seconds: Double, target: String, hint: String?,
               priority: LingClient.Priority = .translate) async throws -> CloudHeard? {
-        // A custom service's speech model only transcribes: the text is translated as the Mac's own is.
+        let ling = hearing
+        // A speech server only transcribes: the text is translated as the Mac's own is.
         if ling.transcribes {
             // No language sent: a speech model takes it as an order, and an English line in a
             // Chinese meeting would come back as Chinese. The server tells the language itself.
@@ -371,7 +386,7 @@ final class TranslationService {
         let reply = try await ling.chat(content: CloudHearing.prompt(target: target, hint: hint, names: glossary()),
                                         instruction: CloudHearing.instruction(target: target), priority: priority,
                                         maxTokens: CloudHearing.tokens(seconds: seconds), timeout: 12,
-                                        model: "Ming-3.0-audio-flash", audio: wav, role: "heard-them")
+                                        model: ling.audioModel, audio: wav, role: "heard-them")
         return CloudHearing.parse(reply, target: target, hint: hint, seconds: seconds)
     }
 

@@ -16,9 +16,7 @@
 "翻一句要 %@ 秒，超过 6 秒这句就不等它了。换一个更小的模型会快一些。" = "One sentence takes %@ s, and anything over 6 s isn't waited for. A smaller model will be faster.";
 "这个模型先思考再回答，翻一句要 %@ 秒，超过 6 秒会改用 Google。在服务端关掉思考，或换一个不思考的模型。" = "This model thinks before answering: one sentence takes %@ s, and anything over 6 s falls back to Google. Turn thinking off on the server, or pick a model that doesn't think.";
 "翻一句要 %@ 秒，超过 6 秒会改用 Google。换一个更小的模型会快一些。" = "One sentence takes %@ s, and anything over 6 s falls back to Google. A smaller model will be faster.";
-"这台 Mac 访问不到 %@，开会时先用本机识别。" = "This Mac can't reach %@; meetings use on-device recognition for now.";
 "知了没有本地网络权限，连不上 %@，开会时先用本机识别。" = "Cicada isn't allowed on the local network, so it can't reach %@. Meetings use this Mac's recognition for now.";
-"%@ 没接受音频（HTTP %lld），开会时先用本机识别。" = "%@ didn't accept the audio (HTTP %lld); meetings use on-device recognition for now.";
 "开了代理也连不上：换一个节点，或检查代理软件是否放过 %@。" = "A proxy is on but it still can't connect. Try another server, or check that your proxy app routes %@.";
 "代理软件在运行（端口 %@），但没开系统代理。在代理软件里打开“系统代理”。" = "A proxy app is running (port %@), but the system proxy is off. Turn on “System Proxy” in the proxy app.";
 "这台电脑没开代理。在国内通常要开代理才能用 %@。" = "No proxy is on. In mainland China, %@ usually needs one.";
@@ -99,7 +97,6 @@
 "跑在你自己的机器上，不按量计费。" = "Runs on your own machine, with no usage charges. ";
 "费用以这个服务为准。" = "Charges are set by this service. ";
 "会议的语音和文字只发给 %@，不经过 Google 等外部服务。" = "Meeting audio and text go only to %@, never through Google or other outside services.";
-"会议的声音会发给你的服务识别。" = "Meeting audio is sent to your service for recognition.";
 "发出去的只有文字，语音识别留在本机。" = "Only text is sent; speech recognition stays on this Mac.";
 "按所选模型计费。发出去的只有文字，语音识别留在本机。" = "Billed by chosen model. Only text is sent; speech recognition stays on-device.";
 "每样可以接不同的机器；这台 Mac 和局域网里的服务可以用 http。" = "Each can use a different machine; services on this Mac or your local network can use http.";
@@ -142,11 +139,7 @@
 "例如 vivian" = "e.g. vivian";
 "跟上面一样" = "Same as above";
 "自建服务" = "Your service";
-"会议的声音会发到 %@；连不上时用本机" = "Meeting audio goes to %@; this Mac takes over if it can't be reached";
 "更快，不花钱，声音不出这台 Mac" = "Faster, free, and audio never leaves this Mac";
-"需支持 /audio/transcriptions，例如 Qwen3-ASR、Whisper。下一场会议起生效。" = "Needs /audio/transcriptions, e.g. Qwen3-ASR or Whisper. Takes effect from the next meeting.";
-"填上模型才会用它识别。" = "Add a model to recognize with it.";
-"例如 qwen3-asr" = "e.g. qwen3-asr";
 "听一秒音频 %@ 秒" = "One second of audio in %@ s";
 "新字幕暂时只有原文，连上后自动继续。" = "New subtitles show the original only for now; translation resumes once connected.";
 "说话时的字幕要等说完一句才有翻译。" = "Subtitles are translated once each sentence ends, not while it's spoken.";
@@ -653,7 +646,6 @@
 "字幕条可任意拖动，拖拽右下角可调整大小。" = "Drag the subtitle bar anywhere; drag its corner to resize.";
 "先在上一步接上 Ling key，示例会议才能识别出实时字幕。" = "Connect your Ling key in the previous step first to see live subtitles for the sample meeting.";
 "开会时，这些字幕还能整理成纪要" = "In meetings, these subtitles become notes";
-"下一步接上 Ling 就有" = "Connect Ling in the next step";
 
 /* OnboardingKey */
 "用其他服务" = "Use another service";
@@ -685,7 +677,6 @@
 "自然人声" = "Natural voices";
 "同传约 2 秒出声" = "Interpreting speaks in ~2 s";
 "Intel 版 Mac 需要接上 Ling 才能识别语音" = "Intel Macs require a Ling key for speech recognition";
-"可以先进入应用，开会前在设置 › AI 服务里填上 Ling key 即可。" = "You can enter the app now and add your Ling key in Settings › AI Service before a meeting.";
 "先不接也行，基础功能照常能用" = "You can skip it; the basics still work";
 "随时可在纪要窗口或设置里接上，开完的会也能补出纪要。" = "Connect any time from the notes window or Settings; past meetings can get notes too.";
 "现在可用" = "Works now";
@@ -1050,7 +1041,6 @@
 "后台转写 %@ · %lld%%，还有 %lld 个" = "Transcribing %@ · %lld%%, %lld more";
 "屏幕上不出字幕，文字记录照常保存" = "Nothing on screen; the transcript is still saved";
 "什么时候出现" = "Appears";
-"填入 API key 后可生成纪要；文字记录照常保存" = "Add an API key for notes; the transcript is saved either way";
 "桌边的人说话也会记下" = "People at the table are recorded too";
 "关着 · 只听电脑声音" = "Off · Mac audio only";
 "译文从扬声器念出来" = "Translations are read out from the speakers";
@@ -1395,3 +1385,88 @@
 "关掉后只在菜单栏，打开窗口时才出现" = "Off: menu bar only, in the Dock just while a window is open";
 "密码：%@" = "Password: %@";
 "复制" = "Copy";
+/* AICheckView */
+"先配置翻译和纪要" = "Set up translation and notes";
+"纪要暂不可用；逐句翻译照常" = "Notes are unavailable; sentence translation continues.";
+"音频模型的返回格式不正确，请检查模型和接口格式" = "Invalid audio response. Check the model and API format.";
+/* AISettings */
+"按功能换服务" = "Per-feature services";
+"填好地址、模型和 key 后可用" = "Available after adding the address, model and key.";
+"填好语音理解接口后可用" = "Available after setting up audio understanding.";
+"说话的声音分段发给 %@ 识别和翻译；会议录音和文字记录只存在这台 Mac 上。" = "Speech is sent to %@ in short segments for transcription and translation; recordings and transcripts stay on this Mac.";
+"%@另外，按住说话时那几句的声音会发给 %@。" = "%@ Also, what you say while holding the talk key is sent to %@ as audio.";
+"下一场会议起用它识别" = "Used from the next meeting";
+"下一场会议起用它；连不上时用本机" = "Used from the next meeting; this Mac takes over if it can't be reached";
+"填好地址和模型后可用" = "Available once the address and model are set";
+"检查通过后可用" = "Available once the check passes";
+"说话的声音分段发给 %@ 识别；会议录音和文字记录只存在这台 Mac 上。" = "Speech is sent to %@ in short segments for recognition; recordings and transcripts stay on this Mac.";
+"%@会议的声音会发到 %@ 识别。" = "%@ The meeting's audio is sent to %@ for recognition.";
+/* CloudHearing */
+"请先在设置 › AI 服务里配置语音理解" = "Configure audio understanding in Settings › AI Service first.";
+/* NotesWindow */
+"配置 AI 服务" = "Configure AI service";
+"文字记录仍在保存。前往设置填好接口地址、模型和 key 后，会从头整理纪要。" = "The transcript is still being saved. Add the API address, model and key in Settings to create notes from the beginning.";
+"key 没有保存，请重试" = "The key was not saved. Try again.";
+/* Onboarding */
+"下一步接上 AI 服务就有" = "Connect an AI service in the next step.";
+"听会议的服务还没接通，示例会议识别不出字幕。" = "The service that hears the meeting isn't connected yet, so the sample meeting can't show subtitles.";
+/* OnboardingKey */
+"兼容 OpenAI 的服务都能接，包括这台 Mac 和局域网里的模型。" = "Any OpenAI-compatible service works, including models on this Mac or your local network.";
+"兼容接口" = "Compatible API";
+"请填写 API key" = "Enter an API key.";
+"key 不能含空格或换行" = "Keys cannot contain spaces or line breaks.";
+"模型名称不能含空格或换行" = "Model names cannot contain spaces or line breaks.";
+"请填写模型名称" = "Enter a model name.";
+"请填写有效地址；公网用 https，本机或局域网可用 http" = "Enter a valid address: https for public servers; http is allowed locally.";
+"先填 key 再读取模型" = "Add a key first, then read models.";
+"读不到模型列表，请手动填写" = "Cannot read the model list. Enter a model name manually.";
+"可以先进入应用，开会前在设置 › AI 服务里填上 Ling key，或在“按功能换服务”里接上语音识别。" = "You can enter the app now. Before a meeting, add your Ling key in Settings › AI Service, or connect speech recognition under Per-feature services.";
+/* ServiceOverride */
+"语音理解" = "Audio understanding";
+"同上" = "Same";
+"能用" = "Works";
+"用上面填的服务" = "Uses the service above";
+"用 Ling 的 Ming" = "Uses Ling's Ming";
+"还没有能听的服务" = "No service can hear audio yet";
+"本机识别后再翻译" = "Recognized on this Mac, then translated";
+"地址不对" = "Wrong address";
+"余额不足" = "Out of credit";
+"不支持 JSON" = "No JSON support";
+"返回格式不对" = "Unexpected reply format";
+"暂时出错" = "Temporary error";
+"用翻译和纪要的地址和 key" = "Use the address and key from Translation and notes";
+"接口格式" = "API format";
+"请填写音频模型名称" = "Enter an audio model name.";
+"填写模型名称" = "Enter model name";
+"填写音频模型名称" = "Enter audio model name";
+"Ming 兼容" = "Ming-compatible";
+"同翻译和纪要的 key" = "Same key as Translation and notes";
+"改动还没保存" = "Changes not saved yet";
+"接口繁忙，请稍后再试" = "The API is busy. Try again shortly.";
+"检查通过，翻译和纪要将使用此接口" = "Check passed. Translation and notes use this API.";
+"检查通过，可接收音频并返回原文和译文" = "Check passed. Audio can return originals and translations.";
+"填写 API key" = "Enter API key";
+"连不上这个地址，请检查地址或网络" = "Can't reach this address. Check the address or your network.";
+"这个 key 无效，请重新填写" = "This key is invalid. Enter it again.";
+"这个 key 不能调用模型，请更换 API key" = "This key cannot call models. Use a different API key.";
+"这个账户余额不足" = "This account is out of credit.";
+"找不到这个模型，请检查模型名称" = "Model not found. Check its name.";
+"接口暂时出错（HTTP %lld）" = "The API has a temporary error (HTTP %lld).";
+"接口暂时出错，请稍后再试" = "The API hit an error. Try again later.";
+"正在读取…" = "Reading…";
+"读取模型" = "Read models";
+"%lld 个模型" = "%lld models";
+"用语音理解的模型" = "Uses the audio understanding model";
+"正在检查…第一次要加载模型，可能要几分钟" = "Checking… The first time loads the model and can take a few minutes.";
+"推荐 Qwen3-ASR，用 mlx-audio 跑在一台 Apple 芯片的 Mac 上。" = "Recommended: Qwen3-ASR with mlx-audio on an Apple silicon Mac.";
+"推荐在这台 Mac 上用 mlx-audio 跑 Qwen3-ASR，会议的声音不出这台 Mac。" = "Recommended: run Qwen3-ASR with mlx-audio on this Mac; the meeting's audio stays on this Mac.";
+"怎么启动 ↗" = "How to start it ↗";
+"这台 Mac 上的识别服务没在运行：先启动它，再点重新检查。" = "The recognition server on this Mac isn't running. Start it, then click Check again.";
+"返回的不是识别结果，请确认地址是语音识别服务（/audio/transcriptions）" = "The reply isn't a transcription. Make sure the address is a speech recognition server (/audio/transcriptions).";
+"检查通过，下一场会议起用它识别" = "Check passed. Used from the next meeting.";
+"检查通过，下一场会议起用它识别；连不上时自动换回本机" = "Check passed. Used from the next meeting; this Mac takes over if it can't be reached.";
+"服务还没听完一秒音频：模型可能还在下载或加载，等启动服务的终端窗口里加载完，再点重新检查。" = "The server hasn't finished one second of audio: the model may still be downloading or loading. Wait until the Terminal window running the server shows it loaded, then click Check again.";
+"服务找不到这个模型。名称没错的话，多半是第一次下载没成功，看看启动服务的终端窗口里的报错。" = "The server can't find this model. If the name is right, the first download most likely failed: see the errors in the Terminal window running the server.";
+/* Views */
+"配置 AI 服务后可生成纪要；文字记录照常保存" = "Configure an AI service to create notes; transcripts are still saved.";
+"前往 设置 › AI 服务 配置翻译和纪要后即可生成。" = "Configure translation and notes in Settings › AI Service to generate them.";

@@ -560,5 +560,19 @@
   "share_js_chapters_lines": "章节与对话",
   "share_js_show_src": "显示原文",
   "share_js_expand_all": "展开全部对话",
-  "share_js_collapse_all": "全部收起"
+  "share_js_collapse_all": "全部收起",
+  "lasr_h": "在这台 Mac 上跑语音识别",
+  "lasr_p": "知了默认用 macOS 自带的本机识别。想要更准的中文、方言和中英混说，可以在 Apple 芯片的 Mac 上用 mlx-audio 跑 Qwen3-ASR，会议的声音同样不出这台 Mac。要在终端里装一次，开会时让它开着。",
+  "lasr1_small": "第一步",
+  "lasr1_h": "装上 mlx-audio",
+  "lasr1_p": "打开“终端”，运行 <code>uv tool install --upgrade \"mlx-audio[stt,server]\"</code>。没有 uv 时用 <code>pip3 install -U \"mlx-audio[stt,server]\"</code>（要 Python 3.10 或更新版本）。",
+  "lasr2_small": "第二步",
+  "lasr2_h": "启动识别服务",
+  "lasr2_p": "运行 <code>mlx_audio.server --port 8000</code>，开会时让这个终端窗口开着；关掉窗口，服务也会停。",
+  "lasr3_small": "第三步",
+  "lasr3_h": "在知了里接上",
+  "lasr3_p": "设置 › AI 服务 › 按功能换服务 › 语音识别，选“自建服务”：地址和模型（<code>mlx-community/Qwen3-ASR-1.7B-8bit</code>）已经填好，点“保存并检查”。第一次会下载约 2.5 GB 的模型，要等几分钟。",
+  "lasr4_small": "连不上时",
+  "lasr4_h": "照常能听",
+  "lasr4_p": "下一场会议起用它识别；服务没开或连不上时，知了自动换回本机识别。第一次检查说找不到模型，多半是下载没成功，看看启动服务的终端窗口；经代理下载大文件失败时，启动前加上 <code>HF_HUB_DISABLE_XET=1</code>。想省内存可以换成 <code>mlx-community/Qwen3-ASR-0.6B-8bit</code>（约 1 GB）。Intel 版 Mac 跑不了 mlx-audio，可以填局域网里另一台 Apple 芯片 Mac 的地址（那边启动时加 <code>--host 0.0.0.0</code>）。"
 }
