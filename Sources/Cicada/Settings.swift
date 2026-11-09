@@ -124,18 +124,27 @@ final class AppSettings: ObservableObject {
     @Published var aiCustomVoice: String {
         didSet { save() }
     }
-    /// The custom service's speech recognition model (`/audio/transcriptions`, e.g. Qwen3-ASR) and
-    /// its address (empty: the same one), and whether the meeting is recognized there instead of on
-    /// this Mac (off by default: the audio then leaves the Mac).
-    @Published var aiCustomHearModel: String {
+    /// The meeting recognized by the user's own speech server (`/audio/transcriptions`, e.g.
+    /// Qwen3-ASR on this Mac through mlx-audio) instead of on this Mac's engines, with any main
+    /// service. Off by default; it used to be part of the custom service (`aiCustomRecognize`).
+    @Published var speechServer: Bool {
         didSet { save() }
     }
-    @Published var aiCustomHearBase: String {
+    @Published var speechBase: String {
         didSet { save() }
     }
-    @Published var aiCustomRecognize: Bool {
+    @Published var speechModel: String {
         didSet { save() }
     }
+
+    var speechConfig: AIConfig? {
+        guard speechServer else { return nil }
+        return AIConfig.speech(base: speechBase, model: speechModel)
+    }
+
+    /// Recognition through the speech server was set up under the custom service: its key moves too
+    /// (`AppModel`), once.
+    private(set) var speechMovedFromCustom = false
 
     /// An optional text service shared by notes and finished subtitles. The stored names also
     /// retain existing translation configurations; Ming's audio routes keep their own service.
@@ -186,12 +195,8 @@ final class AppSettings: ObservableObject {
             let voice = (aiVoiceModels["custom"] ?? "").trimmingCharacters(in: .whitespaces)
             let voiceBase = aiCustomVoiceBase.isEmpty ? base : AIProvider.customBase(aiCustomVoiceBase)
             let name = aiCustomVoice.trimmingCharacters(in: .whitespaces)
-            let hear = aiCustomHearModel.trimmingCharacters(in: .whitespaces)
-            let hearBase = aiCustomHearBase.isEmpty ? base : AIProvider.customBase(aiCustomHearBase)
-            let recognizes = aiCustomRecognize && !hear.isEmpty
             return AIConfig(provider: p, base: base, textModel: aiModels["custom"] ?? "", voiceModel: voice.isEmpty ? nil : voice,
-                            voiceBase: voiceBase, customVoice: name.isEmpty ? nil : name,
-                            hearModel: recognizes ? hear : nil, hearBase: recognizes ? hearBase : nil)
+                            voiceBase: voiceBase, customVoice: name.isEmpty ? nil : name)
         default:
             return AIConfig(provider: p, base: p.base, textModel: aiModels[p.id.rawValue] ?? p.textModels.first?.id ?? "",
                             voiceModel: p.hasVoices ? aiVoiceModels[p.id.rawValue] ?? p.voiceModels.first?.id : nil, voiceBase: p.base)
@@ -277,9 +282,9 @@ final class AppSettings: ObservableObject {
         aiCustomBase = defaults.string(forKey: "aiCustomBase") ?? ""
         aiCustomVoiceBase = defaults.string(forKey: "aiCustomVoiceBase") ?? ""
         aiCustomVoice = defaults.string(forKey: "aiCustomVoice") ?? ""
-        aiCustomHearModel = defaults.string(forKey: "aiCustomHearModel") ?? ""
-        aiCustomHearBase = defaults.string(forKey: "aiCustomHearBase") ?? ""
-        aiCustomRecognize = defaults.bool(forKey: "aiCustomRecognize")
+        speechServer = defaults.bool(forKey: "speechServer")
+        speechBase = defaults.string(forKey: "speechBase") ?? ""
+        speechModel = defaults.string(forKey: "speechModel") ?? ""
         sentenceTranslation = defaults.bool(forKey: "sentenceTranslation")
         sentenceBase = defaults.string(forKey: "sentenceBase") ?? ""
         sentenceModel = defaults.string(forKey: "sentenceModel") ?? ""
@@ -303,6 +308,20 @@ final class AppSettings: ObservableObject {
             speakerVoices = true
             defaults.set(true, forKey: "speakerVoices")
             defaults.set(true, forKey: "speakerVoicesRegular")
+        }
+        // Recognition by the user's server used to live under the custom service, and counted only
+        // with it chosen: it carries over as 语音识别 › 自建服务, once, at the address it used (empty
+        // meant the text one). Nothing saved yet means nothing has seen the new keys.
+        if defaults.object(forKey: "speechServer") == nil, aiProvider == "custom", defaults.bool(forKey: "aiCustomRecognize"),
+           let hear = defaults.string(forKey: "aiCustomHearModel")?.trimmingCharacters(in: .whitespaces), !hear.isEmpty {
+            let base = defaults.string(forKey: "aiCustomHearBase") ?? ""
+            speechServer = true
+            speechBase = base.isEmpty ? aiCustomBase : base
+            speechModel = hear
+            speechMovedFromCustom = true
+            defaults.set(true, forKey: "speechServer")
+            defaults.set(speechBase, forKey: "speechBase")
+            defaults.set(speechModel, forKey: "speechModel")
         }
     }
 
@@ -336,9 +355,9 @@ final class AppSettings: ObservableObject {
         defaults.set(aiCustomBase, forKey: "aiCustomBase")
         defaults.set(aiCustomVoiceBase, forKey: "aiCustomVoiceBase")
         defaults.set(aiCustomVoice, forKey: "aiCustomVoice")
-        defaults.set(aiCustomHearModel, forKey: "aiCustomHearModel")
-        defaults.set(aiCustomHearBase, forKey: "aiCustomHearBase")
-        defaults.set(aiCustomRecognize, forKey: "aiCustomRecognize")
+        defaults.set(speechServer, forKey: "speechServer")
+        defaults.set(speechBase, forKey: "speechBase")
+        defaults.set(speechModel, forKey: "speechModel")
         defaults.set(sentenceTranslation, forKey: "sentenceTranslation")
         defaults.set(sentenceBase, forKey: "sentenceBase")
         defaults.set(sentenceModel, forKey: "sentenceModel")

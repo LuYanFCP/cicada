@@ -89,14 +89,14 @@ final class ListenEngine {
     private var serverFellBack = false
     /// The meeting is recognized by the user's own service (`Recognition.serverPreferred`).
     var serverHears: Bool {
-        Recognition.serverPreferred && !serverFellBack && translator?.audio.transcribes == true
+        Recognition.serverPreferred && !serverFellBack && translator?.hearing.transcribes == true
     }
     /// Back on this Mac after the service listened (its name), shown for a few seconds.
     private(set) var cloudBack: (name: String, at: Date)?
-    /// The service that can hear audio (Ling's Ming, or a custom service's speech model); nil when
-    /// there is none.
+    /// The service that can hear audio (Ling's Ming, 语音理解's model, or the speech server); nil
+    /// when there is none.
     var cloudService: String? {
-        guard let ling = translator?.audio, ling.hearsAudio || ling.transcribes else { return nil }
+        guard let ling = translator?.hearing, ling.hearsAudio || ling.transcribes else { return nil }
         return ling.provider.id == .custom ? (ling.config().base?.host ?? ling.serviceName) : ling.provider.name
     }
     /// 先用○○听 is offered: a model listening needs has been downloading a while, or couldn't be had.
@@ -1109,7 +1109,7 @@ final class ListenEngine {
             Task { await old.cancel() }
         }
         cloudListening = true
-        cloudVia = (translator.audio.config(), serverHears)
+        cloudVia = (translator.hearing.config(), serverHears)
         cloudReplaced = replaced
         cloudAwaiting = awaiting
         cloudLang = nil
@@ -1141,12 +1141,18 @@ final class ListenEngine {
                 guard gen == self.generation, self.cloudListening, !(error is CancellationError) else { return nil }
                 debugLog("cloud: hear failed: \(error)")
                 self.cloudFailures += 1
+                // A server on this Mac that refuses the connection isn't running (mlx-audio not started):
+                // waiting for two more stretches would only lose the start of the meeting.
+                let notRunning = (error as? LingClient.Failure) == .network
+                    && AIProvider.isLocal(translator.hearing.config().hearBase?.host ?? "")
                 // The service is down or the key stopped working: listening shouldn't go quiet with it.
-                if self.cloudFailures >= 3 {
+                if self.cloudFailures >= 3 || (notRunning && self.serverHears) {
                     if self.serverHears, !Recognition.cloudOnly {
                         // The user's own service is down: this Mac recognizes the rest of the meeting.
-                        debugLog("cloud: own service failed 3 times, back to this Mac for this meeting")
+                        debugLog("cloud: own service failed \(self.cloudFailures) times, back to this Mac for this meeting")
                         self.serverFellBack = true
+                        // Settings show it as down too, rather than the last check's green.
+                        Task { await translator.hearing.check() }
                         if self.cloudReplaced?.lang == nil { self.cloudReplaced = (self.activeLang, false) }
                         self.stopCloud()
                         self.setStatus(L("\(self.cloudService ?? "AI") 暂时连不上，先用本机识别"))
@@ -1189,7 +1195,7 @@ final class ListenEngine {
     /// 本机, takes the meeting back to this Mac rather than sending its audio to a service nobody chose.
     func aiServiceChanged() {
         guard cloudListening, let via = cloudVia else { return }
-        guard translator?.audio.config() != via.config || (via.server && !Recognition.serverPreferred) else { return }
+        guard translator?.hearing.config() != via.config || (via.server && !Recognition.serverPreferred) else { return }
         debugLog("cloud: the audio service changed")
         if !Recognition.cloudOnly { stopCloud(); return }
         // Intel has no local recognizer. Start a fresh stream without replaying audio captured

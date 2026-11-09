@@ -185,12 +185,19 @@ final class LingClient: ObservableObject {
     private let keyNamespace: String?
     private let checksJSON: Bool
     private let checksAudio: Bool
+    /// The meeting's speech server: only `/audio/transcriptions` is asked of it.
+    private let checksTranscription: Bool
     private var keyService: String { keyService(for: provider) }
     private func keyService(for provider: AIProvider) -> String {
         keyNamespace.map { "\($0)-\(provider.id.rawValue)" } ?? provider.id.rawValue
     }
 
     func hasStoredKey(for configuration: AIConfig) -> Bool { AIKey.read(keyService(for: configuration.provider)) != nil }
+    /// The key saved for that kind of service, to show masked or to hand to another setting that
+    /// shares its address (never displayed or logged).
+    func storedKey(for configuration: AIConfig) -> String? {
+        hideKey ? nil : AIKey.read(keyService(for: configuration.provider))
+    }
 
     /// Debug control only: make every chat call fail this way.
     var simulate: Failure?
@@ -229,10 +236,11 @@ final class LingClient: ObservableObject {
     /// The custom service refused `chat_template_kwargs` once: leave it out until settings change.
     private var noTemplateKwargs = false
 
-    init(keyNamespace: String? = nil, checksJSON: Bool = true, checksAudio: Bool = false) {
+    init(keyNamespace: String? = nil, checksJSON: Bool = true, checksAudio: Bool = false, checksTranscription: Bool = false) {
         self.keyNamespace = keyNamespace
         self.checksJSON = checksJSON
         self.checksAudio = checksAudio
+        self.checksTranscription = checksTranscription
         keyState = AIKey.read(keyNamespace.map { "\($0)-ling" } ?? "ling") == nil ? .none : .unchecked
     }
 
@@ -328,7 +336,18 @@ final class LingClient: ObservableObject {
             return
         }
         do {
-            if checksAudio {
+            if checksTranscription {
+                guard c.transcribes else { throw Failure.http(404) }
+                // A server on this Mac loads the model on its first request, downloading it the first
+                // time (Qwen3-ASR 1.7B is 2.4 GB: 5 minutes at 8 MB/s, measured): give that time here
+                // rather than in a meeting. Loading it from disk took 15 s, a warm request 0.5 s.
+                let nearby = c.base.map { AIProvider.isNearby($0.absoluteString) } ?? false
+                _ = try await transcribe(CloudHearing.wav(Array(repeating: 0, count: 16000)), language: nil,
+                                         timeout: nearby ? 1200 : 30, role: "speech-check")
+                let seconds = Date().timeIntervalSince(started)
+                r.pass(upTo: .text, seconds: seconds)
+                r.hear = .ok(seconds: seconds)
+            } else if checksAudio {
                 guard !c.textModel.isEmpty else { throw Failure.http(404) }
                 let reply = try await chat(content: "This is an audio connection test. Reply with OK only.", instruction: "Reply OK.",
                                            priority: .speak, maxTokens: 20, timeout: 20,
@@ -370,16 +389,13 @@ final class LingClient: ObservableObject {
                     do { _ = try await postChat(json, key: key, timeout: 30, base: c.base) } catch Failure.http(let code) {
                         r.fail(.text, .noJSON, code: code)
                     }
-                    if r.failure == nil, c.transcribes {
-                        r.hear = await checkHearing(c, key: key)
-                        if r.hear == .unreachable, await localNetworkDenied(c.hearBase) { r.hear = .localNetworkDenied }
-                    }
                 }
             }
         } catch let failure as Failure {
-            if checksAudio {
+            if checksAudio || checksTranscription {
                 if case .http(let code) = failure { r.hear = .fail(code: code) }
                 else { r.hear = failure == .network || failure == .timeout ? .unreachable : .fail(code: nil) }
+                r.timedOut = checksTranscription && failure == .timeout
             }
             if failure == .parse || failure == .hijacked {
                 r.fail(.text, .noJSON)
@@ -387,7 +403,7 @@ final class LingClient: ObservableObject {
                 if reason == .busy { r.pass(upTo: step, seconds: nil); r[step] = .busy } else { r.fail(step, reason, code: code) }
             }
         } catch {
-            if checksAudio { r.hear = .unreachable }
+            if checksAudio || checksTranscription { r.hear = .unreachable }
             r.fail(.reach, .unreachable)
         }
         if r.failure == nil, c.provider.id != .ling {
@@ -534,6 +550,7 @@ final class LingClient: ObservableObject {
         guard let key, c.provider.id != .ling, let data = try? await getData("models", key: key) else { return }
         guard generation == settingsGeneration, c == config(), key == self.key else { return }
         catalog = checksAudio ? AIConfig.audioModels(fromCatalog: data)
+            : checksTranscription ? AIConfig.speechModels(fromCatalog: data)
             : AIConfig.textModels(fromCatalog: data, recommended: c.provider.textModels.map(\.id))
         listed = AICheck.listedModels(data)
         debugLog("ai \(c.provider.id.rawValue): \(catalog.count) models")
@@ -545,6 +562,11 @@ final class LingClient: ObservableObject {
     func availableTextModels(for configuration: AIConfig, key raw: String) async throws -> [String] {
         let data = try await availableModels(for: configuration, key: raw)
         return AIConfig.textModels(fromCatalog: data, recommended: [])
+    }
+
+    func availableSpeechModels(for configuration: AIConfig, key raw: String) async throws -> [String] {
+        let data = try await availableModels(for: configuration, key: raw)
+        return AIConfig.speechModels(fromCatalog: data)
     }
 
     func availableAudioModels(for configuration: AIConfig, key raw: String) async throws -> [String] {
@@ -792,7 +814,8 @@ final class LingClient: ObservableObject {
     /// `/audio/transcriptions` (Qwen3-ASR, Whisper servers, Fun-ASR). `language` (a BCP-47 code) is
     /// the hint, for servers that take one. Throws like a chat call, so listening can tell a
     /// service that is down from a quiet meeting.
-    func transcribe(_ wav: Data, language: String?, timeout: TimeInterval = 12) async throws -> (text: String, language: String?) {
+    func transcribe(_ wav: Data, language: String?, timeout: TimeInterval = 12,
+                    role: String = "heard-them") async throws -> (text: String, language: String?) {
         guard let key else { throw Failure.noKey }
         let c = config()
         guard let base = c.hearBase, let model = c.hearModel else { throw Failure.noKey }
@@ -800,13 +823,14 @@ final class LingClient: ObservableObject {
         await acquire(.translate)
         let queued = Date().timeIntervalSince(asked)
         let started = Date()
-        let call = CallLabel(provider: c.provider.id.rawValue, model: model, role: "heard-them")
+        let call = CallLabel(provider: c.provider.id.rawValue, model: model, role: role)
         var req = URLRequest(url: base.appendingPathComponent("audio/transcriptions"))
         req.httpMethod = "POST"
         req.timeoutInterval = timeout
         let boundary = "cicada-" + UUID().uuidString
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        var fields = [("model", model), ("temperature", "0")]
+        // `response_format` spelled out: mlx-audio's server streams NDJSON unless asked for JSON.
+        var fields = [("model", model), ("temperature", "0"), ("response_format", "json")]
         if let language { fields.append(("language", String(language.prefix { $0 != "-" }))) }
         req.httpBody = Self.multipart(fields: fields, file: wav, boundary: boundary)
         do {
@@ -821,21 +845,6 @@ final class LingClient: ObservableObject {
         } catch {
             report(call, .translate, at: started, queued: queued, outcome: "parse")
             throw Failure.parse
-        }
-    }
-
-    /// One second of silence through the speech model: does the address answer, and does the
-    /// model take audio. The time is the request's.
-    private func checkHearing(_ c: AIConfig, key: String) async -> AICheck.Hearing {
-        let started = Date()
-        do {
-            _ = try await transcribe(CloudHearing.wav(Array(repeating: 0, count: 16000)), language: nil, timeout: 20)
-            return .ok(seconds: Date().timeIntervalSince(started))
-        } catch let failure as Failure {
-            if case .http(let code) = failure { return .fail(code: code) }
-            return failure == .network || failure == .timeout ? .unreachable : .fail(code: nil)
-        } catch {
-            return .fail(code: nil)
         }
     }
 

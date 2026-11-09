@@ -7,12 +7,14 @@ import Testing
 final class LingStub: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var reply: (Int, String) = (200, "")
     nonisolated(unsafe) static var seen: [(at: Date, body: [String: Any], url: URL?, authorization: String?, method: String?)] = []
+    /// Each request's body as sent (a multipart upload isn't JSON).
+    nonisolated(unsafe) static var raw: [Data] = []
     /// Answers each request by what it asked, instead of `reply`.
     nonisolated(unsafe) static var respond: (([String: Any]) -> (Int, String))?
     private static let lock = NSLock()
 
     static func reset(_ status: Int = 200, _ body: String) {
-        lock.withLock { reply = (status, body); seen = []; respond = nil }
+        lock.withLock { reply = (status, body); seen = []; raw = []; respond = nil }
     }
 
     static func chatReply(_ text: String, finish: String? = "stop") -> String {
@@ -36,6 +38,7 @@ final class LingStub: URLProtocol, @unchecked Sendable {
         let body = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
         let (status, text) = Self.lock.withLock {
             Self.seen.append((Date(), body, request.url, request.value(forHTTPHeaderField: "Authorization"), request.httpMethod))
+            Self.raw.append(data)
             return Self.respond?(body) ?? Self.reply
         }
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
@@ -279,6 +282,64 @@ final class LingStub: URLProtocol, @unchecked Sendable {
         #expect(!FileManager.default.fileExists(atPath: file.path))
         #expect(AIKey.read("sentence-openai") == "sk-openai-sentence")
         #expect(AIKey.read() == "sk-original-ling" && AIKey.read("custom") == "sk-original-custom")
+    }
+
+    /// "用翻译和纪要的地址和 key": the audio row reads the text row's key for the same address and
+    /// saves its own copy; neither row ever sees the other's key on its own.
+    @Test func audioCanTakeTheTextKeyForTheSameAddressOnlyWhenAsked() async throws {
+        let sentence = sentenceClient()
+        AIKey.save("sk-shared-gateway", "sentence-custom")
+        let audio = audioClient()
+        let same = AIConfig.audio(base: "https://translation.example.com/v1", model: "omni-model", format: .openai)
+        #expect(audio.storedKey(for: same) == nil && !audio.hasStoredKey(for: same))
+        let text = AIConfig.sentence(base: "https://translation.example.com/v1", model: "sentence-model")
+        let copied = try #require(sentence.storedKey(for: text))
+        #expect(audio.saveKey(copied, for: same))
+        #expect(audio.storedKey(for: same) == "sk-shared-gateway" && AIKey.read("audio-custom") == "sk-shared-gateway")
+        // Each keeps its own file: removing one leaves the other.
+        audio.removeKey()
+        #expect(AIKey.read("audio-custom") == nil && sentence.key == "sk-shared-gateway")
+        sentence.hideKey = true
+        #expect(sentence.storedKey(for: text) == nil)
+    }
+
+    private func speechClient(base: String = "http://localhost:8000/v1") -> LingClient {
+        let speech = LingClient(keyNamespace: "asr", checksJSON: false, checksTranscription: true)
+        speech.config = { AIConfig.speech(base: base, model: "mlx-community/Qwen3-ASR-1.7B-8bit") }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [LingStub.self]
+        speech.session = URLSession(configuration: config)
+        return speech
+    }
+
+    /// Qwen3-ASR through mlx-audio on this Mac: the check is one second of audio to
+    /// `/audio/transcriptions`, asking for JSON (mlx-audio streams NDJSON otherwise), with no key.
+    @Test func speechServerIsCheckedWithOneTranscriptionAskingForJSON() async throws {
+        LingStub.reset(200, #"{"text":""}"#)
+        let speech = speechClient()
+        #expect(speech.key == "" && !speech.hearsAudio)
+        await speech.check()
+        let first = try #require(LingStub.seen.first)
+        #expect(first.url?.absoluteString == "http://localhost:8000/v1/audio/transcriptions" && first.authorization == nil)
+        let body = String(decoding: try #require(LingStub.raw.first), as: UTF8.self)
+        #expect(body.contains("name=\"response_format\"\r\n\r\njson\r\n"))
+        #expect(body.contains("mlx-community/Qwen3-ASR-1.7B-8bit"))
+        #expect(speech.aiCheck.passed && speech.aiCheck.hear?.ok == true && speech.transcribes)
+        // Meetings call it the same way and read the text back.
+        LingStub.reset(200, #"{"text":" 大家好 "}"#)
+        let heard = try await speech.transcribe(CloudHearing.wav(Array(repeating: 0, count: 1600)), language: nil)
+        #expect(heard.text == "大家好")
+    }
+
+    @Test func aSpeechServerWithoutTheModelOrAnsweringNDJSONSaysWhy() async throws {
+        LingStub.reset(404, #"{"detail":"Model not found"}"#)
+        let speech = speechClient()
+        await speech.check()
+        #expect(speech.aiCheck.failure?.reason == .noModel && speech.aiCheck.hear == .fail(code: 404))
+        // NDJSON (a server not asked for JSON) can't be read as a transcription.
+        LingStub.reset(200, "{\"text\":\"a\"}\n{\"text\":\"b\"}\n")
+        await speech.check()
+        #expect(speech.aiCheck.failure?.reason == .noJSON)
     }
 
     @Test func sentenceInterfaceDoesNotNeedTheNotesJSONMode() async throws {

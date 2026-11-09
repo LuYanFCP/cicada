@@ -139,7 +139,6 @@ final class AppModel: ObservableObject {
     @Published var onboardingStep = 1
     /// Step 3 is showing what skipping the key leaves out (debug: `onboarding:3,skip`).
     @Published var onboardingKeySkip = false
-    @Published var onboardingTranslationEdits = false
     /// Step 4's yes/no (false) or checklist (true); nil follows whether speaking is on
     /// (debug: `onboarding:4,ask` / `onboarding:4,setup`).
     @Published var onboardingSpeakSetup: Bool?
@@ -156,6 +155,17 @@ final class AppModel: ObservableObject {
     var textAI: LingClient { settings.sentenceTranslation ? sentenceAI : ling }
     let audioUnderstandingAI = LingClient(keyNamespace: "audio", checksJSON: false, checksAudio: true)
     var audioAI: LingClient { settings.audioUnderstanding ? audioUnderstandingAI : ling }
+    /// 语音识别 › 自建服务: the meeting heard by the user's own speech server (Qwen3-ASR on this Mac).
+    let speechAI = LingClient(keyNamespace: "asr", checksJSON: false, checksTranscription: true)
+    /// Who hears the meeting when this Mac doesn't (always, on an Intel Mac).
+    var hearingAI: LingClient { settings.speechServer ? speechAI : audioAI }
+    /// It can hear now: Ming with a working key, or a model or server of its own once a check
+    /// has put audio through it.
+    var hearingReady: Bool {
+        let h = hearingAI
+        guard h.hearsAudio || h.transcribes, h.aiCheck.failure == nil else { return false }
+        return h === ling || h.aiCheck.passed
+    }
     /// Network changes (a proxy app turned on, Wi-Fi back): the AI service is looked at again
     /// when it was unreachable. No timer: nothing is checked while the network stays the same.
     private let networkMonitor = NWPathMonitor()
@@ -246,6 +256,9 @@ final class AppModel: ObservableObject {
         audioUnderstandingAI.onCall = { [weak self] in self?.diagnostics.record($0) }
         audioUnderstandingAI.proxyHint = { await ProxyProbe.hint() }
         audioUnderstandingAI.localNetworkProbe = { await LocalNetworkProbe.denied($0) }
+        speechAI.onCall = { [weak self] in self?.diagnostics.record($0) }
+        speechAI.proxyHint = { await ProxyProbe.hint() }
+        speechAI.localNetworkProbe = { await LocalNetworkProbe.denied($0) }
         watchNetwork()
         translator.onDraft = { [weak self] in self?.diagnostics.recordDraft(seconds: $0, ok: $1) }
 
@@ -256,7 +269,19 @@ final class AppModel: ObservableObject {
         audioUnderstandingAI.config = { [weak self] in
             self?.settings.audioConfig ?? AIConfig(provider: .custom, base: nil, textModel: "")
         }
+        speechAI.config = { [weak self] in
+            self?.settings.speechConfig ?? AIConfig(provider: .custom, base: nil, textModel: "")
+        }
+        // Recognition set up under the custom service: its key comes along to 自建服务, once.
+        if settings.speechMovedFromCustom, let key = AIKey.read("custom"), let c = settings.speechConfig,
+           !speechAI.hasStoredKey(for: c) {
+            speechAI.saveKey(key, for: c)
+        }
         translator.audioClient = { [weak self] in self?.audioAI }
+        translator.speechClient = { [weak self] in
+            guard let self, self.settings.speechServer else { return nil }
+            return self.speechAI
+        }
         speakTester.audioClient = { [weak self, fallback = ling] in self?.audioAI ?? fallback }
         translator.sentenceClient = { [weak self] in
             guard let self, self.settings.sentenceTranslation else { return nil }
@@ -303,6 +328,7 @@ final class AppModel: ObservableObject {
         applyAIService()
         applySentenceTranslation()
         applyAudioUnderstanding()
+        applySpeechServer()
 
         installer.speakThrough = { [weak self] text, lang, device in
             await self?.speak.speak(text, language: lang, device: device)
@@ -604,7 +630,9 @@ final class AppModel: ObservableObject {
             micDeniedSince = denied ? Date() : nil
             overlay.setAlert(denied ? L("听不到会议室 · 麦克风没允许") : nil)
         }
-        let audioProblem = Recognition.cloudOnly ? AIServiceStrip.blocking(audioAI, textModel: audioAI.audioModel) : nil
+        let hearer = hearingAI
+        let audioProblem = Recognition.cloudOnly
+            ? AIServiceStrip.blocking(hearer, textModel: hearer.config().hearModel ?? hearer.audioModel) : nil
         let p = denied ? L("听会议室要先允许麦克风")
             : audioProblem ?? AIServiceStrip.blocking(textAI, textModel: textAI.config().textModel)
         if p != problem { problem = p }
@@ -665,11 +693,21 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func openSettings(_ section: SettingsSection? = nil) {
+    /// Where the settings page scrolls once it is up (`overrides`: AI 服务 › 按功能换服务), then nil.
+    @Published var settingsAnchor: String?
+
+    func openSettings(_ section: SettingsSection? = nil, at anchor: String? = nil) {
         if let section { settingsSection = section }
         // The 诊断 tab only exists while its switch is on.
         if settingsSection == .diagnostics && !settings.diagnostics { settingsSection = .overlay }
+        settingsAnchor = anchor
         openSettingsWindow?()
+    }
+
+    /// AI 服务, at the service the notes and translation use: with one of their own, its row is
+    /// at the bottom of the page, under the main service.
+    func openTextAISettings() {
+        openSettings(.ai, at: settings.sentenceTranslation ? "overrides" : nil)
     }
 
     func ensureListening() {
@@ -1123,6 +1161,7 @@ final class AppModel: ObservableObject {
                             self?.ling.networkChanged()
                             self?.sentenceAI.networkChanged()
                             self?.audioUnderstandingAI.networkChanged()
+                            self?.speechAI.networkChanged()
                         }
                     }
                     self.networkDebounce = work
@@ -1137,6 +1176,7 @@ final class AppModel: ObservableObject {
                 self?.ling.recheckLocalNetwork()
                 self?.sentenceAI.recheckLocalNetwork()
                 self?.audioUnderstandingAI.recheckLocalNetwork()
+                self?.speechAI.recheckLocalNetwork()
             }
         }
     }
@@ -1168,6 +1208,16 @@ final class AppModel: ObservableObject {
         objectWillChange.send()
     }
 
+    /// 语音识别 changed: the next meeting is heard by the speech server (or this Mac again); one
+    /// already running goes back to this Mac rather than on to another server (`aiServiceChanged`).
+    func applySpeechServer() {
+        speechAI.reconfigure()
+        Recognition.serverPreferred = settings.speechConfig?.transcribes == true
+        listen.aiServiceChanged()
+        roomListen.aiServiceChanged()
+        objectWillChange.send()
+    }
+
     /// Settings changed the AI service, its address or a model: voices follow, the key is checked again.
     func applyAIService() {
         let c = settings.aiConfig
@@ -1181,9 +1231,6 @@ final class AppModel: ObservableObject {
             guard let id = self?.settings.provider.id, id != .ling else { return "ming" }
             return id.rawValue
         }
-        // Takes effect from the next meeting: one already running keeps how it listens, except that
-        // its audio never goes on to a service other than the one hearing it (`aiServiceChanged`).
-        Recognition.serverPreferred = c.transcribes
         ling.reconfigure()
         listen.aiServiceChanged()
         roomListen.aiServiceChanged()
@@ -1757,8 +1804,10 @@ final class AppModel: ObservableObject {
             }
         case "micVerify": installer.install(verifyOnly: true)
         case "settings":
-            settingsSection = SettingsSection(rawValue: arg) ?? settingsSection
-            openSettings(settingsSection)
+            // settings:<section>[@<anchor>], e.g. settings:ai@overrides.
+            let p = arg.split(separator: "@", maxSplits: 1).map(String.init)
+            settingsSection = SettingsSection(rawValue: p.first ?? "") ?? settingsSection
+            openSettings(settingsSection, at: p.count > 1 ? p[1] : nil)
         case "diagnostics":
             setDiagnostics(arg != "off")
             debugLog("diagnostics \(settings.diagnostics ? "on" : "off")")
@@ -1968,8 +2017,8 @@ final class AppModel: ObservableObject {
             // localNetworkProbe:<url>: whether the local network permission holds back a connection to it (log).
             if let url = URL(string: arg) { Task { _ = await LocalNetworkProbe.denied(url) } }
         // AI service: aiProvider:<ling|openrouter|zenmux|openai|custom>, aiTextModel:<id>, aiVoiceModel:<id|"">,
-        // aiCustomBase:<url>, aiCustomVoiceBase:<url|"">, aiCustomVoice:<name>, aiCustomHearModel:<name>,
-        // aiCustomHearBase:<url|"">, aiCustomRecognize:on|off.
+        // aiCustomBase:<url>, aiCustomVoiceBase:<url|"">, aiCustomVoice:<name>; the meeting's speech server:
+        // speechService:<custom|default>, speechBase:<url>, speechModel:<id>, speechState.
         case "aiProvider": settings.aiProvider = AIProvider.named(arg).id.rawValue; applyAIService()
         case "sentenceService": settings.sentenceTranslation = arg == "custom"; applySentenceTranslation()
         case "sentenceBase": settings.sentenceBase = arg; applySentenceTranslation()
@@ -1978,6 +2027,13 @@ final class AppModel: ObservableObject {
         case "audioBase": settings.audioBase = arg; applyAudioUnderstanding()
         case "audioModel": settings.audioModel = arg; applyAudioUnderstanding()
         case "audioFormat": settings.audioFormat = AudioInputFormat(rawValue: arg)?.rawValue ?? "openai"; applyAudioUnderstanding()
+        case "speechService": settings.speechServer = arg == "custom"; applySpeechServer()
+        case "speechBase": settings.speechBase = arg; applySpeechServer()
+        case "speechModel": settings.speechModel = arg; applySpeechServer()
+        case "speechState":
+            debugLog("speech enabled=\(settings.speechServer) preferred=\(Recognition.serverPreferred) "
+                     + "model=\(settings.speechConfig?.hearModel ?? "-") check=[\(speechAI.aiCheck.summary)] "
+                     + "hearing=\(listen.cloudService ?? "none") serverHears=\(listen.serverHears)")
         case "audioState":
             debugLog("audio enabled=\(settings.audioUnderstanding) model=\(audioAI.audioModel) check=[\(audioAI.aiCheck.summary)] "
                      + "voice=\(settings.aiConfig.voiceModel ?? "-")")
@@ -1998,9 +2054,6 @@ final class AppModel: ObservableObject {
         case "aiCustomBase": settings.aiCustomBase = arg; applyAIService()
         case "aiCustomVoiceBase": settings.aiCustomVoiceBase = arg; applyAIService()
         case "aiCustomVoice": settings.aiCustomVoice = arg; applyAIService()
-        case "aiCustomHearModel": settings.aiCustomHearModel = arg; applyAIService()
-        case "aiCustomHearBase": settings.aiCustomHearBase = arg; applyAIService()
-        case "aiCustomRecognize": settings.aiCustomRecognize = arg == "on"; applyAIService()
         case "subtitles": setSubtitles(arg)
         case "meetingSubtitles": setSubtitles(arg, meetingOnly: true)
         case "notesLang": setNotesLanguage(arg)

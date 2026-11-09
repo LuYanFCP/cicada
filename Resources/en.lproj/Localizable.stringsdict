@@ -18,6 +18,22 @@
 			<string>%lld lines</string>
 		</dict>
 	</dict>
+	<key>%lld 个模型</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld model</string>
+			<key>other</key>
+			<string>%lld models</string>
+		</dict>
+	</dict>
 	<key>%lld 个议题</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>

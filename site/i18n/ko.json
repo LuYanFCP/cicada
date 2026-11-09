@@ -506,5 +506,19 @@
   "proxy3_p": "다른 서버로 바꾸거나, 프록시 앱 규칙에서 openrouter.ai와 zenmux.ai가 프록시를 거치게 하세요.",
   "proxy4_small": "시스템 프록시 위치",
   "proxy4_h": "플랫폼별 시스템 프록시",
-  "proxy4_p": "Mac: 시스템 설정 › 네트워크 › 세부사항 › 프록시. Windows: 설정 › 네트워크 및 인터넷 › 프록시. Linux: 설정 › 네트워크 › 네트워크 프록시. Android: Wi‑Fi 세부정보의 프록시."
+  "proxy4_p": "Mac: 시스템 설정 › 네트워크 › 세부사항 › 프록시. Windows: 설정 › 네트워크 및 인터넷 › 프록시. Linux: 설정 › 네트워크 › 네트워크 프록시. Android: Wi‑Fi 세부정보의 프록시.",
+  "lasr_h": "이 Mac에서 음성 인식 실행하기",
+  "lasr_p": "Cicada는 기본적으로 macOS 내장 기기 내 인식을 사용합니다. 중국어, 방언, 여러 언어가 섞인 말을 더 정확하게 인식하려면 Apple 실리콘 Mac에서 mlx-audio로 Qwen3-ASR을 실행하세요. 회의 음성은 여전히 이 Mac 밖으로 나가지 않습니다. 터미널에서 한 번 설치하고, 회의 중에는 서버를 켜 두면 됩니다.",
+  "lasr1_small": "1단계",
+  "lasr1_h": "mlx-audio 설치",
+  "lasr1_p": "‘터미널’을 열고 <code>uv tool install --upgrade \"mlx-audio[stt,server]\"</code>를 실행하세요. uv가 없다면 <code>pip3 install -U \"mlx-audio[stt,server]\"</code>(Python 3.10 이상)를 사용합니다.",
+  "lasr2_small": "2단계",
+  "lasr2_h": "인식 서버 시작",
+  "lasr2_p": "<code>mlx_audio.server --port 8000</code>을 실행하고, 회의 중에는 그 터미널 창을 열어 두세요. 창을 닫으면 서버도 멈춥니다.",
+  "lasr3_small": "3단계",
+  "lasr3_h": "Cicada에서 연결",
+  "lasr3_p": "설정 › AI 서비스 › 기능별 서비스 › 음성 인식에서 ‘내 서비스’를 고르세요. 주소와 모델(<code>mlx-community/Qwen3-ASR-1.7B-8bit</code>)이 이미 채워져 있으니 ‘저장 및 확인’을 클릭하면 됩니다. 처음에는 약 2.5 GB의 모델을 내려받느라 몇 분 걸립니다.",
+  "lasr4_small": "연결되지 않을 때",
+  "lasr4_h": "듣기는 계속됩니다",
+  "lasr4_p": "다음 회의부터 사용됩니다. 서버가 꺼져 있거나 연결되지 않으면 Cicada가 자동으로 이 Mac의 인식으로 돌아갑니다. 처음 확인할 때 모델을 찾을 수 없다고 나오면 대개 다운로드 실패이니 서버를 실행한 터미널 창을 확인하고, 프록시를 거쳐 큰 파일을 내려받지 못하면 <code>HF_HUB_DISABLE_XET=1</code>을 붙여 시작하세요. 메모리를 아끼려면 <code>mlx-community/Qwen3-ASR-0.6B-8bit</code>(약 1 GB)를 쓰세요. Intel Mac에서는 mlx-audio를 실행할 수 없지만, 로컬 네트워크의 다른 Apple 실리콘 Mac을 지정할 수 있습니다(그쪽에서 <code>--host 0.0.0.0</code>을 붙여 시작)."
 }

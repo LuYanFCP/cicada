@@ -1,7 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Settings › AI 服务: the service and its key, what works with it, and (folded away) its models.
+/// Settings › AI 服务: the service and its key, what works with it, (folded away) its models, and
+/// at the bottom 按功能换服务, for translation and notes or audio on a service of their own.
 /// Ling is the default and the only one with everything; the others are a way in for people who
 /// cannot use Ling, with the recommended models already chosen.
 struct AISettingsView: View {
@@ -10,6 +11,7 @@ struct AISettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject private var sentence: LingClient
     @ObservedObject private var audio: LingClient
+    @ObservedObject private var speech: LingClient
     @State private var draft = ""
     @State private var editing = false
     @State private var baseDraft = ""
@@ -28,14 +30,29 @@ struct AISettingsView: View {
         self.settings = settings
         self.sentence = model.sentenceAI
         self.audio = model.audioUnderstandingAI
+        self.speech = model.speechAI
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SentenceTranslationSettings(model: model, settings: settings, client: model.sentenceAI)
-            AudioUnderstandingSettings(model: model, settings: settings, client: model.audioUnderstandingAI)
-            if provider.id == .custom { customPage } else { servicePage }
+        if provider.id == .custom { customPage } else { servicePage }
+    }
+
+    /// Translation and notes, the meeting's speech recognition, or audio understanding, on a service
+    /// of their own. Below the service they would otherwise follow; a custom service already has its
+    /// own text row, so 翻译和纪要 shows there only while it is on (to turn it off).
+    private var overrides: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("按功能换服务").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.secondary)
+            SettingsCard {
+                if provider.id != .custom || settings.sentenceTranslation {
+                    ServiceOverrideRow(model: model, settings: settings, client: sentence, kind: .text)
+                }
+                ServiceOverrideRow(model: model, settings: settings, client: speech, kind: .speech)
+                ServiceOverrideRow(model: model, settings: settings, client: audio, kind: .audio, divider: false)
+            }
         }
+        .padding(.top, 4)
+        .id("overrides")
     }
 
     private var servicePage: some View {
@@ -54,6 +71,7 @@ struct AISettingsView: View {
             }
             .buttonStyle(.plain)
             if model.aiModelsOpen { SettingsCard { models } }
+            overrides
             Text(footnote).font(.system(size: 12)).foregroundStyle(Palette.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -63,9 +81,9 @@ struct AISettingsView: View {
 
     // MARK: Own service
 
-    /// 其他（兼容 OpenAI）: one row per use, each at its own address if need be (a text model, a
-    /// speech model and a recognition model often run as separate servers), each saying whether it
-    /// works and how fast. Recognition stays on this Mac unless the user picks their service.
+    /// 其他（兼容 OpenAI）: one row per use, each at its own address if need be (a text model and a
+    /// speech model often run as separate servers), each saying whether it works and how fast. The
+    /// meeting's recognition is in 按功能换服务, with any service.
     private var customPage: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("每样可以接不同的机器；这台 Mac 和局域网里的服务可以用 http。")
@@ -74,8 +92,6 @@ struct AISettingsView: View {
                 textSection
                 Divider()
                 voiceSection
-                Divider()
-                hearSection
             }
             HStack(spacing: 6) {
                 Image(systemName: "lock").font(.system(size: 11)).foregroundStyle(Palette.tertiary)
@@ -86,6 +102,7 @@ struct AISettingsView: View {
                         .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Palette.secondary)
                 }
             }
+            overrides
             Text(footnote).font(.system(size: 12)).foregroundStyle(Palette.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -253,59 +270,6 @@ struct AISettingsView: View {
                     model.applyAIService()
                 }
                 localNetworkNote(settings.aiCustomVoiceBase)
-            }
-            .padding(.leading, 34).padding(.trailing, 16).padding(.bottom, 14)
-        }
-    }
-
-    @ViewBuilder private var hearSection: some View {
-        let c = settings.aiConfig
-        let own = settings.aiCustomRecognize
-        let hearModel = settings.aiCustomHearModel
-        let host = (settings.aiCustomHearBase.isEmpty ? c.base : AIProvider.customBase(settings.aiCustomHearBase))?.host ?? textHost
-        let hear = ling.aiCheck.hear
-        HStack(spacing: 10) {
-            Circle().fill(!own ? Palette.ok : hear?.ok == true ? Palette.ok : hear == nil ? Color(white: 0.75) : Palette.error)
-                .frame(width: 8, height: 8)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("语音识别").font(.system(size: 13)).foregroundStyle(Palette.ink)
-                Text(own ? L("会议的声音会发到 \(host)；连不上时用本机") : L("更快，不花钱，声音不出这台 Mac"))
-                    .font(.system(size: 11)).foregroundStyle(Palette.tertiary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            Segments(options: [("mac", L("本机")), ("own", L("自建服务"))], value: own ? "own" : "mac") {
-                settings.aiCustomRecognize = $0 == "own"
-                if $0 == "own" { open.insert("hear") }
-                model.applyAIService()
-            }
-        }
-        .padding(.horizontal, 16).frame(minHeight: 52)
-        if own {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("需支持 /audio/transcriptions，例如 Qwen3-ASR、Whisper。下一场会议起生效。")
-                    .font(.system(size: 11)).foregroundStyle(Palette.tertiary).fixedSize(horizontal: false, vertical: true)
-                CommitField(label: L("模型"), placeholder: L("例如 qwen3-asr"), value: hearModel) {
-                    settings.aiCustomHearModel = $0
-                    model.applyAIService()
-                }
-                CommitField(label: L("地址"), placeholder: L("跟上面一样"), value: settings.aiCustomHearBase) {
-                    settings.aiCustomHearBase = $0
-                    model.applyAIService()
-                }
-                localNetworkNote(settings.aiCustomHearBase)
-                if hearModel.isEmpty {
-                    Text("填上模型才会用它识别。").font(.system(size: 12)).foregroundStyle(Palette.warn)
-                } else if let line = ling.aiCheck.hearLine(host: host, model: hearModel) {
-                    Text(line).font(.system(size: 12)).foregroundStyle(Palette.error).fixedSize(horizontal: false, vertical: true)
-                    if hear == .localNetworkDenied {
-                        HStack(spacing: 8) {
-                            SoftButton(L("打开系统设置"), dark: true) { model.openLocalNetworkSettings() }
-                            SoftButton(L("重新检查")) { Task { await ling.check() } }
-                        }
-                    }
-                } else if case .ok(let s)? = hear {
-                    Text(L("听一秒音频 \(String(format: "%.1f", s)) 秒")).font(.system(size: 11)).foregroundStyle(Palette.tertiary)
-                }
             }
             .padding(.leading, 34).padding(.trailing, 16).padding(.bottom, 14)
         }
@@ -497,7 +461,7 @@ struct AISettingsView: View {
             ?? L("\(settings.textModel) · 响应约 \(String(format: "%.1f", s)) 秒")
         case .invalid, .unreachable: nil
         case .none: Recognition.cloudOnly && !settings.audioUnderstanding ? L("填入 Ling key 后才能识别语音、出字幕和纪要")
-            : settings.audioUnderstanding ? L("未连接，发声可使用本机语音") : L("不填 key 时，字幕和翻译仍可正常使用")
+            : L("不填 key 时，字幕和翻译仍可正常使用")
         default: nil
         }
     }
@@ -519,13 +483,14 @@ struct AISettingsView: View {
         let textDown = [.unreachable, .badAddress, .invalidKey, .mgmtKey, .noCredit].contains(textReason)
         let textOn = textConfigured && textClient.usable && !textDown && textReason != .noModel
         let notesOn = textOn && textReason != .noJSON
-        let textUses = settings.sentenceTranslation ? L("OpenAI 兼容接口") : uses
+        let textUses = settings.sentenceTranslation ? L("用 \(textClient.serviceHost)") : uses
         let textLater = !textConfigured ? L("填好地址、模型和 key 后可用")
             : textDown ? (textReason == .unreachable ? L("连上 \(textClient.serviceName) 后可用") : L("换好 key 后可用")) : L("填好 key 后可用")
         if notesOn, textClient.aiCheck.busy {
             usageRow(L("实时纪要"), tag: L("很忙"), style: .warn, note: L("会自动重试，纪要可能晚一点"))
         } else {
-            usageRow(L("实时纪要"), tag: notesOn ? textUses : textClient.hasKey ? L("暂不可用") : L("需要 key"), style: notesOn ? .ok : .off,
+            usageRow(L("实时纪要"), tag: notesOn ? textUses : !textConfigured ? L("还没填好") : textClient.hasKey ? L("暂不可用") : L("需要 key"),
+                     style: notesOn ? .ok : .off,
                      note: notesOn ? L("会中每 45 秒更新") : textReason == .noJSON ? L("这个服务不支持 JSON") : textReason == .noModel ? L("换一个模型后可用") : textLater)
         }
         if settings.sentenceTranslation {
@@ -548,14 +513,24 @@ struct AISettingsView: View {
         } else {
             usageRow(L("你自己的声音"), tag: L("只有 Ling"), style: .ling, note: L("换用 Ling 才有"))
         }
-        if Recognition.cloudOnly {
+        if settings.speechServer {
+            // The user's own speech server: ready once a second of audio went through it.
+            let ready = speech.usable && speech.aiCheck.passed && speech.aiCheck.hear?.ok == true
+            let unset = settings.speechConfig?.transcribes != true
+            usageRow(L("语音识别"), tag: ready ? L("用 \(speech.serviceHost)") : unset ? L("还没填好") : L("暂不可用"),
+                     style: ready ? .ok : .off,
+                     note: ready ? (Recognition.cloudOnly ? L("下一场会议起用它识别") : L("下一场会议起用它；连不上时用本机"))
+                         : unset ? L("填好地址和模型后可用") : L("检查通过后可用"), divider: false)
+        } else if Recognition.cloudOnly {
             let audioClient = settings.audioUnderstanding ? audio : ling
             let audioOn = settings.audioUnderstanding
                 ? audioClient.usable && audioClient.aiCheck.passed && audioClient.aiCheck.hear?.ok == true
                 : audioClient.hearsAudio || audioClient.transcribes
-            let audioUses = settings.audioUnderstanding ? L("OpenAI 兼容接口") : uses
-            usageRow(L("语音识别"), tag: audioOn ? audioUses : audioClient.hasKey ? L("暂不可用") : L("需要 key"), style: audioOn ? .ok : .off,
-                     note: audioOn ? L("识别和翻译一步完成") : L("填好语音理解接口后可用"), divider: false)
+            let audioUses = settings.audioUnderstanding ? L("用 \(audioClient.serviceHost)") : uses
+            let audioUnset = settings.audioUnderstanding && audioClient.config().base == nil
+            usageRow(L("语音识别"), tag: audioOn ? audioUses : audioUnset ? L("还没填好") : audioClient.hasKey ? L("暂不可用") : L("需要 key"),
+                     style: audioOn ? .ok : .off,
+                     note: audioOn ? L("识别和翻译一步完成") : settings.audioUnderstanding ? L("填好语音理解接口后可用") : later, divider: false)
         } else {
             usageRow(L("语音识别"), tag: L("本机"), style: .off, note: L("更快，不花钱"), divider: false)
         }
@@ -613,8 +588,29 @@ struct AISettingsView: View {
         }
     }
 
+    /// What it costs and what leaves the Mac. Audio understanding on a service of its own takes
+    /// the voice there instead.
     private var footnote: String {
-        if settings.audioUnderstanding { return L("语音理解使用独立配置的接口，费用以各服务为准。") }
+        // An Intel Mac sends the meeting to whoever hears it: the speech server first.
+        if Recognition.cloudOnly, settings.speechServer, let host = settings.speechConfig?.hearBase?.host {
+            return L("说话的声音分段发给 \(host) 识别；会议录音和文字记录只存在这台 Mac 上。")
+        }
+        if settings.audioUnderstanding, let host = settings.audioConfig?.base?.host {
+            return Recognition.cloudOnly
+                ? L("说话的声音分段发给 \(host) 识别和翻译；会议录音和文字记录只存在这台 Mac 上。")
+                : L("\(speechFootnote)另外，按住说话时那几句的声音会发给 \(host)。")
+        }
+        return speechFootnote
+    }
+
+    /// A speech server on this Mac keeps the meeting's audio here; anywhere else hears it.
+    private var speechFootnote: String {
+        guard !Recognition.cloudOnly, settings.speechServer, let host = settings.speechConfig?.hearBase?.host,
+              !AIProvider.isLocal(host) else { return baseFootnote }
+        return L("\(baseFootnote)会议的声音会发到 \(host) 识别。")
+    }
+
+    private var baseFootnote: String {
         if Recognition.cloudOnly, provider.id != .custom {
             return L("一小时会议约 ¥0.15–1（目前优惠价）。说话的声音分段发给 Ling 识别和翻译；会议录音和文字记录只存在这台 Mac 上。")
         }
@@ -623,7 +619,7 @@ struct AISettingsView: View {
         case .custom:
             let nearby = settings.aiConfig.base.map { AIProvider.isNearby($0.absoluteString) } ?? false
             let cost = nearby ? L("跑在你自己的机器上，不按量计费。") : L("费用以这个服务为准。")
-            return cost + (settings.aiConfig.transcribes ? L("会议的声音会发给你的服务识别。") : L("发出去的只有文字，语音识别留在本机。"))
+            return cost + L("发出去的只有文字，语音识别留在本机。")
         default: return L("按所选模型计费。发出去的只有文字，语音识别留在本机。")
         }
     }
@@ -680,7 +676,7 @@ struct ModelMenu: View {
                 let rest = catalog.filter { id in !recommended.contains { $0.id == id } }
                 if !rest.isEmpty {
                     Section(L("全部 \(rest.count) 个")) {
-                        ForEach(groups(rest), id: \.0) { maker, ids in
+                        ForEach(Self.groups(rest), id: \.0) { maker, ids in
                             Menu(maker) { ForEach(ids, id: \.self) { id in Button(id) { onPick(id) } } }
                         }
                     }
@@ -708,7 +704,7 @@ struct ModelMenu: View {
     }
 
     /// "openai/gpt-5-mini" → under "openai"; names without a maker go under "其他".
-    private func groups(_ ids: [String]) -> [(String, [String])] {
+    static func groups(_ ids: [String]) -> [(String, [String])] {
         let other = L("其他")
         let by = Dictionary(grouping: ids) { $0.contains("/") ? String($0.prefix { $0 != "/" }) : other }
         return by.keys.sorted().map { ($0, by[$0]!.sorted()) }

@@ -506,5 +506,19 @@
   "proxy3_p": "別のサーバーに切り替えるか、プロキシアプリのルールで openrouter.ai と zenmux.ai をプロキシ経由にしてください。",
   "proxy4_small": "システムプロキシの場所",
   "proxy4_h": "各プラットフォームのシステムプロキシ",
-  "proxy4_p": "Mac：システム設定 › ネットワーク › 詳細 › プロキシ。Windows：設定 › ネットワークとインターネット › プロキシ。Linux：設定 › ネットワーク › ネットワークプロキシ。Android：Wi‑Fi の詳細にあるプロキシ。"
+  "proxy4_p": "Mac：システム設定 › ネットワーク › 詳細 › プロキシ。Windows：設定 › ネットワークとインターネット › プロキシ。Linux：設定 › ネットワーク › ネットワークプロキシ。Android：Wi‑Fi の詳細にあるプロキシ。",
+  "lasr_h": "この Mac で音声認識を動かす",
+  "lasr_p": "Cicada は標準で macOS 内蔵のオンデバイス認識を使います。中国語や方言、言語の混ざった発言をより正確に認識したいときは、Apple シリコンの Mac で mlx-audio を使って Qwen3-ASR を動かせます。会議の音声はこの Mac の外に出ません。ターミナルで一度インストールし、会議中はサーバーを起動しておきます。",
+  "lasr1_small": "ステップ 1",
+  "lasr1_h": "mlx-audio をインストール",
+  "lasr1_p": "「ターミナル」を開き、<code>uv tool install --upgrade \"mlx-audio[stt,server]\"</code> を実行します。uv がなければ <code>pip3 install -U \"mlx-audio[stt,server]\"</code>（Python 3.10 以降）を使います。",
+  "lasr2_small": "ステップ 2",
+  "lasr2_h": "認識サーバーを起動",
+  "lasr2_p": "<code>mlx_audio.server --port 8000</code> を実行し、会議中はそのターミナルウインドウを開いたままにします。閉じるとサーバーも止まります。",
+  "lasr3_small": "ステップ 3",
+  "lasr3_h": "Cicada で接続",
+  "lasr3_p": "「設定 › AI サービス › 機能ごとのサービス › 音声認識」で「自分のサービス」を選びます。アドレスとモデル（<code>mlx-community/Qwen3-ASR-1.7B-8bit</code>）は入力済みなので、「保存して確認」をクリックします。初回は約 2.5 GB のモデルをダウンロードするため数分かかります。",
+  "lasr4_small": "接続できないとき",
+  "lasr4_h": "そのまま聞き続けます",
+  "lasr4_p": "次の会議から使われます。サーバーが止まっている、または接続できないときは、Cicada が自動でこの Mac の認識に戻ります。初回の確認で「モデルが見つからない」と出る場合は、たいていダウンロードの失敗です。サーバーを起動したターミナルを確認し、プロキシ経由で大きなファイルを取得できないときは <code>HF_HUB_DISABLE_XET=1</code> を付けて起動します。メモリを節約するなら <code>mlx-community/Qwen3-ASR-0.6B-8bit</code>（約 1 GB）を使えます。Intel 搭載 Mac では mlx-audio は動きませんが、ローカルネットワーク上の別の Apple シリコン Mac を指定できます（そちらでは <code>--host 0.0.0.0</code> を付けて起動）。"
 }

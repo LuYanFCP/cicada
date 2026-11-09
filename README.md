@@ -78,7 +78,7 @@
 
 ## 隐私与权限
 
-在 Apple 芯片的 Mac 上，声音采集、语言识别、语音识别（Apple SpeechAnalyzer，macOS 14.4–15 上是 SFSpeechRecognizer 的本机模式）和会议录音全部在本机完成。会离开电脑的只有识别出来的文字（发去做翻译和生成纪要），以及配置了云端语音理解并按住说话键用同声传译时你说的那几句语音；语音模型下载太慢时如果你点了“先用 Ling 听”，模型装好之前的会议声音也会交给 Ling 识别；在“设置 › AI 服务”里把语音识别改成自建服务时，会议声音会发到你那台机器。不填 API key 时，实时字幕、翻译（走 Google 或退回 Apple 本机翻译，本机翻译只在 macOS 26 上有）、会议记录和同声传译都能正常用。实时纪要和一步语音翻译需要配置相应的 AI 服务，声音克隆需要你自己的 Ling（蚂蚁集团的大模型服务）API key（配置方法见[下文](#配置-ling-api-key)），开一小时会大约花 0.15 到 1 元人民币，Ling 每月赠送 10 元额度，约够 10 到 50 小时会议。
+在 Apple 芯片的 Mac 上，声音采集、语言识别、语音识别（Apple SpeechAnalyzer，macOS 14.4–15 上是 SFSpeechRecognizer 的本机模式）和会议录音全部在本机完成。会离开电脑的只有识别出来的文字（发去做翻译和生成纪要），以及配置了云端语音理解并按住说话键用同声传译时你说的那几句语音；语音模型下载太慢时如果你点了“先用 Ling 听”，模型装好之前的会议声音也会交给 Ling 识别；在“设置 › AI 服务 › 按功能换服务”里把语音识别改成自建服务时，会议声音会发到你填的那台机器（填的是这台 Mac 上的服务时不出本机）。不填 API key 时，实时字幕、翻译（走 Google 或退回 Apple 本机翻译，本机翻译只在 macOS 26 上有）、会议记录和同声传译都能正常用。实时纪要和一步语音翻译需要配置相应的 AI 服务，声音克隆需要你自己的 Ling（蚂蚁集团的大模型服务）API key（配置方法见[下文](#配置-ling-api-key)），开一小时会大约花 0.15 到 1 元人民币，Ling 每月赠送 10 元额度，约够 10 到 50 小时会议。
 
 Intel 版 Mac 以及 Windows、Linux 和 Android 版在云端识别：说话的声音分段发给 Ling 的 Ming（Intel Mac 可单独配置兼容语音理解接口；Windows、Linux、Android 也可换成 OpenRouter、ZenMux 等服务），所以必须填 AI 服务的 key；录音和会议记录同样只存在本机。
 
@@ -102,7 +102,7 @@ Intel 版 Mac 以及 Windows、Linux 和 Android 版在云端识别：说话的�
 
 | 功能 | 填了 Ling key | 不填 key / 退回 |
 |---|---|---|
-| 语音识别、语言识别 | Apple `SpeechAnalyzer` / `SpeechTranscriber`（本机）；macOS 14.4–15 是 `SFSpeechRecognizer`（本机，要打开听写） | 同左 |
+| 语音识别、语言识别 | Apple `SpeechAnalyzer` / `SpeechTranscriber`（本机）；macOS 14.4–15 是 `SFSpeechRecognizer`（本机，要打开听写）；也可以换成在这台 Mac 上跑的 Qwen3-ASR（见下） | 同左 |
 | 整句翻译 | Ling `Ling-3.1-flash`（可在“设置 › AI 服务”改为 `Ling-3.0-flash`） | Google 翻译 → Apple `Translation`（本机，仅 macOS 26） |
 | 正在说的半句话的翻译 | Google 翻译（不占 Ling 的频率额度） | Apple `Translation`（本机，仅 macOS 26） |
 | 实时纪要、会后完整版 | Ling `Ling-3.1-flash`（同上设置） | 不可用 |
@@ -111,9 +111,18 @@ Intel 版 Mac 以及 Windows、Linux 和 Android 版在云端识别：说话的�
 | 同声传译：对方听到的声音、声音克隆 | Ming `Ming-3.0-tts-0.5B` | Mac 自带语音（`AVSpeechSynthesizer`），不能克隆 |
 | 说话人识别（默认打开） | WeSpeaker ResNet34-LM 声纹模型，随 app 附带，本机运行（Core ML） | 同左 |
 
-Mac 的文本功能可以单独配置：在“设置 › AI 服务 › 翻译和纪要”选择“OpenAI 兼容接口”，填入接口地址（如 `https://api.openai.com/v1`）、模型和 key，再点“保存并检查”。也可先填地址和 key，点“读取模型”获取列表，无需先选模型或保存配置；读取失败时仍可手动输入。会议字幕和导入录音的整句翻译、实时和会后纪要、说话人姓名猜测都会用这个文本接口。检查会验证翻译和 JSON 能力；不支持 JSON 的接口仍能翻译，但不能写纪要。半句话仍走 Google → Apple，接口不可用时整句也按这个顺序退回。原文的语音识别，以及 Ming 的语音理解、同传声音和声音克隆仍用原来的配置。默认选择“跟随 AI 服务”。
+Mac 上的翻译和纪要、语音理解还可以各自接一个 OpenAI 兼容接口，不跟主服务走：在“设置 › AI 服务”页底部的“按功能换服务”里，把对应一行从“同上”换成“兼容接口”，填入地址（如 `https://api.openai.com/v1`）、模型和 key，再点“保存并检查”。模型名可以手填，也可以先填地址和 key，点模型旁边的“读取模型”从列表里选。检查通过后这一行收成一句话：地址、模型和翻一句要多久；出问题时它会自己展开，写明坏在哪。“翻译和纪要”接管会议字幕和导入录音的整句翻译、实时和会后纪要、说话人姓名猜测；检查会验证翻译和 JSON 能力，不支持 JSON 的接口仍能翻译，但不能写纪要。半句话仍走 Google → Apple，接口不可用时整句也按这个顺序退回。原文的语音识别，以及 Ming 的语音理解、同传声音和声音克隆仍用主服务。主服务选“其他（兼容 OpenAI）”时，翻译和纪要已经在上面填了，这一行就不再重复出现。纪要窗口或菜单栏提示翻译和纪要的接口有问题时，点“配置 AI 服务”会直接翻到这里。
 
-“语音理解”也可以独立选择 OpenAI 兼容接口，默认沿用原服务（Ling 使用 `Ming-3.0-audio-flash`）。填写地址、从模型列表选择或手动输入模型、填入 key，并按服务要求选择 OpenAI（`input_audio`）或 Ming 兼容（`audio_url`）格式；“读取模型”只需地址和 key，无需先选模型或保存配置，读不到列表时仍可手动输入。“保存并检查”会用实际音频验证。它用于按键说话的语音理解，以及 Intel Mac 或手动选择的云端识别；Apple 芯片 Mac 默认仍在本机识别。文本接口、语音理解的 key 分开以 0600 权限保存在本机，声音合成和克隆仍使用原来的 Ming TTS 配置。
+“语音理解”默认同上（Ling 用 `Ming-3.0-audio-flash`）；换成兼容接口时，除了地址、模型和 key，还要按服务要求选 OpenAI（`input_audio`）或 Ming 兼容（`audio_url`）格式，地址填 Ling 的 `api.ant-ling.com` 时会自动选 Ming 兼容。翻译和纪要已经接了兼容接口时，点“用翻译和纪要的地址和 key”就能把同一个地址和 key 带过来，再从读到的列表里挑一个音频模型。“保存并检查”会用一秒实际音频验证。它用于按住说话的语音理解，以及 Intel Mac 或手动选择的云端识别；Apple 芯片 Mac 默认仍在本机识别。翻译和纪要、语音理解的 key 各存一份（0600 权限，只在本机），带过来的 key 也是另存一份、不显示；声音合成和克隆仍使用原来的 Ming TTS 配置。
+
+“语音识别”在 Apple 芯片的 Mac 上默认用本机识别；想要更准的中文、方言和中英混说，可以换成“自建服务”。推荐在这台 Mac 上用 [mlx-audio](https://github.com/Blaizzy/mlx-audio) 跑 Qwen3-ASR，会议的声音同样不出这台 Mac，不管主服务选的是哪家。在终端里装一次、启动它：
+
+```bash
+uv tool install --upgrade "mlx-audio[stt,server]"   # 没有 uv 时：pip3 install -U "mlx-audio[stt,server]"（要 Python 3.10+）
+mlx_audio.server --port 8000
+```
+
+然后在“按功能换服务 › 语音识别”选“自建服务”：地址 `http://localhost:8000/v1` 和模型 `mlx-community/Qwen3-ASR-1.7B-8bit` 已经填好，点“保存并检查”，第一次会下载约 2.5 GB 的模型，要等几分钟。想省内存可以换成 `mlx-community/Qwen3-ASR-0.6B-8bit`（约 1 GB）。在 M4 Pro 上实测，模型加载好以后一段 9 秒的话约 0.5 秒识别完。下一场会议起由它识别，服务没开或连不上时自动换回本机识别。第一次检查说找不到模型，多半是下载没成功，看看启动服务的终端窗口里的报错；经代理下载大文件失败时，启动前加上 `HF_HUB_DISABLE_XET=1`。任何支持 `/audio/transcriptions` 的服务都能接（比如 vLLM 跑的 Qwen3-ASR、Whisper），局域网里的地址可以用 http。MLX 只能跑在 Apple 芯片上：Intel 版 Mac 可以填局域网里另一台 Apple 芯片 Mac 的地址（那边启动时加 `--host 0.0.0.0`）。以前在“其他（兼容 OpenAI）”里设的语音识别会自动搬到这里，步骤也写在网站的[设置页](https://cicada.indaloop.app/start/#local-asr)。
 
 ## 配置 Ling API key
 
@@ -122,7 +131,7 @@ Mac 的文本功能可以单独配置：在“设置 › AI 服务 › 翻译和
 3. 在知了里打开设置里的 AI 服务，粘贴后点保存并检查，也可以直接粘贴到纪要窗口顶部的提示框里。知了会发一个只用一个 token 的请求确认 key 可用。
 4. 同一页面可以选模型（默认 `Ling-3.1-flash`），每种语言用哪个 Ming 声音在同声传译设置里选。想移除 key，在同一页面点移除即可。
 
-**注册不了 Ling？**可以在“设置 › AI 服务”右上角换成 OpenRouter、ZenMux、OpenAI，或填任何 OpenAI 兼容服务的地址（比如本机跑的模型）。实时纪要和整句翻译都能用，模型已经按效果和价格选好，也可以自己换；OpenRouter 和 ZenMux 还能用 Gemini 的自然人声做同传。声音克隆只有 Ling 有；Mac 的一步语音翻译也可以单独接兼容的语音理解接口。未配置云端语音理解时，Apple 芯片的 Mac 同传先在本机识别再翻译；Intel 版需配置云端语音理解服务。每个服务的 key 各存一份，切换时不用重填。自己部署的模型（Ollama、vLLM、SGLang 等）按功能分开填：翻译和纪要、同传声音、语音识别各自可以接不同的机器，局域网里的地址也能用 http；检查时会真翻一句，模型先思考或太慢都会直说（Qwen3 这类模型知了会请它别思考）。Mac 的语音识别可以改交给你的 Qwen3-ASR、Whisper 等（默认仍在本机，连不上时自动换回）；Windows、Linux、Android 上“听对方”的模型也可以填单独的地址。Windows、Linux、Android 版也能换：在引导里点“用不了 Ling？”或在设置 › AI 服务里选，听对方也交给这家服务，字幕比 Ling 晚 1–2 秒。连不上或 key、模型有问题时，设置里会一步步说清坏在哪、怎么修：是没开代理、代理软件没接管系统代理，还是开了代理也不通（知了不会自己改代理，说明见网站的[设置页](https://cicada.indaloop.app/start/#proxy)）；用 OpenRouter 时余额快用完会提前提醒。
+**注册不了 Ling？**可以在“设置 › AI 服务”右上角换成 OpenRouter、ZenMux、OpenAI，或填任何 OpenAI 兼容服务的地址（比如本机跑的模型）。实时纪要和整句翻译都能用，模型已经按效果和价格选好，也可以自己换；OpenRouter 和 ZenMux 还能用 Gemini 的自然人声做同传。声音克隆只有 Ling 有；Mac 的一步语音翻译也可以单独接兼容的语音理解接口。未配置云端语音理解时，Apple 芯片的 Mac 同传先在本机识别再翻译；Intel 版需配置云端语音理解服务。每个服务的 key 各存一份，切换时不用重填。自己部署的模型（Ollama、vLLM、SGLang 等）按功能分开填：翻译和纪要、同传声音、语音识别各自可以接不同的机器，局域网里的地址也能用 http；检查时会真翻一句，模型先思考或太慢都会直说（Qwen3 这类模型知了会请它别思考）。Mac 的语音识别可以在“按功能换服务”里改交给你的 Qwen3-ASR、Whisper 等，主服务是哪家都行（默认仍在本机，连不上时自动换回）；Windows、Linux、Android 上“听对方”的模型也可以填单独的地址。Mac 的引导里点“用不了 Ling？”也能直接选“兼容接口”，填地址、模型和 key（本机和局域网里的服务可不填 key）。Windows、Linux、Android 版也能换：在引导里点“用不了 Ling？”或在设置 › AI 服务里选，听对方也交给这家服务，字幕比 Ling 晚 1–2 秒。连不上或 key、模型有问题时，设置里会一步步说清坏在哪、怎么修：是没开代理、代理软件没接管系统代理，还是开了代理也不通（知了不会自己改代理，说明见网站的[设置页](https://cicada.indaloop.app/start/#proxy)）；用 OpenRouter 时余额快用完会提前提醒。
 
 ## 系统要求与安装
 
