@@ -20,7 +20,8 @@ import java.util.concurrent.TimeUnit
 ///   capture on|off | overlay show|hide | show main|live|records|settings|words|onboarding|record [id] | overlay collapse|expand | key reload
 ///   hear|say <wav in files/> (面对面: the other side / me holding 我说) | tts <lang> <text>
 ///   import <session.json in files/> | importfile <audio or video in files/> | face | onboarded on|off | target <code> | ui <lang> | clip <text>
-///   provider ling|openrouter|zenmux|custom | ai-model hear|text|voice <id> ("" back to the recommended) | show ai
+///   provider ling|openrouter|zenmux|custom | ai-model hear|text|voice|notes <id> ("" back to the recommended) | show ai
+///   ai-base <url> (the custom service's address) · ai-notes same|own · ai-notes-base <url> · notes-key import <file in files/>|remove (the custom service's 纪要)
 ///   key import <file in files/> (sealed as the current service's key, the plain file deleted) | voice-try (设置's 试一句)
 ///   ai-check (重新检查) | ai-check-sim <reason|lowBalance|off> (every check ends that way; the state's ai.check has the steps)
 ///   改正听错的词: fixes on|off · asknames on|off · silent (a meeting with no audio) · heard <text> · vocab add|remove|state
@@ -97,6 +98,17 @@ class DebugReceiver : BroadcastReceiver() {
                 return mapOf("ok" to true, "ai" to ai(app))
             } else { app.key.reload(); app.ling.keyChanged(); app.background.execute { app.ling.check() } }
             "provider" -> { app.setAiProvider(arg); return mapOf("ok" to true, "ai" to ai(app)) }
+            "ai-base" -> { app.settings.aiCustomBase = arg.removeSurrounding("\"").trim(); app.settings.save(); app.aiChanged(); return mapOf("ok" to true, "ai" to ai(app)) }
+            "ai-notes" -> { app.setNotesOwn(arg == "own"); return mapOf("ok" to true, "ai" to ai(app)) }
+            "ai-notes-base" -> { app.setNotesBase(arg.removeSurrounding("\"")); return mapOf("ok" to true, "ai" to ai(app)) }
+            // The notes' own key, pushed in as a plain file like `key import`, sealed, the plain copy deleted.
+            "notes-key" -> {
+                if (arg == "remove") { app.setNotesKey(null); return mapOf("ok" to true, "ai" to ai(app)) }
+                val f = File(app.filesDir, arg.removePrefix("import ").trim())
+                val text = try { f.readText().trim() } catch (_: Exception) { "" } finally { f.delete() }
+                if (text.isEmpty() || !app.setNotesKey(text)) return mapOf("error" to "no key in ${f.name}")
+                return mapOf("ok" to true, "ai" to ai(app))
+            }
             // The 改用 Ling on a status line (says when it isn't offered).
             "switchToLing" -> { val offered = app.canSwitchToLing; app.switchToLing(); return mapOf("offered" to offered, "ai" to ai(app)) }
             // ai-check-sim <reason|lowBalance|off>: every check ends this way (screenshots of each state).
@@ -249,7 +261,9 @@ class DebugReceiver : BroadcastReceiver() {
             return mapOf("provider" to c.provider.id, "base" to c.base, "text" to c.textModel, "hear" to c.hearModel, "hearBase" to c.hearBase, "voice" to c.voiceModel,
                          "state" to l.keyState.name, "hears" to l.hears, "speaks" to l.speaks, "check" to l.aiCheck.summary,
                          "voice" to l.lastVoice?.first, "sim" to l.simulateCheck?.name,
-                         "catalog" to listOf(l.textCatalog.size, l.hearCatalog.size), "keyFile" to app.key.path.name,
+                         "catalog" to listOf(l.textCatalog.size, l.hearCatalog.size, l.notesCatalog.size), "keyFile" to app.key.path.name,
+                         "notes" to mapOf("apart" to c.notesApart, "base" to c.forNotes.base, "model" to c.forNotes.textModel,
+                                          "own" to c.notesOwnService, "ownKey" to l.notesHasOwnKey, "bad" to c.notesBadAddress),
                          "customOnly" to app.settings.aiCustomOnly, "googleOff" to app.translator.googleOff,
                          "untranslated" to app.translator.sentencesUntranslated)
         }

@@ -42,6 +42,13 @@ object ProviderTests {
         "aiCustomCheckTimesARealSentence" to ::customCheckTimes,
         "aiTheHearModelMayHaveItsOwnAddress" to ::hearBase,
         "aiAHearServerThatCantBeReachedFailsHearing" to ::hearServerDown,
+        "aiNotesGoToTheirModelAndServerTranslationStays" to ::notesApart,
+        "aiNotesWithoutTheirOwnKeyUseTheTranslationKey" to ::notesSharedKey,
+        "aiARefusedNotesKeyLeavesTranslationWorking" to ::notesKeyRefused,
+        "aiNotesFallBackToTranslationUntilSet" to ::notesConfig,
+        "aiNotesWithABadAddressAreNeverSentToTranslation" to ::notesBadAddress,
+        "aiACheckTestsNotesApartWithoutFailingTranslation" to ::notesCheck,
+        "aiEachServerHasItsOwnStartGate" to ::gatePerServer,
     )
 
     private fun check(ok: Boolean, what: String) { if (!ok) throw AssertionError(what) }
@@ -53,9 +60,11 @@ object ProviderTests {
         val streams: ((String, String) -> Transport.Stream)? = null,
     ) : Transport {
         val sent = mutableListOf<Pair<String, String>>()
+        /// The Authorization header of each request in `sent`.
+        val auths = mutableListOf<String?>()
         val streamed = mutableListOf<Pair<String, String>>()
         override fun send(url: String, method: String, body: String?, headers: Map<String, String>, timeoutMs: Int): Transport.Response {
-            synchronized(sent) { sent.add(url to (body ?: "")) }
+            synchronized(sent) { sent.add(url to (body ?: "")); auths.add(headers["Authorization"]) }
             return respond(url, body ?: "")
         }
         override fun stream(url: String, body: String, headers: Map<String, String>, timeoutMs: Int): Transport.Stream {
@@ -558,5 +567,179 @@ object ProviderTests {
     fun clockIsNotSpeech() {
         for (madeUp in listOf("00:00", "00:00.", "1:02:03")) check(Translator.isNoise(madeUp, 1.2), "noise: $madeUp")
         for (said in listOf("Hello.", "3 点", "15%", "好的")) check(!Translator.isNoise(said, 1.2), "kept: $said")
+    }
+
+    // MARK: Notes apart (另一个服务)
+
+    private val notesKeys = AIKey(PlainProtector, service = { LingClient.NOTES_KEY })
+
+    /// A custom service at main.example translating with "mt"; notes on "big", at notes.example with `own`.
+    private fun notesSettings(own: Boolean) = AppSettings(aiProvider = "custom", aiCustomBase = "https://main.example/v1",
+        aiModels = mutableMapOf("custom" to "mt", Providers.NOTES_MODEL to "big"), aiCustomNotesOwn = own,
+        aiCustomNotesBase = if (own) "https://notes.example/v1" else "")
+
+    private fun model(body: String) = body(body)["model"]
+
+    fun notesApart() {
+        try {
+            val fake = Fake({ _, _ -> reply("{}") })
+            val ling = client(fake, notesSettings(own = true), key = "sk-main-1111111111")
+            check(ling.setNotesKey("sk-notes-222222222"), "notes key saved")
+            equal("ai-key-custom-notes", notesKeys.path.name, "named as on the Mac")
+            ling.chat("x", "Notes.", Priority.Notes, json = true)
+            ling.chat("y", "Translate.", Priority.Translate)
+            equal(listOf<Any?>("big", "mt"), fake.sent.map { model(it.second) }, "models")
+            equal(listOf("https://notes.example/v1/chat/completions", "https://main.example/v1/chat/completions"), fake.sent.map { it.first }, "servers")
+            equal(listOf<String?>("Bearer sk-notes-222222222", "Bearer sk-main-1111111111"), fake.auths, "keys")
+            check(!Paths.settings.exists() || !Paths.settings.readText().contains("sk-notes"), "never in settings")
+        } finally { notesKeys.remove() }
+    }
+
+    fun notesSharedKey() {
+        try {
+            val fake = Fake({ _, _ -> reply("{}") })
+            val ling = client(fake, notesSettings(own = true), key = "sk-main-1111111111")
+            ling.chat("x", "Notes.", Priority.Notes)
+            equal("https://notes.example/v1/chat/completions", fake.sent[0].first, "their server")
+            equal("Bearer sk-main-1111111111", fake.auths[0], "no key of their own: the translation key")
+            // The same service, another model: same address and key, even with a notes key file left over.
+            notesKeys.save("sk-notes-222222222")
+            val same = Fake({ _, _ -> reply("{}") })
+            val other = client(same, notesSettings(own = false), key = "sk-main-1111111111")
+            other.chat("x", "Notes.", Priority.Notes)
+            equal("https://main.example/v1/chat/completions", same.sent[0].first, "translation's server")
+            equal("Bearer sk-main-1111111111", same.auths[0], "translation's key")
+            equal("big", model(same.sent[0].second), "notes' model")
+            // Removing it brings the translation key back.
+            val own = client(Fake({ _, _ -> reply("{}") }), notesSettings(own = true), key = "sk-main-1111111111")
+            check(own.notesHasOwnKey, "has its own")
+            own.removeNotesKey()
+            check(!own.notesHasOwnKey, "removed")
+            equal("sk-main-1111111111", own.notesKey(), "back to the translation key")
+        } finally { notesKeys.remove() }
+    }
+
+    fun notesKeyRefused() {
+        val fake = Fake({ _, b -> if (model(b) == "big") Transport.Response(401, "{}") else reply("好") })
+        val ling = client(fake, notesSettings(own = true), key = "sk-main-1111111111")
+        try { ling.chat("x", "Notes.", Priority.Notes); throw AssertionError("accepted") }
+        catch (e: LingException) { equal(LingException.Kind.InvalidKey, e.kind, "refused") }
+        check(ling.keyState != KeyState.Invalid, "translation's key isn't marked invalid: ${ling.keyState}")
+        equal("好", ling.chat("y", "Translate.", Priority.Translate), "translation still works")
+        equal(AICheck.Reason.InvalidKey, ling.aiCheck.notes?.reason, "the notes' result says why")
+        equal(null, ling.aiCheck.failure, "translation's steps untouched")
+        check(ling.aiCheck.notesFailed, "notes failed")
+        check(ling.aiCheck.notesLine("notes.example", "big", sharedKey = true)!!.contains("notes.example"), "names the notes server")
+        // Refused once: the next notes ask isn't sent.
+        val n = fake.sent.size
+        try { ling.chat("x", "Notes.", Priority.Notes) } catch (_: LingException) {}
+        equal(n, fake.sent.size, "not sent again until settings change")
+    }
+
+    fun notesConfig() {
+        val plain = AppSettings(aiProvider = "custom", aiCustomBase = "https://main.example/v1", aiModels = mutableMapOf("custom" to "mt")).aiConfig()
+        check(!plain.notesApart && plain.forNotes === plain, "not set: the same as translation")
+        val model = AppSettings(aiProvider = "custom", aiCustomBase = "https://main.example/v1",
+                                aiModels = mutableMapOf("custom" to "mt", Providers.NOTES_MODEL to "big")).aiConfig()
+        check(model.notesApart, "another model")
+        equal("big", model.forNotes.textModel, "notes' model")
+        equal("https://main.example/v1/", model.forNotes.base, "same address")
+        equal("https://main.example/v1/", model.forNotes.hearBase, "hearing stays where it was")
+        val sameName = AppSettings(aiProvider = "custom", aiCustomBase = "https://main.example/v1",
+                                   aiModels = mutableMapOf("custom" to "mt", Providers.NOTES_MODEL to "mt")).aiConfig()
+        check(!sameName.notesApart, "the translation model named again is no split")
+        // 同一个服务 keeps the typed address, unused.
+        val off = notesSettings(own = true).apply { aiCustomNotesOwn = false }.aiConfig()
+        equal("https://main.example/v1/", off.forNotes.base, "off: translation's address")
+        equal(null, off.notesBase, "off: not used")
+        val on = notesSettings(own = true).aiConfig()
+        equal("https://notes.example/v1/", on.forNotes.base, "on: their own")
+        // Only the custom service splits.
+        val ling = AppSettings(aiProvider = "ling", aiModels = mutableMapOf(Providers.NOTES_MODEL to "big")).aiConfig()
+        check(!ling.notesApart && ling.forNotes.textModel == ling.textModel, "Ling never splits")
+        try {
+            notesSettings(own = true).save()
+            val back = AppSettings.load()
+            check(back.aiCustomNotesOwn, "另一个服务 kept across a restart")
+            equal("https://notes.example/v1", back.aiCustomNotesBase, "address kept")
+            equal("big", back.aiModels[Providers.NOTES_MODEL], "model kept")
+        } finally { Paths.settings.delete() }
+    }
+
+    fun notesBadAddress() {
+        val s = notesSettings(own = true).apply { aiCustomNotesBase = "http://notes.example/v1" }
+        val c = s.aiConfig()
+        check(c.notesBadAddress && c.notesApart, "http to the internet can't be used")
+        val fake = Fake({ _, _ -> reply("{}") })
+        val ling = client(fake, s, key = "sk-main-1111111111")
+        try { ling.chat("x", "Notes.", Priority.Notes); throw AssertionError("sent") } catch (_: LingException) {}
+        equal(0, fake.sent.size, "not sent to translation's server instead")
+        equal("好", client(Fake({ _, _ -> reply("好") }), s, key = "sk-main-1111111111").chat("y", "Translate.", Priority.Translate), "translation works")
+    }
+
+    fun notesCheck() {
+        try {
+            // Notes' server takes no JSON and answers none: their row fails, translation passes.
+            val fake = Fake({ url, b ->
+                when {
+                    url.endsWith("models") -> if ("notes.example" in url) Transport.Response(200, """{"data":[{"id":"big"},{"id":"bigger"}]}""")
+                                              else Transport.Response(200, """{"data":[{"id":"other"}]}""")
+                    "notes.example" in url -> if ("response_format" in b) Transport.Response(400, "{}") else reply("Sure!")
+                    else -> reply("{\"ok\": true}")
+                }
+            })
+            val s = notesSettings(own = true).apply { aiHearModels["custom"] = "omni" }
+            val ling = client(fake, s, key = "sk-main-1111111111")
+            ling.check()
+            val r = ling.aiCheck
+            equal(null, r.failure, "translation isn't failed by notes: ${r.summary}")
+            check(r[AICheck.StepID.Text] is AICheck.State.Ok, "the sentence proved the text model even though /models doesn't list it")
+            equal(AICheck.Reason.NoJSON, r.notes?.reason, "notes: no JSON")
+            check(r.passed && r.notesFailed && "notes=fail(noJSON 400)" in r.summary, "summary: ${r.summary}")
+            equal(KeyState.Ok, ling.keyState, "the key works")
+            equal(listOf("big", "bigger"), ling.notesCatalog, "notes' own list for their menu")
+            check(fake.sent.none { "notes.example" in it.first && it.second.contains("Translate the text") }, "the sentence went to translation only")
+            // Fixed: notes pass.
+            val good = Fake({ url, _ -> if (url.endsWith("models")) Transport.Response(404, "") else reply("{\"ok\": true}") })
+            val ok = client(good, s, key = "sk-main-1111111111")
+            ok.check()
+            check(ok.aiCheck.notes is AICheck.Notes.Ok && !ok.aiCheck.notesFailed, "notes ok: ${ok.aiCheck.summary}")
+            // Notes on the same service: no row of their own; the JSON check is translation's.
+            val same = client(Fake({ url, _ -> if (url.endsWith("models")) Transport.Response(404, "") else reply("{\"ok\": true}") }),
+                              AppSettings(aiProvider = "custom", aiCustomBase = "https://main.example/v1", aiModels = mutableMapOf("custom" to "mt"),
+                                          aiHearModels = mutableMapOf("custom" to "omni")), key = "sk-main-1111111111")
+            same.check()
+            equal(null, same.aiCheck.notes, "no notes row")
+        } finally { notesKeys.remove() }
+    }
+
+    /// The start gate's time, moved on by each wait instead of waiting.
+    private class StepClock : GateClock() {
+        var t = 1_000_000L
+        override fun now() = t
+        override fun wait(lock: Object, ms: Long) { check(ms > 0) { "would wait forever" }; t += ms }
+    }
+
+    fun gatePerServer() {
+        // Notes' server is out of requests: its 429s pause it, not translation's server.
+        val fake = Fake({ url, _ -> if ("notes.example" in url) Transport.Response(429, "", "20") else reply("好") })
+        val s = notesSettings(own = true)
+        val k = AIKey(PlainProtector, service = { s.aiProvider }).apply { save("sk-main-1111111111") }
+        val ling = LingClient(k, fake, config = s::aiConfig, clock = StepClock())
+        try { ling.chat("x", "Notes.", Priority.Notes); throw AssertionError("answered") }
+        catch (e: LingException) { equal(LingException.Kind.RateLimited, e.kind, "notes gave up") }
+        // A translation fails at once while its own server is cooling down; this one isn't.
+        equal("好", ling.chat("y", "Translate.", Priority.Translate), "translation starts at once")
+        check(ling.keyState != KeyState.Invalid, "key fine")
+        // chat_template_kwargs refused by the notes' server only: translation keeps sending it.
+        val kw = Fake({ url, b -> if ("notes.example" in url && "chat_template_kwargs" in b) Transport.Response(422, "{}") else reply("{}") })
+        val two = client(kw, s, key = "sk-main-1111111111")
+        two.chat("x", "Notes.", Priority.Notes)
+        two.chat("x", "Notes.", Priority.Notes)
+        two.chat("y", "Translate.", Priority.Translate)
+        val notes = kw.sent.filter { "notes.example" in it.first }
+        equal(3, notes.size, "refused, asked without, then left out")
+        check("chat_template_kwargs" !in notes[2].second, "left out at the notes' server")
+        check("chat_template_kwargs" in kw.sent.last().second, "translation's server still gets it")
     }
 }

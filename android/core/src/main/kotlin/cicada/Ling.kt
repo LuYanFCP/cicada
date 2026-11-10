@@ -73,6 +73,9 @@ class AIKey(private val protector: KeyProtector, private val file: File? = null,
     /// Reads the files again (a dev build's key pushed in with adb).
     @Synchronized fun reload() { cache.clear() }
 
+    /// Another key file in the same store, sealed the same way (the custom service's notes key).
+    fun sibling(service: String) = AIKey(protector, service = { service })
+
     companion object {
         /// "sk-••••••••••••3f9a" for display.
         fun masked(key: String) = if (key.length <= 8) "sk-…" else key.take(3) + "•".repeat(12) + key.takeLast(4)
@@ -161,8 +164,12 @@ class LingClient(
     private val transport: Transport = UrlTransport,
     val config: () -> AIConfig = { Providers.configFrom(AppSettings()) },
     private val clock: GateClock = GateClock(),
+    /** The custom service's notes server's own key (另一个服务): `ai-key-custom-notes`, as on the Mac. */
+    private val notesKeys: AIKey = key.sibling(NOTES_KEY),
 ) {
     companion object {
+        /// The key file of the custom service's notes server.
+        const val NOTES_KEY = "custom-notes"
         val BASE = Providers.LING.base!!
         val DEFAULT_MODEL = Providers.LING.textModels[0].id
         val AUDIO_MODEL = Providers.LING.hearModels[0].id
@@ -241,8 +248,10 @@ class LingClient(
     /// Debug control only: report this OpenRouter balance instead of the real one.
     @Volatile var simulateBalance: Double? = null
     private val checkLock = Any()
-    /// The custom service refused `chat_template_kwargs` once: leave it out until settings change.
-    @Volatile private var noTemplateKwargs = false
+    /// Which servers refused `chat_template_kwargs` once (by host): leave it out there until settings change.
+    @Volatile private var noTemplateKwargs: Set<String> = emptySet()
+    /// Notes' own server's text models from its `/models` (empty while notes share translation's address).
+    @Volatile var notesCatalog: List<String> = emptyList(); private set
     private val listeners = mutableListOf<() -> Unit>()
 
     fun onChange(listener: () -> Unit) { synchronized(listeners) { listeners.add(listener) } }
@@ -259,6 +268,19 @@ class LingClient(
     }
 
     val hasKey get() = currentKey() != null
+
+    /// The key notes are sent with: with 另一个服务, their own key file if there is one, else the
+    /// translation key ("不填就用上面的 key").
+    fun notesKey(): String? {
+        if (config().notesOwnService) notesKeys.read()?.let { return it }
+        return currentKey()
+    }
+    /// Notes have a key file of their own (另一个服务 only).
+    val notesHasOwnKey get() = config().notesOwnService && notesKeys.read() != null
+    /// Notes' own key (另一个服务), saved; the caller checks again.
+    fun setNotesKey(raw: String): Boolean = raw.trim().isNotEmpty() && notesKeys.save(raw)
+    /// Notes go back to the translation key.
+    fun removeNotesKey() = notesKeys.remove()
     val usable get() = hasKey && keyState != KeyState.Invalid
     /// The service's own voice reads my words to the other side (otherwise the phone's voice).
     val speaks get() = usable && config().hasVoices
@@ -319,7 +341,9 @@ class LingClient(
     /// The key, the service or its models changed: forget what the last check found.
     fun keyChanged() {
         key.reload()
-        noTemplateKwargs = false
+        notesKeys.reload()
+        noTemplateKwargs = emptySet()
+        notesCatalog = emptyList()
         keyState = if (currentKey() == null) KeyState.None else KeyState.Unchecked
         synchronized(checkLock) { aiCheck = AICheck() }
         lastVoice = null
@@ -388,7 +412,13 @@ class LingClient(
                     r = r.pass(AICheck.StepID.Text, (System.nanoTime() - started) / 1e9)
                 }
                 if (c.provider.id == "openrouter") r = r.copy(balance = openRouterBalance(c, k))
-                if (c.provider.id == "custom") {
+                if (c.notesApart) {
+                    // Notes at their own model or server: their failure is theirs, translation goes on.
+                    r = r.copy(notes = AICheck.Notes.Running)
+                    synchronized(checkLock) { aiCheck = r }
+                    changed()
+                    r = r.copy(notes = checkNotes(c))
+                } else if (c.provider.id == "custom") {
                     val ask = "Reply with the JSON object {\"ok\": true}."
                     try {
                         chat(ask, "Reply.", Priority.Speak, json = true, maxTokens = 20, timeout = 30.0, jsonFallback = false)
@@ -432,14 +462,56 @@ class LingClient(
             val listed = fetchCatalog()
             val hearOwn = hearListed
             if (listed != null) {
-                // A model the service no longer lists fails here, before a meeting finds out.
-                // A hear model on its own server isn't on this list: that server's own was read for it.
+                // A model the service no longer lists fails here, before a meeting finds out. On a custom
+                // service, one a real sentence just went through exists whatever the list says (an alias,
+                // a name typed by hand). A hear model on its own server isn't on this list: that server's
+                // own was read for it.
                 val hearing = if (c.hearsElsewhere) hearOwn else listed.second
-                if (c.textModel !in listed.first) r = r.fail(AICheck.StepID.Text, AICheck.Reason.NoModel)
+                val proven = c.provider.id == "custom" && r[AICheck.StepID.Text] is AICheck.State.Ok
+                if (!proven && c.textModel !in listed.first) r = r.fail(AICheck.StepID.Text, AICheck.Reason.NoModel)
                 else if (hearing != null && c.hearModel !in hearing) r = r.fail(AICheck.StepID.Hear, AICheck.Reason.Deaf)
             }
         }
         return finishCheck(r, c)
+    }
+
+    /// Notes' own model or server: one JSON request the way a meeting's notes ask (straight to the
+    /// server: a check doesn't wait out 429s), then, at another address, its model list for the menu.
+    private fun checkNotes(config: AIConfig): AICheck.Notes {
+        if (config.notesBadAddress) return AICheck.Notes.Fail(AICheck.Reason.BadAddress)
+        val c = config.forNotes
+        val k = notesKey()
+        val base = c.base
+        if (k == null || base == null) return AICheck.Notes.Fail(AICheck.Reason.InvalidKey)
+        val url = base + "chat/completions"
+        val json = linkedMapOf<String, Any?>("model" to c.textModel, "messages" to listOf(
+            mapOf("role" to "system", "content" to "Reply with the JSON object {\"ok\": true}."), mapOf("role" to "user", "content" to "Reply.")))
+        c.shape(json, 20, templateKwargs = host(base) !in noTemplateKwargs)
+        json["response_format"] = mapOf("type" to "json_object")
+        val started = System.nanoTime()
+        fun seconds() = (System.nanoTime() - started) / 1e9
+        val result = try {
+            postChat(url, json, k, 60.0, notes = true)
+            AICheck.Notes.Ok(seconds())
+        } catch (e: LingException) {
+            if (e.kind == LingException.Kind.Http && (e.status == 400 || e.status == 422)) {
+                // JSON mode refused: meetings then ask without it, so what counts is a JSON object back.
+                json.remove("response_format")
+                val said = try {
+                    postChat(url, json, k, 60.0, notes = true)["choices"].arr().firstOrNull().obj()?.get("message").obj()?.get("content").str()
+                } catch (_: LingException) { null }
+                if (answersJSON(said)) AICheck.Notes.Ok(seconds()) else AICheck.Notes.Fail(AICheck.Reason.NoJSON, e.status)
+            } else {
+                val f = AICheck.classify(e, AICheck.StepID.Text)
+                AICheck.Notes.Fail(f?.reason ?: AICheck.Reason.ServerError, f?.code)
+            }
+        } catch (e: InterruptedException) {
+            throw e
+        } catch (_: Exception) {
+            AICheck.Notes.Fail(AICheck.Reason.Unreachable)
+        }
+        if (c.base != config.base) fetchNotesCatalog()
+        return result
     }
 
     private fun finishCheck(result: AICheck, c: AIConfig): KeyState {
@@ -479,8 +551,25 @@ class LingClient(
 
     /// A real request (hearing, notes, translation) came back: keep the steps current without a
     /// check. One server error in a meeting isn't worth repainting the settings for.
-    private fun observe(failure: LingException?, seconds: Double = 0.0, audio: Boolean = false) {
+    private fun observe(failure: LingException?, seconds: Double = 0.0, audio: Boolean = false, notes: Boolean = false) {
         if (!hasKey || simulateCheck != null) return
+        if (notes) {
+            // Notes at their own model or server: theirs alone, translation's steps are untouched.
+            val now = if (failure != null) {
+                val f = AICheck.classify(failure, AICheck.StepID.Text) ?: return
+                if (f.reason == AICheck.Reason.ServerError) return
+                AICheck.Notes.Fail(f.reason, f.code)
+            } else AICheck.Notes.Ok(seconds)
+            synchronized(checkLock) {
+                val before = aiCheck
+                if (before.running || checking > 0) return
+                if (before.notes?.ok == true && now.ok) return
+                aiCheck = before.copy(notes = now)
+            }
+            Log.d("ai: notes from a real request -> $now")
+            changed()
+            return
+        }
         val step = if (audio) AICheck.StepID.Hear else AICheck.StepID.Text
         val now: AICheck
         val wasUnreachable: Boolean
@@ -543,6 +632,18 @@ class LingClient(
         return listed to AICheck.listedHearing(body)
     }
 
+    /// Notes' own address's text models, for its menu. Quietly empty when it has no `/models`.
+    fun fetchNotesCatalog() {
+        val c = config()
+        val base = c.forNotes.base
+        val k = notesKey()
+        if (!c.notesApart || base == null || base == c.base || k == null) return
+        val body = models(base, k) ?: return
+        notesCatalog = Providers.catalog(body, emptyList(), hears = false)
+        Log.d("ai notes: ${notesCatalog.size} models")
+        changed()
+    }
+
     /// Which models the hear model's own server says take audio (null: it says nothing, or the
     /// hear model shares the text model's address).
     @Volatile private var hearListed: Set<String>? = null
@@ -566,10 +667,17 @@ class LingClient(
         audioType: String = "audio/wav", patient: Boolean = false, jsonFallback: Boolean = true,
         reply: ((Map<String, Any?>) -> Unit)? = null,
     ): String {
-        val k = currentKey() ?: throw LingException(LingException.Kind.NoKey)
-        if (keyState == KeyState.Invalid) throw LingException(LingException.Kind.InvalidKey)
-        val c = config()
+        val all = config()
+        // Notes (实时纪要, 说话人) go to their own model or server when set; never with their key to
+        // translation's server because their own address can't be used.
+        val notesSide = priority == Priority.Notes && audio == null && all.notesApart
+        if (notesSide && all.notesBadAddress) throw LingException(LingException.Kind.NoKey)
+        val c = if (notesSide) all.forNotes else all
+        val k = (if (notesSide) notesKey() else currentKey()) ?: throw LingException(LingException.Kind.NoKey)
+        if (if (notesSide) aiCheck.notes?.reason == AICheck.Reason.InvalidKey else keyState == KeyState.Invalid)
+            throw LingException(LingException.Kind.InvalidKey)
         val base = (if (audio != null) c.hearBase else c.base) ?: throw LingException(LingException.Kind.NoKey)
+        val gate = gate(base)
         val m = model ?: c.textModel
         val user: Any = if (audio == null) instruction else listOf(c.audioPart(audio, m, audioType), mapOf("type" to "text", "text" to instruction))
         val body = linkedMapOf<String, Any?>(
@@ -577,7 +685,7 @@ class LingClient(
             "messages" to listOf(mapOf("role" to "system", "content" to content), mapOf("role" to "user", "content" to user)),
             "stream" to false,
         )
-        c.shape(body, maxTokens, templateKwargs = !noTemplateKwargs)
+        c.shape(body, maxTokens, templateKwargs = host(base) !in noTemplateKwargs)
         if (json) body["response_format"] = mapOf("type" to "json_object")
 
         val waits = retryWaits(priority, audio != null, patient)
@@ -585,17 +693,17 @@ class LingClient(
         var ticket: Long? = null
         while (true) {
             // One that wouldn't retry fails at once while the service is cooling down: its caller falls back.
-            ticket = acquire(priority, c.provider.spacing, ticket, failIfPaused = waits.isEmpty())
+            ticket = acquire(priority, c.provider.spacing, gate, ticket, failIfPaused = waits.isEmpty())
             val started = System.nanoTime()
             try {
                 val root = try {
-                    postChat(base + "chat/completions", body, k, timeout)
+                    postChat(base + "chat/completions", body, k, timeout, notesSide)
                 } catch (e: LingException) {
                     if (!jsonFallback || e.kind != LingException.Kind.Http || e.status != 400 || body.remove("response_format") == null) throw e
                     // Some hosts of a model refuse JSON mode (on OpenRouter, Novita for Ling 3.1 Flash)
                     // while the model answers JSON anyway: the prompt asks for it, the parsers find it.
                     Log.d("ling: $priority JSON mode refused (400), asking again without it")
-                    postChat(base + "chat/completions", body, k, timeout)
+                    postChat(base + "chat/completions", body, k, timeout, notesSide)
                 }
                 reply?.invoke(root)
                 val choice = root["choices"].arr().firstOrNull().obj()
@@ -610,13 +718,13 @@ class LingClient(
                 val usage = root["usage"].obj()
                 Log.d("ai ${c.provider.id}: $priority ok ${(System.nanoTime() - started) / 1_000_000} ms tokens=${usage?.get("prompt_tokens")}/${usage?.get("completion_tokens")}")
                 if (rateLimitedAt != null) { rateLimitedAt = null; changed() }
-                observe(null, (System.nanoTime() - started) / 1e9, audio = audio != null)
+                observe(null, (System.nanoTime() - started) / 1e9, audio = audio != null, notes = notesSide)
                 return trimmed
             } catch (e: LingException) {
                 // A reply we drop (a search essay) still proves the service answers.
-                observe(e.takeIf { it.kind != LingException.Kind.Hijacked }, audio = audio != null)
+                observe(e.takeIf { it.kind != LingException.Kind.Hijacked }, audio = audio != null, notes = notesSide)
                 if (e.kind != LingException.Kind.RateLimited) throw e
-                val wait = rateLimited(if (waits.isEmpty()) 1.0 else waits[minOf(attempt, waits.size) - 1], e.retryAfter)
+                val wait = rateLimited(if (waits.isEmpty()) 1.0 else waits[minOf(attempt, waits.size) - 1], e.retryAfter, gate)
                 if (attempt > waits.size || wait == null) { rateLimitedAt = System.currentTimeMillis(); changed(); throw e }
                 Log.d("ling: $priority 429, retry in ${"%.1f".format(wait)} s")
                 attempt++
@@ -655,7 +763,7 @@ class LingClient(
             val ids = c.voices.map { it.id }
             body["voice"] = if (voice in ids) voice else ids.firstOrNull() ?: c.customVoice ?: "Kore"
         }
-        acquire(Priority.Speak, c.provider.spacing)
+        acquire(Priority.Speak, c.provider.spacing, gate(voiceBase))
         val started = System.nanoTime()
         val res = try {
             transport.stream(voiceBase + "audio/speech", Json.write(body, pretty = false), headers(k), (timeout * 1000).toInt())
@@ -723,20 +831,22 @@ class LingClient(
     /// works, isn't sent it again until settings change. A second refusal was about something else
     /// (a hear model that takes no audio, no JSON mode): the field stays, in `body` too, so a
     /// request asked again without JSON mode still turns thinking off.
-    private fun postChat(url: String, body: Map<String, Any?>, k: String, timeout: Double): Map<String, Any?> {
+    /// `notes`: a request to the notes' own model or server (a refused key is theirs, not translation's).
+    private fun postChat(url: String, body: Map<String, Any?>, k: String, timeout: Double, notes: Boolean = false): Map<String, Any?> {
         try {
-            return post(url, Json.write(body, pretty = false), k, timeout)
+            return post(url, Json.write(body, pretty = false), k, timeout, notes)
         } catch (e: LingException) {
             if (e.kind != LingException.Kind.Http || e.status !in listOf(400, 422) || "chat_template_kwargs" !in body) throw e
             val plain = LinkedHashMap(body).apply { remove("chat_template_kwargs") }
-            val root = try { post(url, Json.write(plain, pretty = false), k, timeout) } catch (_: LingException) { throw e }
-            if (!noTemplateKwargs) Log.d("ai custom: chat_template_kwargs refused (HTTP ${e.status}), sent without it from now on")
-            noTemplateKwargs = true
+            val root = try { post(url, Json.write(plain, pretty = false), k, timeout, notes) } catch (_: LingException) { throw e }
+            val h = host(url)
+            if (h !in noTemplateKwargs) Log.d("ai custom: chat_template_kwargs refused by $h (HTTP ${e.status}), sent without it from now on")
+            noTemplateKwargs = noTemplateKwargs + h
             return root
         }
     }
 
-    private fun post(url: String, payload: String, k: String, timeout: Double): Map<String, Any?> {
+    private fun post(url: String, payload: String, k: String, timeout: Double, notes: Boolean = false): Map<String, Any?> {
         val res = try {
             transport.send(url, "POST", payload, headers(k), (timeout * 1000).toInt())
         } catch (_: SocketTimeoutException) {
@@ -748,7 +858,7 @@ class LingClient(
         when (res.status) {
             200 -> {}
             401, 403 -> {
-                if (keyState != KeyState.Invalid) { keyState = KeyState.Invalid; changed() }
+                if (!notes && keyState != KeyState.Invalid) { keyState = KeyState.Invalid; changed() }
                 throw LingException(LingException.Kind.InvalidKey)
             }
             429 -> throw LingException(LingException.Kind.RateLimited, 429, retryAfterSeconds(res.retryAfter))
@@ -761,51 +871,59 @@ class LingClient(
     }
 
     // Start gate: request starts ≥ `spacing` apart, the most urgent waiting one first, none while
-    // the service is cooling down after a 429.
+    // the server is cooling down after a 429. One per server (by host): notes on another server
+    // don't wait behind translation, and a 429 there doesn't hold translation back.
 
     private class Ticket(val priority: Priority, val seq: Long)
-    private val gate = Object()
-    private val waiting = mutableListOf<Ticket>()
-    private var lastStart = Long.MIN_VALUE / 2
-    private var pausedUntil = 0L
-    private var seq = 0L
+    private class StartGate {
+        val lock = Object()
+        val waiting = mutableListOf<Ticket>()
+        var lastStart = Long.MIN_VALUE / 2
+        /// After a 429 no request starts here before this (`rateLimited`).
+        var pausedUntil = 0L
+    }
+    private val gates = HashMap<String, StartGate>()
+    private val seq = java.util.concurrent.atomic.AtomicLong()
+
+    /// The gate of the server at `base`.
+    private fun gate(base: String?): StartGate = synchronized(gates) { gates.getOrPut(host(base)) { StartGate() } }
 
     /// Waits for this request's turn to start. `ticket` is a retry's first one, which keeps its
     /// place ahead of requests queued after it. Returns the ticket.
-    private fun acquire(priority: Priority, serviceSpacing: Double, ticket: Long? = null, failIfPaused: Boolean = false): Long {
+    private fun acquire(priority: Priority, serviceSpacing: Double, g: StartGate, ticket: Long? = null, failIfPaused: Boolean = false): Long {
         val spacing = LingClient.spacing ?: serviceSpacing
-        synchronized(gate) {
-            if (failIfPaused && pausedUntil > clock.now()) throw LingException(LingException.Kind.RateLimited)
-            val me = Ticket(priority, ticket ?: ++seq)
-            waiting.add(me)
+        synchronized(g.lock) {
+            if (failIfPaused && g.pausedUntil > clock.now()) throw LingException(LingException.Kind.RateLimited)
+            val me = Ticket(priority, ticket ?: seq.incrementAndGet())
+            g.waiting.add(me)
             try {
                 while (true) {
-                    val head = waiting.minWith(compareBy<Ticket>({ it.priority.ordinal }, { it.seq }))
+                    val head = g.waiting.minWith(compareBy<Ticket>({ it.priority.ordinal }, { it.seq }))
                     val now = clock.now()
-                    val wait = maxOf((spacing * 1000).toLong() - (now - lastStart), pausedUntil - now)
+                    val wait = maxOf((spacing * 1000).toLong() - (now - g.lastStart), g.pausedUntil - now)
                     if (head === me && wait <= 0) {
-                        waiting.remove(me)
-                        lastStart = now
-                        gate.notifyAll()
+                        g.waiting.remove(me)
+                        g.lastStart = now
+                        g.lock.notifyAll()
                         return me.seq
                     }
-                    clock.wait(gate, if (head === me) wait else 0)
+                    clock.wait(g.lock, if (head === me) wait else 0)
                 }
             } catch (e: InterruptedException) {
-                waiting.remove(me); gate.notifyAll(); throw e
+                g.waiting.remove(me); g.lock.notifyAll(); throw e
             }
         }
     }
 
-    /// After a 429: no request starts for `backoff` seconds, or as long as the service asked
+    /// After a 429: no request starts at that server for `backoff` seconds, or as long as it asked
     /// (Retry-After; Ling sends none), plus a little jitter. The queue waits at the gate instead of
     /// each request spending its retries on the same limit. Null when that is over MAX_PAUSE (the
     /// gate still holds for MAX_PAUSE): an outage, not a busy moment.
-    private fun rateLimited(backoff: Double, retryAfter: Double?): Double? {
+    private fun rateLimited(backoff: Double, retryAfter: Double?, g: StartGate): Double? {
         val wait = maxOf(backoff, retryAfter ?: 0.0) + Math.random() * 0.5
-        synchronized(gate) {
-            pausedUntil = maxOf(pausedUntil, clock.now() + (minOf(wait, MAX_PAUSE) * 1000).toLong())
-            gate.notifyAll()
+        synchronized(g.lock) {
+            g.pausedUntil = maxOf(g.pausedUntil, clock.now() + (minOf(wait, MAX_PAUSE) * 1000).toLong())
+            g.lock.notifyAll()
         }
         return if (wait <= MAX_PAUSE) wait else null
     }

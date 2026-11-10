@@ -451,12 +451,35 @@ class CicadaApp : Application() {
         val s = settings
         val p = s.aiProvider
         if (kind == "text" && p == "ling") s.model = model.ifEmpty { LingClient.DEFAULT_MODEL }
-        else {
+        else if (kind == "notes") {
+            // The custom service's notes model; empty: the translation model.
+            if (model.isNotEmpty()) s.aiModels[Providers.NOTES_MODEL] = model else s.aiModels.remove(Providers.NOTES_MODEL)
+        } else {
             val table = when (kind) { "text" -> s.aiModels; "hear" -> s.aiHearModels; "voice" -> s.aiVoiceModels; else -> return }
             if (model.isNotEmpty()) table[p] = model else table.remove(p)
         }
         s.save()
         aiChanged()
+    }
+
+    /// 纪要 › 同一个服务 / 另一个服务 (the custom service): off keeps the typed address.
+    fun setNotesOwn(on: Boolean) {
+        settings.aiCustomNotesOwn = on
+        settings.save()
+        aiChanged()
+    }
+
+    fun setNotesBase(raw: String) {
+        settings.aiCustomNotesBase = raw.trim()
+        settings.save()
+        aiChanged()
+    }
+
+    /// Notes' own key (另一个服务), sealed like the others; null removes it (back to the key above).
+    fun setNotesKey(raw: String?): Boolean {
+        val ok = if (raw == null) { ling.removeNotesKey(); true } else ling.setNotesKey(raw)
+        if (ok) aiChanged()
+        return ok
     }
 
     /// The service, its address, models or key changed: forget the old check and check again.
