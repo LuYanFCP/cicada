@@ -147,6 +147,12 @@ class RecordActivity : Activity() {
     // The file is there but MediaPlayer can't open it: said as 找不到录音 instead of a dead bar.
     private var broken = false
     private var playing: String? = null // the line at the playhead, for the highlight
+    private var playingOn = false // and whether it is sounding (its bars bounce)
+    /// The transcript keeps the playing line centred. Scrolling it by finger stops that until a
+    /// line is tapped, the bar is used or 回到正在播放 is pressed: following would yank the page away.
+    private var following = true
+    private lateinit var backToPlaying: LinearLayout
+    private lateinit var backToPlayingText: TextView
     private var toast: FixViews.Toast? = null
     private val tickPlayer = object : Runnable {
         override fun run() { updatePlayer(); if (player?.isPlaying == true) list.postDelayed(this, 250) }
@@ -174,6 +180,17 @@ class RecordActivity : Activity() {
                 override fun onScrollStateChanged(v: android.widget.AbsListView, state: Int) {}
                 override fun onScroll(v: android.widget.AbsListView, first: Int, visible: Int, total: Int) = pin()
             })
+            // A finger dragging the list stops following. Not the scroll state: a touch that only
+            // catches following's own centring (or a tap during it) reports TOUCH_SCROLL too.
+            val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+            var downY = 0f
+            setOnTouchListener { _, e ->
+                when (e.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN -> downY = e.y
+                    android.view.MotionEvent.ACTION_MOVE -> if (following && player?.isPlaying == true && Math.abs(e.y - downY) > slop) { following = false; showBackToPlaying() }
+                }
+                false
+            }
         }
         barTitle = ui.text("", 17f, Palette.ink, bold = true, lines = 1).apply {
             alpha = 0f
@@ -190,10 +207,24 @@ class RecordActivity : Activity() {
         // The player floats over the bottom of the page (not screen()'s bottom bar), so render()
         // can show it once a live meeting ends and its recording is in place.
         playerHost.visibility = View.GONE
+        // Scrolled away from what is playing: one way back, just above the player.
+        backToPlayingText = ui.text("", 13f, android.graphics.Color.WHITE, bold = true, lines = 1).apply { fontFeatureSettings = "tnum" }
+        backToPlaying = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(ui.dp(16), 0, ui.dp(16), 0)
+            minimumHeight = ui.dp(36)
+            addView(ui.icon(R.drawable.i_waves, 14, android.graphics.Color.WHITE).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO })
+            addView(backToPlayingText, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = ui.dp(6) })
+            ui.tappable(this, 18, ui.rounded(Palette.ink, 18), dark = true) { follow() }
+            elevation = ui.dp(4).toFloat()
+            visibility = View.GONE
+        }
         val body = FrameLayout(this).apply {
             addView(list, FrameLayout.LayoutParams(-1, -1))
             addView(pinnedTabs, FrameLayout.LayoutParams(-1, -2, android.view.Gravity.TOP))
             addView(playerHost, FrameLayout.LayoutParams(-1, -2, android.view.Gravity.BOTTOM))
+            addView(backToPlaying, FrameLayout.LayoutParams(-2, -2, android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL).apply { bottomMargin = ui.dp(112) })
         }
         setContentView(ui.screen(this, null, back = true, ground = Palette.card, body = body, scroll = false, center = barTitle, actions = listOf(
             ui.roundButton(R.drawable.i_share, L("分享"), onWhite = true) { cicada.store.get(id)?.let(::share) },
@@ -227,11 +258,11 @@ class RecordActivity : Activity() {
         pinnedTabs.visibility = if (above(headTabs)) View.VISIBLE else View.GONE
     }
 
-    override fun onResume() { super.onResume(); unobserve = cicada.observe(::render); shown = null; render() }
+    override fun onResume() { super.onResume(); current = this; unobserve = cicada.observe(::render); shown = null; render() }
     // Leaving the record (back, another screen, the phone locked) stops what it was playing.
     // Only a playing player is paused: pause() on one that never started puts MediaPlayer in its
     // error state (the bar came back with a length of 00:00).
-    override fun onPause() { super.onPause(); unobserve?.invoke(); unobserve = null; player?.takeIf { it.isPlaying }?.pause(); if (isFinishing) releasePlayer() else updatePlayer() }
+    override fun onPause() { super.onPause(); if (current === this) current = null; unobserve?.invoke(); unobserve = null; player?.takeIf { it.isPlaying }?.pause(); if (isFinishing) releasePlayer() else updatePlayer() }
     override fun onDestroy() { super.onDestroy(); releasePlayer() }
 
     private fun render() {
@@ -368,19 +399,25 @@ class RecordActivity : Activity() {
                     ui.text("", 12f, Palette.secondary, bold = true, lines = 1),
                     ui.text("", Ui.Type.ORIGINAL, Palette.secondary).apply { leading(1.45f) },
                     ui.text("", Ui.Type.BODY, Palette.ink).apply { leading(1.5f) }), ui.weight())
+                addView(PlayingBars(), LinearLayout.LayoutParams(ui.dp(14), ui.dp(12)).apply { leftMargin = ui.dp(8); topMargin = ui.dp(4) })
             }
             val l = lines[i]
             val now = l.id == playing
-            row.setBackgroundColor(if (now) PLAYING_LINE else 0)
-            // With a recording the time is a link that plays from there; the line at the playhead
-            // has it in the accent.
+            // With a recording the whole row plays from its line (the list's item click): the line
+            // at the playhead on the pale accent, a grey press on the others; the fill reaches 10dp
+            // past the text, as the Mac's.
+            row.background = if (!playable) null else android.graphics.drawable.InsetDrawable(
+                ui.ripple(if (now) ui.rounded(PLAYING_LINE, 10) else null, 10), ui.dp(10), 0, ui.dp(10), 0)
+            // A background with insets brings its own padding: the row's goes back on after it.
+            row.setPadding(ui.dp(20), ui.dp(14), ui.dp(20), ui.dp(14))
+            // On the time, not the row: a row with a description hides its texts from TalkBack.
             (row.getChildAt(0) as TextView).apply {
                 text = Languages.clock(l.t)
+                contentDescription = if (playable) "${L("从这里播放")} ${text}" else null
                 setTextColor(when { now -> Palette.accent; playable -> Palette.link; else -> Palette.tertiary })
-                typeface = if (now) android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, 600, false) else android.graphics.Typeface.DEFAULT
-                if (playable) setOnClickListener { playFrom(l.t) } else { setOnClickListener(null); isClickable = false }
-                contentDescription = if (playable) "${L("播放")} ${text}" else null
+                typeface = if (now) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
             }
+            (row.getChildAt(2) as PlayingBars).on = now && playingOn
             val texts = row.getChildAt(1) as LinearLayout
             val name = SpeakerLabels.speakerName(l, numbers, names)
             (texts.getChildAt(0) as TextView).apply {
@@ -392,6 +429,26 @@ class RecordActivity : Activity() {
             (texts.getChildAt(1) as TextView).apply { text = FixViews.text(ui, l); visibility = if (translated) View.VISIBLE else View.GONE }
             (texts.getChildAt(2) as TextView).text = if (translated) l.dst else FixViews.text(ui, l)
             return row
+        }
+    }
+
+    /// Three bars that bounce beside the line the recording is playing; nothing while paused
+    /// (still bars when the system's animations are off).
+    private inner class PlayingBars : View(this@RecordActivity) {
+        var on = false; set(v) { if (field != v) { field = v; invalidate() } }
+        private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Palette.accent }
+
+        override fun onDraw(c: android.graphics.Canvas) {
+            if (!on) return
+            val moving = android.animation.ValueAnimator.areAnimatorsEnabled()
+            val t = android.os.SystemClock.uptimeMillis() / 1000.0
+            val w = ui.dp(3).toFloat(); val gap = ui.dp(2).toFloat(); val r = w / 2
+            for (i in 0 until 3) {
+                val h = height * (if (moving) 0.35 + 0.65 * Math.abs(Math.sin(t * 3.5 + i * 0.9)) else 0.7).toFloat()
+                val x = i * (w + gap)
+                c.drawRoundRect(x, height - h, x + w, height.toFloat(), r, r, paint)
+            }
+            if (moving) postInvalidateOnAnimation()
         }
     }
 
@@ -494,7 +551,9 @@ class RecordActivity : Activity() {
     private fun releasePlayer() {
         list.removeCallbacks(tickPlayer)
         player?.release(); player = null
-        playing = null
+        playing = null; playingOn = false
+        following = true
+        if (::backToPlaying.isInitialized) backToPlaying.visibility = View.GONE
     }
 
     private fun start(p: android.media.MediaPlayer) {
@@ -517,12 +576,14 @@ class RecordActivity : Activity() {
         p.seekTo((t * 1000).toLong().coerceAtLeast(0), android.media.MediaPlayer.SEEK_CLOSEST)
         if (!p.isPlaying) start(p)
         updatePlayer()
+        follow()
     }
 
     private fun seekFraction(f: Float) {
         val p = ensurePlayer() ?: return
         p.seekTo((f * p.duration).toLong(), android.media.MediaPlayer.SEEK_CLOSEST)
         updatePlayer()
+        follow()
     }
 
     /// 1× → 1.5× → 2× → 1×.
@@ -548,22 +609,51 @@ class RecordActivity : Activity() {
         // The line being heard: the last one that started at or before the playhead, once
         // playing has begun (iOS's lineID).
         val lines = if (p != null && (on || pos > 0)) cicada.store.get(id)?.lines.orEmpty() else emptyList()
-        val now = lines.lastOrNull { it.t <= pos + 0.2 }?.id
-        if (now == playing) return
-        playing = now
+        val line = lines.lastOrNull { it.t <= pos + 0.2 }
+        val now = line?.id
+        backToPlayingText.text = line?.let { "${L("回到正在播放")} · ${Languages.clock(it.t)}" } ?: ""
+        if (line == null) backToPlaying.visibility = View.GONE
+        if (now == playing && on == playingOn) return
+        val moved = now != playing
+        playing = now; playingOn = on
         adapter.notifyDataSetChanged()
-        if (on) keepInView(adapter.indexOf(now))
+        if (on && moved && following) centre(adapter.indexOf(now))
     }
 
-    /// Scrolls the transcript so the line being heard is on screen, clear of the pinned tabs
-    /// and the player; left alone while it already is.
-    private fun keepInView(index: Int) {
+    /// Back to following the recording: the 回到正在播放 capsule, a tapped line, the bar.
+    private fun follow() {
+        backToPlaying.visibility = View.GONE
+        if (following) return
+        following = true
+        centre(adapter.indexOf(playing))
+    }
+
+    private fun showBackToPlaying() {
+        if (playing == null) return
+        backToPlaying.alpha = 0f; backToPlaying.translationY = ui.dp(8).toFloat()
+        backToPlaying.visibility = View.VISIBLE
+        backToPlaying.animate().alpha(1f).translationY(0f).setDuration(200).start()
+    }
+
+    /// Scrolls the line being heard to the middle of what shows between the pinned tabs and the
+    /// player (the Mac's anchor: .center): smoothly when it is on screen, a jump from far away.
+    private fun centre(index: Int) {
         if (index < 0) return
         val pos = index + list.headerViewsCount
-        val row = list.getChildAt(pos - list.firstVisiblePosition)
         val top = if (pinnedTabs.visibility == View.VISIBLE) pinnedTabs.height else 0
-        if (row != null && row.top >= top && row.bottom <= list.height - playerHost.height) return
-        list.smoothScrollToPositionFromTop(pos, top + ui.dp(24), 300)
+        val bottom = list.height - (if (playerHost.visibility == View.VISIBLE) playerHost.height else 0)
+        val row = list.getChildAt(pos - list.firstVisiblePosition)
+        val y = top + maxOf(0, (bottom - top - (row?.height ?: ui.dp(96))) / 2)
+        if (row != null) list.smoothScrollBy(row.top - y, 300) else list.setSelectionFromTop(pos, y)
+    }
+
+    /// For `cicadactl state`: the open record's player (never what was said).
+    fun debugState(): Map<String, Any?> {
+        val p = player
+        return mapOf("id" to id, "tab" to tab, "playable" to (playerHost.visibility == View.VISIBLE), "playing" to (p?.isPlaying == true),
+                     "position" to ((p?.currentPosition ?: 0) / 1000.0), "line" to playing, "lineIndex" to adapter.indexOf(playing),
+                     "following" to following, "backToPlaying" to (backToPlaying.visibility == View.VISIBLE),
+                     "firstVisible" to (list.firstVisiblePosition - list.headerViewsCount), "lastVisible" to (list.lastVisiblePosition - list.headerViewsCount))
     }
 
     // MARK: 更多: export and the rest
@@ -635,9 +725,11 @@ class RecordActivity : Activity() {
         ui.confirm(this, L("删除"), LF("删除“%@”？删掉后不能恢复", SessionStore.displayTitle(s)), ok = L("删除"), destructive = true) { cicada.store.delete(s.id); finish() }
     }
 
-    private companion object {
-        /// The line being heard (the design's pale accent) and the player's unplayed track.
-        val PLAYING_LINE = android.graphics.Color.parseColor("#FDEEE7")
-        val TRACK = android.graphics.Color.parseColor("#E1E3E8")
+    companion object {
+        /// The record in front, for the debug state.
+        var current: RecordActivity? = null; private set
+        /// The line being heard (the Mac's Palette.accentPale) and the player's unplayed track.
+        private val PLAYING_LINE = android.graphics.Color.parseColor("#FCEDE7")
+        private val TRACK = android.graphics.Color.parseColor("#E1E3E8")
     }
 }

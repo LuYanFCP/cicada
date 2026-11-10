@@ -281,6 +281,7 @@ class DebugReceiver : BroadcastReceiver() {
                 "overlay" to app.overlay.describe(),
                 "canOverlay" to app.canOverlay,
                 "sessions" to app.store.all().size,
+                "record" to RecordActivity.current?.debugState(),
                 "ui" to Strings.language,
                 "update" to mapOf("enabled" to app.updates.enabled, "current" to app.updates.checker.current, "available" to app.updates.available?.version,
                                   "apk" to app.updates.available?.apk, "lastChecked" to app.updates.checker.lastChecked, "notified" to app.settings.updateNotified,
