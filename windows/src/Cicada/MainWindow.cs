@@ -122,6 +122,7 @@ sealed class MainWindow : Window
         tick.Tick += (_, _) => { if (app.Listen.Listening) Pill(); else { tick.Stop(); Pill(); } };
         Closed += (_, _) => { tick.Stop(); ClosePlayer(); };
         playTick.Tick += (_, _) => UpdatePlayer();
+        barTick.Tick += (_, _) => Bounce();
         Refresh();
     }
 
@@ -424,6 +425,8 @@ sealed class MainWindow : Window
         }
         top.Children.Add(titleRow);
         if (PlayerArea(s, live) is { } audio) top.Children.Add(audio);
+        // Under the page, not in its header: the controls stay while the transcript scrolls.
+        var footer = player is not null ? PlayerFooter() : null;
 
         // 纪要 / 文字记录 on the left, what to do with it on the right, one hairline under both.
         FrameworkElement Tabs(double size) => Ui.Tabs([("notes", L("纪要")), ("transcript", s.Lines.Count > 0 ? $"{L("文字记录")} {s.Lines.Count}" : L("文字记录"))], tab, t => { tab = t; ShowDetail(); }, size);
@@ -437,6 +440,8 @@ sealed class MainWindow : Window
         // One centred column, like a page: content runs into the old title bar's height.
         var page = new StackPanel { MaxWidth = 700, Margin = new Thickness(48, 56, 48, 48) };
         page.Children.Add(top);
+        // The notes have no lines to light: the rows (and 回到正在播放) go with the transcript.
+        if (tab != "transcript") { rows.Clear(); lit = -1; hovered = null; barTick.Stop(); }
         var body = tab == "transcript" ? Transcript(s) : Notes(s, live);
         body.Margin = new Thickness(0, 28, 0, 0);
         page.Children.Add(body);
@@ -473,11 +478,28 @@ sealed class MainWindow : Window
             pinned.Visibility = below < 0 ? Visibility.Visible : Visibility.Collapsed;
         };
         if (pendingJump is { } jump) { pendingJump = null; jump(scroll); }
+        // Scrolling by hand while it plays stops the transcript following the recording. Only input
+        // counts (wheel and touchpad, the scroll bar, keys, touch): the page's own scrolling doesn't.
+        scroll.PreviewMouseWheel += (_, _) => UserScrolled();
+        scroll.AddHandler(System.Windows.Controls.Primitives.ScrollBar.ScrollEvent, new System.Windows.Controls.Primitives.ScrollEventHandler((_, _) => UserScrolled()), true);
+        scroll.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key is System.Windows.Input.Key.PageUp or System.Windows.Input.Key.PageDown or System.Windows.Input.Key.Up
+                or System.Windows.Input.Key.Down or System.Windows.Input.Key.Home or System.Windows.Input.Key.End) UserScrolled();
+        };
+        scroll.ManipulationStarted += (_, _) => UserScrolled();
         // The last fix decision with 撤销, along the bottom of the page.
         toastHost.Margin = new Thickness(0, 0, 0, 18);
         toastHost.VerticalAlignment = VerticalAlignment.Bottom; toastHost.HorizontalAlignment = HorizontalAlignment.Center;
         if (toastHost.Parent is Grid old) old.Children.Remove(toastHost);
-        detail.Content = new Grid { Children = { scroll, pinned, toastHost } };
+        var area = new Grid { Children = { scroll, pinned, toastHost } };
+        if (footer is not null) area.Children.Add(BackToPlaying()); else backButton = null;
+        var whole = new Grid();
+        whole.RowDefinitions.Add(new RowDefinition());
+        whole.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        whole.Children.Add(area);
+        if (footer is not null) { Grid.SetRow(footer, 1); whole.Children.Add(footer); }
+        detail.Content = whole;
         ShowToast();
     }
 
@@ -650,8 +672,8 @@ sealed class MainWindow : Window
     FrameworkElement Transcript(Session s)
     {
         var body = new StackPanel();
-        FrameworkElement? target = null;
-        rows.Clear(); lit = -1;
+        PlayRow? target = null;
+        rows.Clear(); lit = -1; hovered = null;
         Action<double>? play = player is not null ? PlayFrom : null;
         // 改正听错的词: over a finished meeting, the fixes waiting for the user and how many were made.
         var live = app.Listen.Listening && app.Listen.SessionId == s.Id;
@@ -663,6 +685,8 @@ sealed class MainWindow : Window
         // The line nearest the topic's time (older notes may hold a time no line has), or the one asked for.
         var nearest = jumpLine is { } jl ? s.Lines.FirstOrDefault(l => l.Id == jl)
             : jumpTo is { } t0 && s.Lines.Count > 0 ? s.Lines.MinBy(l => Math.Abs(l.T - t0)) : null;
+        // Opened at a line while the recording plays: stay there (回到正在播放 goes back).
+        if (nearest is not null && playing) following = false;
         foreach (var (l, who, ink, place) in NotesWindow.Speakers(s.Lines, app.Settings.SpeakerVoices))
         {
             var editor = editingLine == l.Id ? new FixViews.Editor(l, s.Id, app.Fixes, editingStart, EditDone) : null;
@@ -673,14 +697,16 @@ sealed class MainWindow : Window
             item.Click += (_, _) => EditLine(l, l.Shown);
             menu.Items.Add(item);
             line.ContextMenu = menu;
-            if (ReferenceEquals(l, nearest)) target = line;
-            if (play is not null && line is Panel row0 && FindTime(row0) is { } time) rows.Add((l.T, row0, time));
-            body.Children.Add(line);
+            var r = Row(l, (Panel)line, play is not null && editor is null);
+            if (ReferenceEquals(l, nearest)) target = r;
+            body.Children.Add(r.Card);
         }
-        if (target is Panel row)
+        if (target is { } marked)
         {
             // A topic's time opens the transcript at what was said then, marked for a moment.
-            row.Background = Palette.AccentPale;
+            marked.Marked = true;
+            Paint(marked);
+            var row = marked.Card;
             // Measured once laid out: before that every row is at the top.
             pendingJump = scroll =>
             {
@@ -693,7 +719,7 @@ sealed class MainWindow : Window
                 row.Loaded += Jump;
             };
             var fade = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-            fade.Tick += (_, _) => { row.Background = Brushes.Transparent; fade.Stop(); };
+            fade.Tick += (_, _) => { marked.Marked = false; Paint(marked); fade.Stop(); };
             fade.Start();
         }
         jumpTo = null; jumpLine = null;
@@ -703,6 +729,94 @@ sealed class MainWindow : Window
 
     static TextBlock? FindTime(Panel row) =>
         row.Children.OfType<Panel>().FirstOrDefault()?.Children.OfType<TextBlock>().FirstOrDefault(t => (t.Tag as string) == "time");
+
+    /// A transcript line in the record: the row on a rounded fill (the line playing, or under the
+    /// pointer when a click would play it) with the playing bars at its right edge.
+    sealed class PlayRow(double t, Border card, TextBlock? time, StackPanel bars, bool playable)
+    {
+        public double T = t;
+        public Border Card = card;
+        public TextBlock? Time = time;
+        public StackPanel Bars = bars;
+        public bool Playable = playable, Marked, ShowsPlay;
+    }
+
+    PlayRow Row(TranscriptLine l, Panel line, bool playable)
+    {
+        // The row's own bottom gap goes inside the fill, half above and half below the text.
+        line.Margin = new Thickness(0, line.Margin.Top, 0, line.Margin.Bottom / 2);
+        var bars = new StackPanel { Orientation = Orientation.Horizontal, Height = 12, Width = 13, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(8, line.Margin.Top + 3, 0, 0), Visibility = Visibility.Hidden };
+        for (int i = 0; i < 3; i++)
+            bars.Children.Add(new System.Windows.Shapes.Rectangle { Width = 3, Height = 8, RadiusX = 1.5, RadiusY = 1.5, Fill = Palette.Live, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(i == 0 ? 0 : 2, 0, 0, 0) });
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition());
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(bars, 1);
+        grid.Children.Add(line); grid.Children.Add(bars);
+        var card = new Border
+        {
+            CornerRadius = new CornerRadius(10), Background = Brushes.Transparent, Child = grid,
+            Margin = new Thickness(-10, 0, -10, 0), Padding = new Thickness(10, line.Margin.Bottom, 10, 0),
+        };
+        var r = new PlayRow(l.T, card, FindTime(line), bars, playable);
+        rows.Add(r);
+        if (!playable) { bars.Visibility = Visibility.Collapsed; return r; }
+        card.MouseEnter += (_, _) => { hovered = r; Paint(r); };
+        card.MouseLeave += (_, _) => { if (hovered == r) hovered = null; Paint(r); };
+        // A click anywhere on the line plays from it: a press and release without moving (a drag
+        // is left alone), not on the time or the line's links, which act on their own.
+        Point? down = null;
+        card.PreviewMouseLeftButtonDown += (_, e) => down = OnLink(e.OriginalSource as DependencyObject, card) ? null : e.GetPosition(card);
+        card.MouseLeftButtonUp += (_, e) =>
+        {
+            if (down is not { } d) return;
+            down = null;
+            var p = e.GetPosition(card);
+            if (Math.Abs(p.X - d.X) > SystemParameters.MinimumHorizontalDragDistance || Math.Abs(p.Y - d.Y) > SystemParameters.MinimumVerticalDragDistance) return;
+            PlayFrom(r.T);
+        };
+        return r;
+    }
+
+    /// The time, 改回 and 改这句… are links (a hand cursor) or buttons that handle their own click.
+    static bool OnLink(DependencyObject? d, FrameworkElement stop)
+    {
+        for (; d is not null && d != stop; d = d is Visual or System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d))
+            if (d is System.Windows.Controls.Primitives.ButtonBase || d is FrameworkElement { Cursor: var c } && c == System.Windows.Input.Cursors.Hand
+                || d is FrameworkContentElement { Cursor: var cc } && cc == System.Windows.Input.Cursors.Hand) return true;
+        return false;
+    }
+
+    /// The line playing on the pale accent with its time in the accent and, while it plays, the
+    /// bars; under the pointer a light fill and ▶ before the time; else as it was.
+    void Paint(PlayRow r)
+    {
+        var current = lit >= 0 && lit < rows.Count && rows[lit] == r;
+        var hover = r.Playable && hovered == r;
+        r.Card.Background = current ? Palette.Playing : r.Marked ? Palette.AccentPale : hover ? Palette.Raised : Brushes.Transparent;
+        r.Bars.Visibility = current && playing ? Visibility.Visible : r.Playable ? Visibility.Hidden : Visibility.Collapsed;
+        if (r.Time is not { } time) return;
+        time.Foreground = current || hover ? Palette.Live : time.Tag as string == "time" ? Palette.TimeLink : Palette.Tertiary;
+        time.FontWeight = current || hover ? FontWeights.SemiBold : FontWeights.Normal;
+        if (r.ShowsPlay == hover) return;
+        r.ShowsPlay = hover;
+        var clock = Languages.Clock(r.T);
+        time.Inlines.Clear();
+        if (hover) time.Inlines.Add(new System.Windows.Documents.Run("▶ ") { FontSize = 8, BaselineAlignment = BaselineAlignment.Center });
+        time.Inlines.Add(new System.Windows.Documents.Run(clock));
+    }
+
+    /// The bars beside the playing line bounce (as the Mac's PlayingBars); held still when the
+    /// system turns animations off.
+    void Bounce()
+    {
+        if (lit < 0 || lit >= rows.Count) return;
+        var t = Environment.TickCount64 / 1000.0;
+        var still = !SystemParameters.ClientAreaAnimation;
+        var i = 0;
+        foreach (var bar in rows[lit].Bars.Children.OfType<System.Windows.Shapes.Rectangle>())
+            bar.Height = 12 * (still ? 0.7 : 0.35 + 0.65 * Math.Abs(Math.Sin(t * 3.5 + i++ * 0.9)));
+    }
 
     // MARK: 回放
 
@@ -715,9 +829,17 @@ sealed class MainWindow : Window
     double? pendingSeek;
     readonly DispatcherTimer playTick = new() { Interval = TimeSpan.FromMilliseconds(200) };
     ScrollViewer? pageScroll;
-    // The transcript's lines with their times, in time order, and the one at the playhead.
-    readonly List<(double t, Panel row, TextBlock time)> rows = [];
+    // The transcript's lines with their times, in time order, the one at the playhead and the one
+    // under the pointer.
+    readonly List<PlayRow> rows = [];
     int lit = -1;
+    PlayRow? hovered;
+    readonly DispatcherTimer barTick = new() { Interval = TimeSpan.FromMilliseconds(50) };
+    /// The transcript keeps the playing line in view. Scrolling it by hand stops that until a line
+    /// is picked, the bar is used or 回到正在播放 is pressed: following would yank the page away.
+    bool following = true;
+    Button? backButton;
+    TextBlock? backText;
     // The bar's moving parts, rebuilt with the page.
     TextBlock? nowText, lengthText, speedText;
     Border? played;
@@ -767,10 +889,60 @@ sealed class MainWindow : Window
             player.SpeedRatio = speed;
         }
         fallbackLength = s.Duration.TotalSeconds;
-        return Note(PlayerBar());
+        return null;
     }
 
-    FrameworkElement PlayerBar()
+    /// The player along the bottom of the record, on white under a hairline.
+    FrameworkElement PlayerFooter()
+    {
+        var bar = PlayerBar();
+        bar.MaxWidth = 700;
+        bar.Margin = new Thickness(48, 10, 48, 10);
+        return new Border { Background = Palette.Surface, BorderBrush = Palette.Line, BorderThickness = new Thickness(0, 1, 0, 0), Child = bar };
+    }
+
+    /// Scrolled away from what is playing: one way back, at the bottom of the transcript.
+    FrameworkElement BackToPlaying()
+    {
+        backText = Ui.Text("", 13, Brushes.White, FontWeights.SemiBold, wrap: false);
+        System.Windows.Documents.Typography.SetNumeralAlignment(backText, FontNumeralAlignment.Tabular);
+        var content = Ui.Row(6, Ui.Icon(Icons.Wave, 13, Brushes.White, stroke: 1.8), backText);
+        backButton = Capsule(content, Palette.Ink, null, 34, new Thickness(16, 0, 16, 0), Follow, L("回到正在播放"));
+        backButton.VerticalAlignment = VerticalAlignment.Bottom;
+        backButton.HorizontalAlignment = HorizontalAlignment.Center;
+        backButton.Margin = new Thickness(0, 0, 0, 16);
+        backButton.Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = Color.FromRgb(0x15, 0x17, 0x1C), Opacity = 0.18, BlurRadius = 20, ShadowDepth = 4, Direction = 270 };
+        UpdateBack();
+        return backButton;
+    }
+
+    void UpdateBack()
+    {
+        if (backButton is null || backText is null) return;
+        var show = !following && player is not null && lit >= 0 && lit < rows.Count;
+        backButton.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (show) backText.Text = L("回到正在播放") + " · " + Languages.Clock(rows[lit].T);
+    }
+
+    /// The transcript was scrolled by hand while it plays.
+    void UserScrolled()
+    {
+        if (!following || !playing || player is null || tab != "transcript") return;
+        following = false;
+        Log.Debug($"player: stopped following at line {lit}");
+        UpdateBack();
+    }
+
+    /// 回到正在播放 (and a line picked, or the bar used): follow again, from the playing line.
+    void Follow()
+    {
+        var was = following;
+        following = true;
+        UpdateBack();
+        if (!was && lit >= 0 && lit < rows.Count) Center(rows[lit].Card);
+    }
+
+    Border PlayerBar()
     {
         playButton = Capsule(Ui.Icon(playing ? Icons.Pause : Icons.Play, 14, Brushes.White, fill: true), Palette.Ink, null, 36, new Thickness(0), TogglePlay, playing ? L("暂停") : L("播放"));
         playButton.Width = 36;
@@ -854,7 +1026,11 @@ sealed class MainWindow : Window
         if (player is null) return;
         t = Math.Clamp(t, 0, Math.Max(0, Length()));
         if (opened) player.Position = TimeSpan.FromSeconds(t); else pendingSeek = t;
+        // A seek (the bar, or a line picked) follows the recording again.
+        var resume = !following;
+        following = true;
         UpdatePlayer();
+        if (resume && lit >= 0 && lit < rows.Count) Center(rows[lit].Card);
     }
 
     /// Played to the end: back to the start, paused.
@@ -905,34 +1081,28 @@ sealed class MainWindow : Window
             played.Width = x;
             thumb.Margin = new Thickness(Math.Max(0, Math.Min(track.ActualWidth - thumb.Width, x - thumb.Width / 2)), 0, 0, 0);
         }
-        // The line being said: the last one starting by now (a little ahead, so it lights as it begins).
-        var at = playing || now > 0 ? rows.FindLastIndex(r => r.t <= now + 0.2) : -1;
-        if (at == lit)
-        {
-            if (reveal && playing && lit >= 0) KeepInView(rows[lit].row);
-            return;
-        }
-        if (lit >= 0 && lit < rows.Count)
-        {
-            var (_, row, time) = rows[lit];
-            row.Background = Brushes.Transparent;
-            time.Foreground = Palette.TimeLink; time.FontWeight = FontWeights.Normal;
-        }
+        // The line being said: the last one starting by now (a little ahead, so it lights as it
+        // begins); once playback has begun it stays lit while paused.
+        var at = playing || now > 0 ? rows.FindLastIndex(r => r.T <= now + 0.2) : -1;
+        var was = lit;
         lit = at;
-        if (lit < 0) return;
-        var (_, r, t) = rows[lit];
-        r.Background = Palette.Playing;
-        t.Foreground = Palette.Live; t.FontWeight = FontWeights.SemiBold;
-        if (playing) KeepInView(r);
+        if (was != at && was >= 0 && was < rows.Count) Paint(rows[was]);
+        if (at >= 0)
+        {
+            // Every tick: the bars come and go with play and pause.
+            Paint(rows[at]);
+            if (playing && following && (at != was || reveal)) Center(rows[at].Card);
+        }
+        barTick.IsEnabled = playing && at >= 0;
+        UpdateBack();
     }
 
-    /// Scrolls the lit line back into view when it leaves it (above, under the pinned bar, or below).
-    void KeepInView(FrameworkElement row)
+    /// Scrolls the playing line to the middle of the transcript.
+    void Center(FrameworkElement row)
     {
         if (pageScroll is not { } scroll || !row.IsLoaded) return;
         var y = row.TransformToAncestor(scroll).Transform(new Point(0, 0)).Y;
-        if (y >= 110 && y + row.ActualHeight <= scroll.ViewportHeight - 24) return;
-        scroll.ScrollToVerticalOffset(Math.Max(0, scroll.VerticalOffset + y - scroll.ViewportHeight * 0.35));
+        scroll.ScrollToVerticalOffset(Math.Max(0, scroll.VerticalOffset + y - (scroll.ViewportHeight - row.ActualHeight) / 2));
     }
 
     void ClosePlayer()
@@ -948,14 +1118,24 @@ sealed class MainWindow : Window
         }
         playerPath = null;
         lit = -1;
+        barTick.Stop();
+        following = true;
     }
 
-    /// For the debug pipe: where playback is.
-    public string PlayerState() => player is null ? "none" : $"{(playing ? "playing" : "paused")} {Now():F1}/{Length():F1} x{speed} line {lit}";
+    /// For the debug pipe: where playback is, the lit line (index and time), whether the transcript
+    /// follows it (and 回到正在播放 shows), and the line under the pointer.
+    public string PlayerState() => player is null ? "none"
+        : $"{(playing ? "playing" : "paused")} {Now():F1}/{Length():F1} x{speed} line {lit}{(lit >= 0 && lit < rows.Count ? $"@{rows[lit].T:F1}" : "")}"
+          + $" following {(following ? "yes" : "no")} back {(backButton?.Visibility == Visibility.Visible ? "shown" : "hidden")}"
+          + $" hover {(hovered is { } h ? rows.IndexOf(h) : -1)} offset {pageScroll?.VerticalOffset:F0}";
+
+    /// "follow": 回到正在播放, as clicked; "row <i>": line i clicked.
     public void DebugPlay(string arg)
     {
         if (arg == "toggle") TogglePlay();
         else if (arg == "speed") CycleSpeed();
+        else if (arg == "follow") Follow();
+        else if (arg.StartsWith("row ") && int.TryParse(arg[4..], out var i) && i >= 0 && i < rows.Count && rows[i].Playable) PlayFrom(rows[i].T);
         else if (double.TryParse(arg, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var t)) PlayFrom(t);
     }
 

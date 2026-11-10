@@ -1347,7 +1347,7 @@ sealed class Controller
 ///   updatefeed <url or file> | checkupdate
 ///   calls <program=name,…>|none|real | realcalls | endtimes <silence> <countdown> <grace>|off | endkeep
 ///   provider ling|openrouter|zenmux|custom | ai-model hear|text|voice <id> (设置 › AI 服务; no id: the recommended)
-///   open <id> [transcript] | play <seconds>|toggle|speed | recordaudio on|off (保存会议录音 and 回放)
+///   open <id> [transcript] | play <seconds>|toggle|speed|follow|row <i> | recordaudio on|off (保存会议录音 and 回放)
 ///   aacencode <wav>|<out.aac> | aacrewrap <in.aac>|<out.m4a>[|<seconds>]
 ///   ai-check | ai-check-sim <reason|lowBalance|off> (unreachable, invalidKey, noCredit, noModel, deaf, busy…)
 ///   ai-custom-only on|off (语音和文字只发给你的服务; acts with the custom service only)
@@ -1468,7 +1468,8 @@ static class DebugServer
             // talkmic <name>: the talk key reads this input (with fakemic the WAV is still what is sent).
             case "talkmic": app.SetTalkMic(arg is "" or "off" ? null : arg); break;
             case "record": _ = app.RecordCable(arg); break;
-            // 回放: "open <id> [transcript]", "play <seconds>|toggle|speed", "recordaudio on|off".
+            // 回放: "open <id> [transcript]", "play <seconds>|toggle|speed|follow|row <i>" (follow: 回到正在播放; row: a line
+            // clicked), "recordaudio on|off".
             case "open": { var p = arg.Split(' '); app.OpenRecord(p[0], p.Length > 1 ? p[1] : "notes"); break; }
             case "play": app.Play(arg); break;
             case "recordaudio": app.Settings.RecordAudio = arg == "on"; app.Settings.Save(); app.SettingsChanged(); break;
