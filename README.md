@@ -70,7 +70,7 @@ Hold the right `⌥` key and speak so the other side hears your translated voice
 
 ### Meeting records
 
-Bilingual transcripts, notes, and raw audio recordings are saved on your computer. Click any line to play the recording from that point. The on-device voiceprint model automatically separates different speakers (and fills in their names when a Ling key is set), and you can rename or merge them anytime if it gets someone wrong.
+Bilingual transcripts, notes, and raw audio recordings are saved on your computer. Click any line to play the recording from that point; as it plays, the line being spoken lights up and the transcript follows along. The on-device voiceprint model automatically separates different speakers (and fills in their names when a Ling key is set), and you can rename or merge them anytime if it gets someone wrong.
 
 After a meeting, you can generate notes retroactively, export to Markdown, Word, or SRT subtitles, or turn local audio or video files into bilingual records via **File › Import Recording or Video…**. **Share…** turns the notes (and, if you like, the full bilingual transcript) into a link with an expiry and an optional password, copied with one click; before uploading, it automatically blocks keys, unpublished company information, and other sensitive content. Right now "you" in the record only covers what you say while holding the talk key; capturing what you say directly in the meeting is on the [roadmap](#roadmap).
 
