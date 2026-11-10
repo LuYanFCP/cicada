@@ -1074,6 +1074,15 @@ struct MainWindowView: View {
                     transcript(s)
                 }
                 if s.id == store.liveID { liveNow }
+                // Under the page, not in its header: the controls stay while the transcript scrolls.
+                if player.sessionID == s.id, s.id != store.liveID, player.ready || player.missing {
+                    RecordingPlayerBar(player: player)
+                        .frame(maxWidth: 680, alignment: .leading)
+                        .padding(.horizontal, 40).padding(.vertical, 10)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.white)
+                        .overlay(alignment: .top) { Rectangle().fill(Self.hairline).frame(height: 1) }
+                }
             }
             .onChange(of: s.id) { _, _ in pinned = false }
             .onChange(of: tab) { _, _ in pinned = false }
@@ -1268,15 +1277,12 @@ struct MainWindowView: View {
                     } else {
                         ImportStatusStrip(model: model, importer: importer, session: s)
                     }
-                    if player.sessionID == s.id { RecordingPlayerBar(player: player) }
                 }
                 .padding(.top, 16)
             } else if live {
                 if settings.recordAudio {
                     Text("会议结束后可以回放录音").font(.system(size: 12)).foregroundStyle(Palette.tertiary).padding(.top, 10)
                 }
-            } else if player.sessionID == s.id {
-                RecordingPlayerBar(player: player).padding(.top, 16)
             } else if !s.hasAudio, !s.lines.isEmpty {
                 HStack(spacing: 4) {
                     Text("这场会议没存录音 ·").foregroundStyle(Palette.tertiary)
@@ -1400,15 +1406,46 @@ struct MainWindowView: View {
                 if pinned { pinnedBar(s) { withAnimation { proxy.scrollTo(PinnedHeader.top, anchor: .top) } } }
             }
             .animation(.easeOut(duration: 0.15), value: pinned)
+            .onUserScroll(ownSince: { player.ownScroll }) { if player.sessionID == s.id { player.userScrolled() } }
             .overlay(alignment: .bottom) { FixToast(fixes: model.fixes).padding(.bottom, 18) }
+            .overlay(alignment: .bottom) {
+                // Scrolled away from what is playing: one way back.
+                if player.sessionID == s.id, !player.following, let id = player.lineID(in: s),
+                   let l = s.lines.first(where: { $0.id == id }) {
+                    Button { player.follow() } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "waveform").font(.system(size: 11, weight: .semibold))
+                            Text(L("回到正在播放") + " · " + TranscriptExport.clock(l.t))
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundStyle(.white).padding(.horizontal, 16).frame(height: 34)
+                        .background(Capsule().fill(Palette.ink))
+                        .shadow(color: Palette.ink.opacity(0.18), radius: 10, y: 4)
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain).linkPointer()
+                    .padding(.bottom, 16)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: player.following)
             .onChange(of: s.lines.count) { _, _ in
                 if s.id == store.liveID, let last = s.lines.last {
                     withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
             }
-            // The transcript follows the recording while it plays.
+            // The transcript follows the recording while it plays, until scrolled by hand.
             .onChange(of: player.lineID(in: s)) { _, id in
-                if player.playing, let id { withAnimation { proxy.scrollTo(id, anchor: .center) } }
+                if player.playing, player.following, let id {
+                    player.ownScroll = Date()
+                    withAnimation { proxy.scrollTo(id, anchor: .center) }
+                }
+            }
+            .onChange(of: player.following) { _, on in
+                if on, let id = player.lineID(in: s) {
+                    player.ownScroll = Date()
+                    withAnimation { proxy.scrollTo(id, anchor: .center) }
+                }
             }
             .onAppear {
                 if let t = jumpTo, let l = s.lines.first(where: { $0.t >= t - 1 }) { proxy.scrollTo(l.id, anchor: .top) }
@@ -1419,14 +1456,19 @@ struct MainWindowView: View {
 
     private func lineRow(_ l: TranscriptLine, speaker: Int? = nil, label: Bool = true, voices: Bool = false, place: Bool = false, in shownSession: Session? = nil, current: Bool = false) -> some View {
         let me = l.speaker == "me"
+        let playable = shownSession.map { player.sessionID == $0.id && player.ready } ?? false
+        let hovered = playable && hoveredLine == l.id && editingLine != l.id
         return HStack(alignment: .top, spacing: 16) {
-            if let shownSession, player.sessionID == shownSession.id, player.ready {
-                // The recording plays from this line.
+            if playable {
+                // The recording plays from this line (so does a click anywhere on it).
                 Button { player.play(from: l.t) } label: {
-                    Text(TranscriptExport.clock(l.t))
-                        .font(.system(size: 12, weight: current ? .semibold : .regular).monospacedDigit())
-                        .foregroundStyle(current ? Palette.accent : Palette.link)
-                        .frame(width: 52, alignment: .leading).padding(.top, 1).contentShape(Rectangle())
+                    HStack(spacing: 3) {
+                        if hovered { Image(systemName: "play.fill").font(.system(size: 8)) }
+                        Text(TranscriptExport.clock(l.t))
+                            .font(.system(size: 12, weight: current || hovered ? .semibold : .regular).monospacedDigit())
+                    }
+                    .foregroundStyle(current || hovered ? Palette.accent : Palette.link)
+                    .frame(width: 52, alignment: .leading).padding(.top, 1).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).help(L("从这里播放"))
             } else {
@@ -1480,12 +1522,18 @@ struct MainWindowView: View {
                 }
             }
             Spacer(minLength: 0)
+            PlayingBars(on: current && player.playing).frame(width: 14).padding(.top, 4)
         }
+        // The padding is part of the line, so there is no dead strip between two lines.
+        .padding(.vertical, 12)
         .contentShape(Rectangle())
         .onHover { inside in if inside { hoveredLine = l.id } else if hoveredLine == l.id { hoveredLine = nil } }
-        .padding(.vertical, 12)
-        // The line the recording is playing.
-        .background(RoundedRectangle(cornerRadius: 10).fill(current ? Palette.accentPale : .clear).padding(.horizontal, -10))
+        // A click anywhere on the line plays from it; a drag selects text instead (a tap ends without moving).
+        .onTapGesture { if playable, editingLine != l.id { player.play(from: l.t) } }
+        // The line the recording is playing; a lighter fill under the pointer when a click would play it.
+        .background(RoundedRectangle(cornerRadius: 10).fill(current ? Palette.accentPale : hovered ? Palette.raised : .clear)
+            .padding(.horizontal, -10))
+        .animation(.easeOut(duration: 0.2), value: current)
     }
 }
 

@@ -1113,6 +1113,7 @@
 "全部 %lld 句" = "All %lld lines";
 "翻译中…" = "Translating…";
 "从这里播放" = "Play from here";
+"回到正在播放" = "Back to playing";
 "正在整理纪要…" = "Writing notes…";
 "纪要会在会议进行中自动生成" = "Notes are written during the meeting";
 "用 %@ 整理出总结、议题、结论和人名，约半分钟。" = "Uses %@ to organize summary, topics, conclusions, and names in ~30s.";
