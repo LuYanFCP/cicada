@@ -4,6 +4,7 @@ transcript side by side on the right (stacked when the window is narrow). Export
 with a toast; delete can be undone for a few seconds before the record is really removed."""
 from __future__ import annotations
 
+import math
 import os
 import time
 from datetime import datetime, timedelta, timezone
@@ -47,6 +48,10 @@ class RecordsWindow(Gtk.Window):
         self._player_sid = None
         self._dragging = False
         self._hl_row = None  # the transcript row at the playhead
+        self._hl_line = None
+        self._bars = None  # the bouncing bars on it while playing
+        self._was_following = True
+        self._scroll_anim = None
         # 改这句…: the line being rewritten and what its editor opens with; the last fix toast shown.
         self._editing = None
         self._edit_start = ""
@@ -131,7 +136,20 @@ class RecordsWindow(Gtk.Window):
         page = Gtk.Overlay()
         page.add(self.right)
         page.add_overlay(self.pinned)
-        root.pack_start(page, True, True, 0)
+        # Scrolled away from what is playing: one way back (the Mac's 回到正在播放 capsule).
+        self.back_pill = self._back_pill()
+        page.add_overlay(self.back_pill)
+        # The recording's player bar sits under the page, not in its header: the controls stay while
+        # the transcript scrolls.
+        self.bottom = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        right_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        right_col.pack_start(page, True, True, 0)
+        right_col.pack_start(self.bottom, False, False, 0)
+        root.pack_start(right_col, True, True, 0)
+        # Only a hand scrolls with the wheel / touchpad or moves the scrollbar; the follower sets the
+        # adjustment, which emits neither.
+        self.right.connect("scroll-event", self._hand_scrolled)
+        self.right.get_vscrollbar().connect("change-value", self._hand_scrolled)
         self.top_box = None
         self.right.get_vadjustment().connect("value-changed", lambda *_: self._pin())
         self.columns = None
@@ -507,7 +525,7 @@ class RecordsWindow(Gtk.Window):
                 self.mode = v
                 self.show_detail()
             trans.pack_end(ui.segmented([("both", L("双语")), ("dst", L("只看译文"))], self.mode, mode), False, False, 0)
-        heads.pack_start(trans, True, True, 0)
+        heads.pack_start(ui.pad(trans, 0, 10, 0, 10), True, True, 0)
         heads.set_no_show_all(True)
         heads.set_visible(self.columns is None or self.columns.get_orientation() == Gtk.Orientation.HORIZONTAL)
         for c in heads.get_children():
@@ -724,6 +742,10 @@ class RecordsWindow(Gtk.Window):
                 Log.d("records: can't play %s" % type(e).__name__)
                 self.player = None
         self._playable = self.player is not None
+        ui.clear(self.bottom)
+        if audio == "ready" and self.player is not None:
+            self.bottom.pack_start(self._player_bar(), False, False, 0)
+            self.bottom.show_all()
 
         # Title, meta, actions
         top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
@@ -855,9 +877,7 @@ class RecordsWindow(Gtk.Window):
             go.connect("clicked", lambda *_: self.app.show_settings(general=True))
             line.pack_start(go, False, False, 0)
             return line
-        if audio == "ready" and self.player is not None:
-            return self._player_bar()
-        return None
+        return None  # "ready": the player bar is under the page (self.bottom)
 
     def _player_bar(self) -> Gtk.Widget:
         """Play / pause, where in the meeting, and the speed (RecordingPlayerBar), in a soft box."""
@@ -903,7 +923,17 @@ class RecordsWindow(Gtk.Window):
         row.pack_start(self._pb_len, False, False, 0)
         row.pack_start(rate, False, False, 0)
         self._player_changed()
-        return ui.panel(ui.pad(row, 8, 14, 8, 10), "playerbar")
+        bar = ui.panel(ui.pad(row, 8, 14, 8, 10), "playerbar")
+        # At most 680 wide in the middle of the page, as on the Mac.
+        bar.set_halign(Gtk.Align.CENTER)
+
+        def fit(_w, alloc):
+            want = max(200, min(680, alloc.width - 72))
+            if bar.get_size_request()[0] != want:
+                bar.set_size_request(want, -1)
+        strip = ui.panel(ui.pad(bar, 10, 0, 10, 0), "playerstrip")
+        strip.connect("size-allocate", fit)
+        return strip
 
     def _player_changed(self) -> None:
         p = self.player
@@ -923,6 +953,11 @@ class RecordsWindow(Gtk.Window):
         self._player_sid = None
         self._pb_play = None
         self._hl_row = None
+        self._hl_line = None
+        self._bars = None
+        self._was_following = True
+        ui.clear(self.bottom)
+        self.back_pill.hide()
 
     def _poll(self, player) -> bool:
         """Four times a second while a recording is loaded: the time, the bar, and the line being played."""
@@ -939,12 +974,22 @@ class RecordsWindow(Gtk.Window):
             self._pb_scale.set_value(min(t, max(length, 1)))
         self._player_changed()
         if player.started:
-            self._highlight(t, follow=player.playing)
+            self._highlight(t, player.playing, player.following)
         return True
 
-    def _highlight(self, now: float, follow: bool) -> None:
-        """The last line that began by now (a little ahead, so it lights as it starts) in the accent;
-        while playing, scrolled into view when it isn't."""
+    def _hand_scrolled(self, *_args) -> bool:
+        """The wheel, the touchpad or the scrollbar moved the page: stop following what plays."""
+        if self.player is not None and self.player.playing:
+            adj = self.right.get_vadjustment()
+            if adj.get_upper() > adj.get_page_size():  # nothing to scroll: nothing moved
+                self._stop_scroll_anim()
+                self.player.user_scrolled()
+                self._update_pill()
+        return False
+
+    def _highlight(self, now: float, playing: bool, following: bool) -> None:
+        """The last line that began by now (a little ahead, so it lights as it starts) on a pale
+        accent; while playing, its bars bounce and the page keeps it in the middle until scrolled by hand."""
         s = self.app.store.get(self._player_sid) if self._player_sid else None
         if s is None:
             return
@@ -954,23 +999,150 @@ class RecordsWindow(Gtk.Window):
                 idx = i
             else:
                 break
+        if idx >= len(self._rows) and getattr(self, "_loader", None) is not None:
+            self._more_rows_until(idx + 1)  # played (or picked) past the rows built so far
         row = self._rows[idx][1] if 0 <= idx < len(self._rows) else None
-        if row is self._hl_row:
-            return
-        old, self._hl_row = self._hl_row, row
-        for r, on in ((old, False), (row, True)):
-            if r is None or r.get_parent() is None:  # a row rebuilt since (its line changed) is gone
-                continue
-            ctx = r.get_style_context()
-            ctx.add_class("playing") if on else ctx.remove_class("playing")
-            label = r.time_label
-            label.get_style_context().remove_class("link" if on else "accent")
-            label.get_style_context().add_class("accent" if on else "link")
-            size, lang, _bold = label.cicada_format
+        self._hl_line = s.lines[idx] if idx >= 0 else None
+        changed = row is not self._hl_row
+        if changed:
+            old, self._hl_row = self._hl_row, row
+            for r, on in ((old, False), (row, True)):
+                if r is None or r.get_parent() is None:  # a row rebuilt since (its line changed) is gone
+                    continue
+                ctx = r.get_style_context()
+                ctx.add_class("playing") if on else ctx.remove_class("playing")
+                self._style_time(r)
+        self._set_bars(row if playing else None)
+        refollow = following and not self._was_following
+        self._was_following = following
+        if row is not None and following and ((changed and playing) or refollow):
+            self._centre(row)
+        self._update_pill()
+
+    def _style_time(self, r) -> None:
+        """A row's time: accent and bold while it plays or is pointed at (with ▶ then), the link ink otherwise."""
+        label = r.time_label
+        ctx = r.get_style_context()
+        on = ctx.has_class("playing") or ctx.has_class("hover")
+        lc = label.get_style_context()
+        lc.remove_class("link" if on else "accent")
+        lc.add_class("accent" if on else "link")
+        if r.time_play is not None:
+            r.time_play.set_visible(ctx.has_class("hover"))
+        size, lang, bold = label.cicada_format
+        if bold != on:
             label.cicada_format = (size, lang, on)
             ui.retext(label, label.get_text())
-        if row is not None and follow:
-            self._reveal(row)
+
+    def _set_bars(self, row) -> None:
+        """Three bars bouncing at the right edge of the row playing (PlayingBars); none while paused."""
+        bars = self._bars
+        slot = getattr(row, "bars_slot", None) if row is not None else None
+        if bars is not None and (slot is None or bars.get_parent() is not slot):
+            if bars.get_parent() is not None:
+                bars.destroy()
+            self._bars = bars = None
+        if slot is None or bars is not None:
+            return
+        # CSS-filled boxes, not a drawing: stock Ubuntu has no python3-gi-cairo.
+        moving = Gtk.Settings.get_default().get_property("gtk-enable-animations")
+        bars, sticks = self._sticks("playbars", (8, 8, 8), Gtk.Align.END)
+        bars.set_size_request(14, 12)
+        bars.set_valign(Gtk.Align.START)
+        slot.pack_start(bars, False, False, 0)
+        bars.show_all()
+        self._bars = bars
+
+        def tick():
+            if self._bars is not bars:
+                return False
+            t = time.monotonic()
+            for i, stick in enumerate(sticks):
+                h = (0.35 + 0.65 * abs(math.sin(t * 3.5 + i * 0.9))) if moving else 0.7
+                stick.set_size_request(3, max(3, round(12 * h)))
+            return moving
+        tick()
+        if moving:
+            GLib.timeout_add(40, tick)
+
+    @staticmethod
+    def _sticks(cls: str, heights, align) -> tuple:
+        """A row of thin rounded bars (the Mac's capsules) of these heights, filled by CSS."""
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2 if cls == "playbars" else 1)
+        sticks = []
+        for h in heights:
+            stick = ui.panel(Gtk.Box(), "stick")
+            stick.set_size_request(3 if cls == "playbars" else 2, h)
+            stick.set_valign(align)
+            box.pack_start(stick, False, False, 0)
+            sticks.append(stick)
+        ui.classes(box, cls)
+        return box, sticks
+
+    def _back_pill(self) -> Gtk.Widget:
+        """回到正在播放 · m:ss: a dark capsule at the bottom of the page while it doesn't follow."""
+        b = Gtk.Button()
+        ui.classes(b, "backpill")
+        wave, _ = self._sticks("pillwave", (5, 11, 7, 9, 4), Gtk.Align.CENTER)
+        wave.set_valign(Gtk.Align.CENTER)
+        self._pill_label = ui.text("", 13, "ink", bold=True, wrap=False, ellipsize=False)
+        inner = ui.hbox(6, wave, self._pill_label)
+        inner.show_all()  # the button itself is no_show_all: shown and hidden on its own
+        b.add(inner)
+        b.set_halign(Gtk.Align.CENTER)
+        b.set_valign(Gtk.Align.END)
+        b.set_margin_bottom(16)
+        b.connect("clicked", lambda *_: self.follow_playing())
+        b.set_no_show_all(True)
+        return b
+
+    def follow_playing(self) -> None:
+        """回到正在播放: follow the recording again, and scroll back to it."""
+        if self.player is None:
+            return
+        self.player.follow()
+        if self.player.started:
+            self._highlight(self.player.time, self.player.playing, True)
+
+    def _update_pill(self) -> None:
+        p = self.player
+        l = self._hl_line
+        show = p is not None and p.started and not p.following and l is not None
+        if show:
+            ui.retext(self._pill_label, L("回到正在播放") + " · " + clock(l.t))
+            if not self.back_pill.get_visible():
+                self.back_pill.show()
+        elif self.back_pill.get_visible():
+            self.back_pill.hide()
+
+    def _centre(self, row) -> None:
+        """Scrolls the row to the middle of the page under the pinned bar, eased over 0.25 s."""
+        pos = row.translate_coordinates(self.content, 0, 0)
+        if pos is None:
+            return
+        adj = self.right.get_vadjustment()
+        pinned = self.pinned.get_allocated_height() if self.pinned.get_visible() else 0
+        view = adj.get_page_size() - pinned
+        to = pos[1] + row.get_allocated_height() / 2 - pinned - view / 2
+        to = max(0, min(to, adj.get_upper() - adj.get_page_size()))
+        self._stop_scroll_anim()
+        start, frm = time.monotonic(), adj.get_value()
+        if abs(to - frm) < 1:
+            return
+
+        def step():
+            k = min(1.0, (time.monotonic() - start) / 0.25)
+            adj.set_value(frm + (to - frm) * (1 - (1 - k) ** 3))
+            if k >= 1:
+                self._scroll_anim = None
+                return False
+            return True
+        self._scroll_anim = GLib.timeout_add(16, step)
+
+    def _stop_scroll_anim(self) -> None:
+        if self._scroll_anim is not None:
+            GLib.source_remove(self._scroll_anim)
+            self._scroll_anim = None
 
     def _reveal(self, row) -> None:
         pos = row.translate_coordinates(self.content, 0, 0)
@@ -1092,7 +1264,8 @@ class RecordsWindow(Gtk.Window):
         # The review banner rides with the header, so the rows keep their places among col's children.
         self.fix_banner = ui.vbox(0)
         self._banner_key = None
-        col.pack_start(ui.vbox(0, head, self.fix_banner), False, False, 0)
+        # Inset as far as the rows' text, which sits 10 px inside their fill.
+        col.pack_start(ui.pad(ui.vbox(0, head, self.fix_banner), 0, 10, 0, 10), False, False, 0)
         self.transcript = col
         self._both = s.sourceFile is None and any(l.speaker == "me" for l in s.lines)
         self._nums, self._vnums, self._shown = self._speakers(s)
@@ -1100,7 +1273,10 @@ class RecordsWindow(Gtk.Window):
         self._speaker_key = self._speaker_state_key(s)
         self._sid = s.id
         if self._vnums:
-            col.pack_start(self._people(s), False, False, 0)
+            people = self._people(s)
+            people.set_margin_start(10)
+            people.set_margin_end(10)
+            col.pack_start(people, False, False, 0)
         self._rows = []
         self._loader = None
         self._editing = None
@@ -1292,14 +1468,24 @@ class RecordsWindow(Gtk.Window):
         t = ui.text(clock(l.t), 11, "link", wrap=False, ellipsize=False)  # times in the logo's orange ink
         t.set_size_request(44, -1)
         time_widget = t
-        if getattr(self, "_playable", False):
-            # With a recording, a time plays from that line (the Mac's line times).
+        play_icon = None
+        playable = getattr(self, "_playable", False)
+        if playable:
+            # With a recording, a time plays from that line (the Mac's line times), and so does a
+            # click anywhere on the line; pointed at, it shows ▶ in the accent.
+            t.set_size_request(-1, -1)
+            play_icon = ui.icon("media-playback-start-symbolic", 8)
+            ui.classes(play_icon, "accent")
+            play_icon.set_no_show_all(True)
+            play_icon.set_valign(Gtk.Align.CENTER)
+            inner = ui.hbox(3, play_icon, t)
+            inner.set_size_request(52, -1)
             time_widget = Gtk.Button()
-            time_widget.add(t)
+            time_widget.add(inner)
             time_widget.set_relief(Gtk.ReliefStyle.NONE)
             ui.classes(time_widget, "timelink")
-            time_widget.set_tooltip_text(L("播放"))
-            time_widget.connect("clicked", lambda *_: self.player is not None and self.player.play_from(l.t))
+            time_widget.set_tooltip_text(L("从这里播放"))
+            time_widget.connect("clicked", lambda *_: self.play_line(l))
         time_widget.set_valign(Gtk.Align.START)
         time_widget.set_halign(Gtk.Align.START)
         time_widget.set_margin_top(2)
@@ -1313,15 +1499,19 @@ class RecordsWindow(Gtk.Window):
                 label = ui.hbox(6, label, ui.place_tag(l))
             texts.pack_start(label, False, False, 0)
         translated = l.dst and l.dst != l.shown
+        selectable = []  # the line's text: a drag over it selects, and must not play
         if self._editing == l.id:
             texts.pack_start(self._line_editor(l), False, False, 0)
         else:
             if translated:
-                texts.pack_start(ui.text(l.dst, 13, "ink", selectable=True, width_chars=46, lang=l.dstLang), False, False, 0)
+                dst = ui.text(l.dst, 13, "ink", selectable=True, width_chars=46, lang=l.dstLang)
+                selectable.append(dst)
+                texts.pack_start(dst, False, False, 0)
             if not translated or self.mode == "both":
                 src = ui.fixed(l, 12 if translated else 13, "tertiary" if translated else "ink")
                 src.set_selectable(True)
                 src.set_max_width_chars(46)
+                selectable.append(src)
                 texts.pack_start(src, False, False, 0)
             # Pointing at a line: what its fixed words were heard as, 改回, and 改这句….
             tools = ui.hbox(8)
@@ -1338,20 +1528,73 @@ class RecordsWindow(Gtk.Window):
                 c.show_all()
             texts.pack_start(ui.gap(tools, 2), False, False, 0)
         row.pack_start(texts, True, True, 0)
-        ui.pad(row, 9, 0, 9, 0)
         panel = ui.panel(row, "transcript-row")
         panel.time_label = t
+        panel.time_play = play_icon
+        panel.bars_slot = None
+        if playable:
+            # Where the bars bounce while this line plays: kept wide so the text doesn't move.
+            panel.bars_slot = Gtk.Box()
+            panel.bars_slot.set_size_request(14, -1)
+            panel.bars_slot.set_margin_top(4)
+            row.pack_end(panel.bars_slot, False, False, 0)
+        # 10 px of fill around the text, so the line playing reads as one rounded block.
+        ui.pad(row, 9, 10, 9, 10)
         if self._editing != l.id:
-            panel.add_events(Gdk.EventMask.ENTER_NOTIFY_MASK | Gdk.EventMask.LEAVE_NOTIFY_MASK | Gdk.EventMask.BUTTON_PRESS_MASK)
-            panel.connect("enter-notify-event", lambda *_: tools.show() or False)
+            panel.add_events(Gdk.EventMask.ENTER_NOTIFY_MASK | Gdk.EventMask.LEAVE_NOTIFY_MASK |
+                             Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK)
+
+            def entered(*_):
+                tools.show()
+                if playable:
+                    panel.get_style_context().add_class("hover")
+                    self._style_time(panel)
+                return False
+            panel.connect("enter-notify-event", entered)
 
             def left(_w, event):
                 if event.detail != Gdk.NotifyType.INFERIOR:
                     tools.hide()
+                    if playable:
+                        panel.get_style_context().remove_class("hover")
+                        self._style_time(panel)
                 return False
             panel.connect("leave-notify-event", left)
             panel.connect("button-press-event", lambda _w, e: self._line_menu(e, l.id))
+            if playable:
+                self._tap_to_play(panel, selectable, l)
         return self._row_key(l, start), panel
+
+    def _tap_to_play(self, panel, labels, l) -> None:
+        """A click anywhere on the line plays from it; a drag (or a double click) that selects text
+        doesn't. The selectable labels take the presses over the text, so they report them too."""
+        down = {}
+
+        def press(_w, e):
+            if e.button == 1:
+                down["at"] = (e.x_root, e.y_root) if e.type == Gdk.EventType.BUTTON_PRESS else None
+            return False
+
+        def release(_w, e):
+            at = down.pop("at", None)
+            if e.button != 1 or at is None or self._editing == l.id:
+                return False
+            if abs(e.x_root - at[0]) > 4 or abs(e.y_root - at[1]) > 4:
+                return False
+            if any(lb.get_selection_bounds()[0] for lb in labels):
+                return False  # text selected (a drag that came back, a shift-click)
+            self.play_line(l)
+            return False
+        for w in [panel, *labels]:
+            w.connect("button-press-event", press)
+            w.connect("button-release-event", release)
+
+    def play_line(self, l) -> None:
+        """Plays the recording from a line (also while paused); the page follows it again."""
+        if self.player is None:
+            return
+        self.player.play_from(l.t)
+        self._highlight(l.t, True, True)
 
     # 改正听错的词: 改这句…, the review banner, the toast
 
@@ -1555,6 +1798,18 @@ class RecordsWindow(Gtk.Window):
             return False
         if step(60 if first else 200) and self._loader is None:
             self._loader = GLib.idle_add(step, 200)
+
+    def _more_rows_until(self, count: int) -> None:
+        """The rows up to `count` built now: the playhead got there before the batches did."""
+        s = self.app.store.get(self._sid)
+        if s is None:
+            return
+        starts = self._starts(s.lines)
+        for l in s.lines[len(self._rows):count]:
+            k, row = self._row(l, l.id in starts)
+            self.transcript.pack_start(row, False, False, 0)
+            row.show_all()
+            self._rows.append((k, row))
 
     def _generate(self, sid) -> None:
         self.app.notes.generate(sid)

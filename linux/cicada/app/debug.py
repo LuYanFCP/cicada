@@ -18,7 +18,9 @@ per connection, one JSON line back. Never in release builds.
   online both|no (answer 线上也有人？) | room-mic-force <source>|"" (a null sink's monitor as the room mic)
   hide notes | problem-wait <seconds>|off (how long unreachable lasts before its notification; off: 2 min)
   codecs (AAC encoder / decoders here) | play [<seconds>] | pause | rate (next speed) | playstate (the shown record's
-  recording: state, time, length, rate, the highlighted line) | settings-general (设置 at 通用)
+  recording: state, time, length, rate, the highlighted line, following, the 回到正在播放 capsule, the scroll) |
+  follow (press 回到正在播放) | play-line <index> (click a line) | line-rect <index>|pill (on the screen) |
+  settings-general (设置 at 通用)
   share <record id>[,full][,pw] | unshare <record id> | share-last (how the last ended) | shareSheet <record id>|""
   share-ui scope notes|full | days 7|30|365 | names|pw|summary on|off | options (更改) | go | strip | back | confirm
            | copy all|link|password | revoke | close | state"""
@@ -320,7 +322,16 @@ def command(app, line: str) -> dict:
     if cmd == "codecs":
         from . import media
         return {"ok": True, **media.codecs(), "recordAudio": app.settings.recordAudio, "recording": listen.recording}
-    if cmd in ("play", "pause", "rate", "playstate"):
+    if cmd == "line-rect":  # where transcript row <n> (or the 回到正在播放 capsule: "pill") is on the screen, for real clicks
+        w = app.records_window
+        widget = w.back_pill if arg == "pill" else w._rows[int(arg)][1] if w is not None and int(arg) < len(w._rows) else None
+        if widget is None or not widget.get_mapped():
+            return {"ok": False, "error": "not shown"}
+        x, y = widget.translate_coordinates(w, 0, 0)
+        ox, oy = w.get_window().get_origin()[1:]
+        a = widget.get_allocation()
+        return {"ok": True, "x": ox + x, "y": oy + y, "w": a.width, "h": a.height}
+    if cmd in ("play", "pause", "rate", "playstate", "follow", "play-line"):
         w = app.records_window
         p = w.player if w is not None else None
         if cmd != "playstate" and p is None:
@@ -331,13 +342,22 @@ def command(app, line: str) -> dict:
             p.pause()
         elif cmd == "rate":
             p.next_rate()
+        elif cmd == "follow":
+            w.follow_playing()
+        elif cmd == "play-line":
+            s = app.store.get(w._player_sid)
+            w.play_line(s.lines[int(arg)])
         hl = w._hl_row if w is not None else None
         sid = w.selected if w is not None else None
         s = app.store.get(sid) if sid else None
         return {"ok": True, "record": sid, "audio": w._built_key[3] if w is not None and w._built_key else None,
                 "hasAudio": s.hasAudio if s else None, "playing": p.playing if p else None,
                 "time": round(p.time, 2) if p else None, "length": round(p.length, 2) if p else None,
-                "rate": p.rate if p else None,
+                "rate": p.rate if p else None, "following": p.following if p else None,
+                "pill": w._pill_label.get_text() if w is not None and w.back_pill.get_visible() else None,
+                "scroll": round(w.right.get_vadjustment().get_value()) if w is not None else None,
+                "bars": w._bars is not None and w._bars.get_mapped() if w is not None else None,
+                "bar": w.bottom.get_children() != [] if w is not None else None,
                 "line": next((i for i, (_k, r) in enumerate(w._rows) if r is hl), None) if hl is not None else None}
     if cmd == "settings-general":
         app.show_settings(general=True)

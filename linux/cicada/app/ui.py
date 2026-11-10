@@ -214,12 +214,23 @@ button.iconbtn.on { background-color: #F3F4F6; color: #15171C; }
 .sidebar list row:hover { background-color: #ECEEF1; }
 .group-label { font-weight: 700; color: #6B7080; }
 .transcript-row { border-top: 1px solid #EEF0F3; }
-.transcript-row.playing { background-color: #FDEEE7; }
+/* With a recording: a lighter fill under the pointer (a click plays the line), the line playing on the pale accent. */
+.transcript-row.hover { background-color: #F5F6F8; border-radius: 10px; border-top-color: transparent; }
+.transcript-row.playing { background-color: #FCEDE7; border-radius: 10px; border-top-color: transparent; }
 button.timelink { background-image: none; background-color: transparent; border: none; box-shadow: none; padding: 0; min-height: 0; min-width: 0; }
 button.timelink:hover label { text-decoration-line: underline; }
+.transcript-row button.timelink:hover label { text-decoration-line: none; }
 
 /* The recording's player bar (RecordingPlayerBar): a soft box, a round ink play button, the played part in the accent. */
-.playerbar { background-color: #F5F6F8; border-radius: 10px; }
+.playerbar { background-color: #F5F6F8; border-radius: 12px; }
+.playerstrip { background-color: #FFFFFF; border-top: 1px solid #F0F1F4; }
+/* "Back to playing - m:ss", over the bottom of the page once it is scrolled away from what plays. */
+button.backpill { background-image: none; background-color: #15171C; border: none; border-radius: 17px; min-height: 34px; padding: 0 16px; box-shadow: 0 4px 10px rgba(21,23,28,0.18); }
+button.backpill:hover { background-color: #2A2D34; }
+button.backpill label { color: #FFFFFF; }
+.pillwave .stick { background-color: #FFFFFF; border-radius: 1px; }
+/* PlayingBars: three accent capsules bouncing beside the line that plays. */
+.playbars .stick { background-color: #E8552B; border-radius: 2px; }
 button.playround { background-image: none; background-color: #15171C; border: none; box-shadow: none; border-radius: 16px; min-width: 32px; min-height: 32px; padding: 0; }
 button.playround:hover { background-color: #2A2D34; }
 button.playround image { color: #FFFFFF; }
