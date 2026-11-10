@@ -212,6 +212,18 @@ final class LingClient: ObservableObject {
         }
         return AIKey.read(c.provider.id.rawValue)
     }
+    /// The key notes are sent with: with 另一个服务, their own key file if there is one, else the
+    /// translation key ("不填就用上面的 key").
+    var notesKey: String? {
+        let c = config()
+        guard c.notesOwnService, !hideKey, let own = AIKey.read(Self.notesKeyName) else { return key }
+        return own
+    }
+    /// Notes have a key file of their own (另一个服务 only).
+    var notesHasOwnKey: Bool { config().notesOwnService && AIKey.read(Self.notesKeyName) != nil }
+    /// The key file of the custom service's notes server.
+    static let notesKeyName = "custom-notes"
+
     /// The key is known to work (or at least not known to be bad): notes and translation.
     var usable: Bool { hasKey && keyState != .invalid }
     /// Voices in the room from this service (else the Mac's).
@@ -222,8 +234,10 @@ final class LingClient: ObservableObject {
     var hearsAudio: Bool { usable && provider.hearsAudio }
     /// The meeting recognized by the custom service's speech model instead of on this Mac.
     var transcribes: Bool { usable && config().transcribes }
-    /// The custom service refused `chat_template_kwargs` once: leave it out until settings change.
-    private var noTemplateKwargs = false
+    /// Which servers refused `chat_template_kwargs` once (by host): leave it out there until settings change.
+    private var noTemplateKwargs: Set<String> = []
+    /// Notes' own server's text models from its `/models` (empty while notes share translation's address).
+    @Published private(set) var notesCatalog: [String] = []
 
     init() {
         keyState = AIKey.read() == nil ? .none : .unchecked
@@ -232,10 +246,11 @@ final class LingClient: ObservableObject {
     /// Settings switched service, address or model: forget the old state and check again.
     func reconfigure() {
         settingsGeneration += 1
-        noTemplateKwargs = false
+        noTemplateKwargs = []
         recheck?.cancel()
         catalog = []
         listed = nil
+        notesCatalog = []
         aiCheck = AICheck()
         lastVoice = nil
         keyState = hasKey ? .unchecked : .none
@@ -263,6 +278,20 @@ final class LingClient: ObservableObject {
         if hideKey { debugLog("ai key: not saved while hidden (debug)"); keyState = .invalid; return }
         AIKey.save(k, provider.id.rawValue)
         await check()
+    }
+
+    /// Notes' own key (另一个服务): saved, then everything checked again.
+    func setNotesKey(_ raw: String) async {
+        let k = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !k.isEmpty, !hideKey else { return }
+        AIKey.save(k, Self.notesKeyName)
+        await check()
+    }
+
+    /// Notes go back to the translation key.
+    func removeNotesKey() {
+        AIKey.remove(Self.notesKeyName)
+        Task { await check() }
     }
 
     func removeKey() {
@@ -332,22 +361,19 @@ final class LingClient: ObservableObject {
                 var body: [String: Any] = ["model": c.textModel, "messages": [
                     ["role": "system", "content": "Translate the text into Simplified Chinese. Reply with the translation only.\n\nWe will ship the new version on Friday after the design review."],
                     ["role": "user", "content": "Translate."]]]
-                c.shape(&body, maxTokens: 120, templateKwargs: !noTemplateKwargs)
+                c.shape(&body, maxTokens: 120, templateKwargs: !noTemplateKwargs.contains(Self.server(c.base)))
                 let asked = Date()
-                let root = try await postChat(body, key: key, timeout: 30)
+                let root = try await postChat(body, base: c.base, key: key, timeout: 30)
                 let seconds = Date().timeIntervalSince(asked)
                 r.pass(upTo: .text, seconds: Date().timeIntervalSince(started))
                 r.translate = AICheck.Speed(seconds: seconds, thinks: AIConfig.thought(root))
-                var json: [String: Any] = ["model": c.textModel, "response_format": ["type": "json_object"],
-                                           "messages": [["role": "system", "content": "Reply with the JSON object {\"ok\": true}."],
-                                                        ["role": "user", "content": "Reply."]]]
-                c.shape(&json, maxTokens: 20, templateKwargs: !noTemplateKwargs)
-                do { _ = try await postChat(json, key: key, timeout: 30) } catch Failure.http(let code) {
-                    // JSON mode refused (some hosts of a model do): meetings then ask without it, so
-                    // what counts is whether the model still answers with a JSON object.
-                    json["response_format"] = nil
-                    let plain = try? await postChat(json, key: key, timeout: 30)
-                    if !Self.answersJSON(plain) { r.fail(.text, .noJSON, code: code) }
+                if c.notesApart {
+                    // Notes at their own model or server: their failure is theirs, translation goes on.
+                    r.notes = .running
+                    if generation == checkGeneration { aiCheck = r }
+                    r.notes = await checkNotes(c)
+                } else if let code = try await jsonRefused(c, key: key) {
+                    r.fail(.text, .noJSON, code: code)
                 }
                 if r.failure == nil, c.transcribes {
                     r.hear = await checkHearing(c, key: key)
@@ -363,12 +389,61 @@ final class LingClient: ObservableObject {
         }
         if r.failure == nil, c.provider.id != .ling {
             await fetchCatalog()
-            // A model the service no longer lists fails here, before a meeting finds out.
-            if let listed, !c.textModel.isEmpty {
-                if !listed.contains(c.textModel) { r.fail(.text, .noModel) } else if r[.text] == .untested { r[.text] = .ok(seconds: nil) }
+            // A model the service no longer lists fails here, before a meeting finds out. One a real
+            // sentence just went through exists whatever the list says (an alias, a name typed by hand).
+            if let listed, !c.textModel.isEmpty, r[.text] == .untested {
+                if !listed.contains(c.textModel) { r.fail(.text, .noModel) } else { r[.text] = .ok(seconds: nil) }
             }
         }
         await finishCheck(r, c, generation)
+    }
+
+    /// A JSON request the way notes ask; the HTTP code when the model can't answer one, else nil.
+    private func jsonRefused(_ c: AIConfig, key: String) async throws -> Int? {
+        let host = Self.server(c.base)
+        var json: [String: Any] = ["model": c.textModel, "response_format": ["type": "json_object"],
+                                   "messages": [["role": "system", "content": "Reply with the JSON object {\"ok\": true}."],
+                                                ["role": "user", "content": "Reply."]]]
+        c.shape(&json, maxTokens: 20, templateKwargs: !noTemplateKwargs.contains(host))
+        do { _ = try await postChat(json, base: c.base, key: key, timeout: 30) } catch Failure.http(let code) {
+            // JSON mode refused (some hosts of a model do): meetings then ask without it, so
+            // what counts is whether the model still answers with a JSON object.
+            json["response_format"] = nil
+            let plain = try? await postChat(json, base: c.base, key: key, timeout: 30)
+            if !Self.answersJSON(plain) { return code }
+        }
+        return nil
+    }
+
+    /// Notes' own model or server: one JSON request the way a meeting's notes ask, then (another
+    /// address) its model list for the menu.
+    private func checkNotes(_ config: AIConfig) async -> AICheck.Notes {
+        if config.notesBadAddress { return .fail(.badAddress) }
+        let c = config.forNotes
+        guard let key = notesKey, let base = c.base else { return .fail(.invalidKey) }
+        let host = Self.server(base)
+        var json: [String: Any] = ["model": c.textModel, "response_format": ["type": "json_object"],
+                                   "messages": [["role": "system", "content": "Reply with the JSON object {\"ok\": true}."],
+                                                ["role": "user", "content": "Reply."]]]
+        c.shape(&json, maxTokens: 20, templateKwargs: !noTemplateKwargs.contains(host))
+        let asked = Date()
+        let result: AICheck.Notes
+        do {
+            _ = try await postChat(json, base: base, key: key, timeout: 60, notes: true)
+            result = .ok(seconds: Date().timeIntervalSince(asked))
+        } catch Failure.http(let code) where code == 400 || code == 422 {
+            json["response_format"] = nil
+            let plain = try? await postChat(json, base: base, key: key, timeout: 60, notes: true)
+            result = Self.answersJSON(plain) ? .ok(seconds: Date().timeIntervalSince(asked)) : .fail(.noJSON, code: code)
+        } catch let failure as Failure {
+            // A reply that isn't a chat completion (parse, a search-style answer): no notes from it.
+            let (_, reason, code) = AICheck.classify(failure, at: .text) ?? (.text, .noJSON, nil)
+            result = .fail(reason, code: code)
+        } catch {
+            result = .fail(.unreachable)
+        }
+        if c.base != config.base { await fetchNotesCatalog() }
+        return result
     }
 
     /// Bumped by every check: a slower, older check (a model changed twice quickly) must not
@@ -428,9 +503,23 @@ final class LingClient: ObservableObject {
 
     /// A real request (notes, translation) came back: keep the steps current without a check.
     /// One server error in a meeting isn't worth repainting the settings for.
-    private func observe(_ failure: Failure?, seconds: Double = 0, audio: Bool = false, generation: Int) {
+    private func observe(_ failure: Failure?, seconds: Double = 0, audio: Bool = false, notes: Bool = false, generation: Int) {
         // Sent before the service, address or model changed (a meeting's last notes, say): not this one's.
         guard hasKey, !aiCheck.running, simulateCheck == nil, generation == settingsGeneration else { return }
+        if notes {
+            // Notes at their own model or server: theirs alone, translation's steps are untouched.
+            let now: AICheck.Notes
+            if let failure {
+                guard let (_, reason, code) = AICheck.classify(failure, at: .text), reason != .serverError else { return }
+                now = .fail(reason, code: code)
+            } else {
+                now = .ok(seconds: seconds)
+            }
+            if aiCheck.notes?.ok == true, now.ok { return }
+            aiCheck.notes = now
+            debugLog("ai: notes from a real request → \(now)")
+            return
+        }
         var r = aiCheck
         if let failure {
             guard let (step, reason, code) = AICheck.classify(failure, at: .text), reason != .serverError else { return }
@@ -484,10 +573,20 @@ final class LingClient: ObservableObject {
         Task { await check() }
     }
 
+    /// Notes' own address's text models, for its menu. Quietly empty when it has no `/models`.
+    func fetchNotesCatalog() async {
+        let c = config()
+        let base = c.forNotes.base
+        guard c.notesApart, base != c.base, let key = notesKey,
+              let data = try? await getData("models", base: base, key: key, notes: true) else { return }
+        notesCatalog = AIConfig.textModels(fromCatalog: data, recommended: [])
+        debugLog("ai notes: \(notesCatalog.count) models")
+    }
+
     /// The service's text models, for the model menu. Quietly empty when it has no `/models`.
     func fetchCatalog() async {
         let c = config()
-        guard let key, c.provider.id != .ling, let data = try? await getData("models", key: key) else { return }
+        guard let key, c.provider.id != .ling, let data = try? await getData("models", base: c.base, key: key) else { return }
         catalog = AIConfig.textModels(fromCatalog: data, recommended: c.provider.textModels.map(\.id))
         listed = AICheck.listedModels(data)
         debugLog("ai \(c.provider.id.rawValue): \(catalog.count) models")
@@ -503,13 +602,23 @@ final class LingClient: ObservableObject {
     func chat(content: String, instruction: String, priority: Priority, json: Bool = false,
               maxTokens: Int = 1024, timeout: TimeInterval = 30, model: String? = nil, audio: Data? = nil,
               role: String? = nil, patient: Bool = false, onQueued: ((Double) -> Void)? = nil) async throws -> String {
-        guard let key else { throw Failure.noKey }
-        guard keyState != .invalid else { throw Failure.invalidKey }
+        let all = config()
+        // Notes (实时纪要, 说话人, a file's corrections) go to their own model or server when set.
+        let notesSide = priority == .notes && all.notesApart
+        // 另一个服务 with an address that can't be used: never hand the notes' key to translation's server.
+        if notesSide && all.notesBadAddress { throw Failure.noKey }
+        let c = notesSide ? all.forNotes : all
+        guard let key = notesSide ? notesKey : key else { throw Failure.noKey }
+        // A key known to be refused isn't sent again: the notes' own, or translation's when they share it.
+        let refused = notesSide ? aiCheck.notes?.reason == .invalidKey || (!notesHasOwnKey && keyState == .invalid)
+            : keyState == .invalid
+        guard !refused else { throw Failure.invalidKey }
         if let simulate {
             if simulate == .rateLimited { rateLimitedAt = Date() }
             throw simulate
         }
-        let c = config()
+        let host = Self.server(c.base)
+        let gate = gate(c.base)
         let generation = settingsGeneration
         let call = CallLabel(provider: c.provider.id.rawValue, model: model ?? c.textModel,
                              role: role ?? (priority == .notes ? "notes" : "translate"))
@@ -524,28 +633,28 @@ final class LingClient: ObservableObject {
             ],
             "stream": false,
         ]
-        c.shape(&body, maxTokens: maxTokens, templateKwargs: !noTemplateKwargs)
+        c.shape(&body, maxTokens: maxTokens, templateKwargs: !noTemplateKwargs.contains(host))
         if json { body["response_format"] = ["type": "json_object"] }
         let waits = Self.retryWaits(priority, audio: audio != nil, patient: patient)
         var ticket: Int?
         for attempt in 1...(waits.count + 1) {
             // One that wouldn't retry fails at once while the service is cooling down: its caller falls back.
-            if waits.isEmpty && pausedUntil > Date() { throw Failure.rateLimited }
+            if waits.isEmpty && gate.pausedUntil > Date() { throw Failure.rateLimited }
             let asked = Date()
-            ticket = await acquire(priority, ticket: ticket)
+            ticket = await acquire(priority, ticket: ticket, gate: gate)
             let queued = Date().timeIntervalSince(asked)
             onQueued?(queued)
             let started = Date()
             do {
                 let root: [String: Any]
                 do {
-                    root = try await postChat(body, key: key, timeout: timeout)
+                    root = try await postChat(body, base: c.base, key: key, timeout: timeout, notes: notesSide)
                 } catch Failure.http(400) where body["response_format"] != nil {
                     // Some hosts of a model refuse JSON mode (on OpenRouter, Novita for Ling 3.1 Flash)
                     // while the model answers JSON anyway: the prompt asks for it, the parsers find it.
                     debugLog("ling: \(priority) JSON mode refused (400), asking again without it")
                     body["response_format"] = nil
-                    root = try await postChat(body, key: key, timeout: timeout)
+                    root = try await postChat(body, base: c.base, key: key, timeout: timeout, notes: notesSide)
                 }
                 guard let choice = (root["choices"] as? [[String: Any]])?.first,
                       let message = choice["message"] as? [String: Any],
@@ -563,13 +672,13 @@ final class LingClient: ObservableObject {
                 report(call, priority, at: started, queued: queued, outcome: "ok",
                        tokens: (usage?["prompt_tokens"] as? Int ?? 0, usage?["completion_tokens"] as? Int ?? 0))
                 if rateLimitedAt != nil { rateLimitedAt = nil }
-                observe(nil, seconds: Double(ms) / 1000, audio: audio != nil, generation: generation)
+                observe(nil, seconds: Double(ms) / 1000, audio: audio != nil, notes: notesSide, generation: generation)
                 return trimmed
             } catch let failure as Failure {
                 report(call, priority, at: started, queued: queued, outcome: Self.name(failure))
-                observe(failure, audio: audio != nil, generation: generation)
+                observe(failure, audio: audio != nil, notes: notesSide, generation: generation)
                 guard failure == .rateLimited else { throw failure }
-                let wait = rateLimited(waits.isEmpty ? 1 : waits[min(attempt, waits.count) - 1], retryAfter: lastRetryAfter)
+                let wait = rateLimited(waits.isEmpty ? 1 : waits[min(attempt, waits.count) - 1], retryAfter: lastRetryAfter, gate: gate)
                 guard attempt <= waits.count, let wait else {
                     rateLimitedAt = Date()
                     throw failure
@@ -615,9 +724,9 @@ final class LingClient: ObservableObject {
     /// (Retry-After; Ling sends none), plus a little jitter. The queue waits at the gate instead of
     /// each request spending its retries on the same limit. nil when the service asks for longer
     /// than `maxPause`: that is an outage (the gate still holds for `maxPause`).
-    private func rateLimited(_ backoff: Double, retryAfter: Double?) -> Double? {
+    private func rateLimited(_ backoff: Double, retryAfter: Double?, gate: StartGate) -> Double? {
         let wait = max(backoff, retryAfter ?? 0) + Double.random(in: 0...0.5)
-        pausedUntil = max(pausedUntil, Date().addingTimeInterval(min(wait, Self.maxPause)))
+        gate.pausedUntil = max(gate.pausedUntil, Date().addingTimeInterval(min(wait, Self.maxPause)))
         return wait <= Self.maxPause ? wait : nil
     }
 
@@ -786,7 +895,7 @@ final class LingClient: ObservableObject {
         } catch let failure as Failure {
             report(call, .translate, at: started, queued: queued, outcome: Self.name(failure))
             // The server's limit is shared: the rest of the queue waits it out too.
-            if failure == .rateLimited { _ = rateLimited(1, retryAfter: lastRetryAfter) }
+            if failure == .rateLimited { _ = rateLimited(1, retryAfter: lastRetryAfter, gate: gate()) }
             throw failure
         } catch {
             report(call, .translate, at: started, queued: queued, outcome: "parse")
@@ -825,18 +934,19 @@ final class LingClient: ObservableObject {
     /// A chat completion. A custom server that refuses `chat_template_kwargs` (a strict gateway
     /// answers 400 or 422 to fields it doesn't know) is asked again without it, and isn't sent it
     /// again until settings change.
-    private func postChat(_ body: [String: Any], key: String, timeout: TimeInterval) async throws -> [String: Any] {
+    private func postChat(_ body: [String: Any], base: URL? = nil, key: String, timeout: TimeInterval,
+                          notes: Bool = false) async throws -> [String: Any] {
         do {
-            return try await post("chat/completions", body: body, key: key, timeout: timeout)
+            return try await post("chat/completions", body: body, base: base, key: key, timeout: timeout, notes: notes)
         } catch Failure.http(let code) where (code == 400 || code == 422) && body["chat_template_kwargs"] != nil {
             // Only when the same request goes through without it: a 400 for something else (no
             // JSON mode) must not turn thinking back on for every translation.
             var plain = body
             plain["chat_template_kwargs"] = nil
             do {
-                let root = try await post("chat/completions", body: plain, key: key, timeout: timeout)
+                let root = try await post("chat/completions", body: plain, base: base, key: key, timeout: timeout, notes: notes)
                 debugLog("ai custom: chat_template_kwargs refused (HTTP \(code)), sent without it from now on")
-                noTemplateKwargs = true
+                noTemplateKwargs.insert(Self.server(base ?? config().base))
                 return root
             } catch {
                 throw Failure.http(code)
@@ -844,13 +954,16 @@ final class LingClient: ObservableObject {
         }
     }
 
-    private func post(_ path: String, body: [String: Any], key: String, timeout: TimeInterval) async throws -> [String: Any] {
-        guard let base = config().base else { throw Failure.noKey }
+    /// `base`: another address than the service's (notes' own server); `notes`: a refused key is
+    /// the notes', not translation's.
+    private func post(_ path: String, body: [String: Any], base: URL? = nil, key: String, timeout: TimeInterval,
+                      notes: Bool = false) async throws -> [String: Any] {
+        guard let base = base ?? config().base else { throw Failure.noKey }
         var req = URLRequest(url: base.appendingPathComponent(path))
         req.httpMethod = "POST"
         req.timeoutInterval = timeout
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let data = try await send(req, key: key)
+        let data = try await send(req, key: key, notes: notes)
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw Failure.parse }
         return root
     }
@@ -860,14 +973,15 @@ final class LingClient: ObservableObject {
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 
-    private func getData(_ path: String, key: String) async throws -> Data {
-        guard let base = config().base else { throw Failure.noKey }
+    private func getData(_ path: String, base: URL? = nil, key: String, notes: Bool = false) async throws -> Data {
+        guard let base = base ?? config().base else { throw Failure.noKey }
         var req = URLRequest(url: base.appendingPathComponent(path))
         req.timeoutInterval = 15
-        return try await send(req, key: key)
+        return try await send(req, key: key, notes: notes)
     }
 
-    private func send(_ request: URLRequest, key: String, contentType: String? = "application/json") async throws -> Data {
+    private func send(_ request: URLRequest, key: String, contentType: String? = "application/json",
+                      notes: Bool = false) async throws -> Data {
         var req = request
         if !key.isEmpty { req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         if let contentType { req.setValue(contentType, forHTTPHeaderField: "Content-Type") }
@@ -885,7 +999,7 @@ final class LingClient: ObservableObject {
         switch code {
         case 200: return data
         case 401, 403:
-            if keyState != .invalid { keyState = .invalid }
+            if !notes, keyState != .invalid { keyState = .invalid }
             throw Failure.invalidKey
         case 429:
             lastRetryAfter = Self.retryAfterSeconds((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After"))
@@ -898,51 +1012,72 @@ final class LingClient: ObservableObject {
 
     // MARK: Start gate
 
-    private var lastStart = Date.distantPast
-    private var waiting: [(priority: Priority, seq: Int, resume: CheckedContinuation<Void, Never>)] = []
+    /// One per server (by host): notes on another server don't wait behind translation, and its
+    /// 429 doesn't hold translation back.
+    private final class StartGate {
+        var lastStart = Date.distantPast
+        var waiting: [(priority: Priority, seq: Int, resume: CheckedContinuation<Void, Never>)] = []
+        var pumping = false
+        /// After a 429 no request starts here before this (`rateLimited`).
+        var pausedUntil = Date.distantPast
+    }
+    private var gates: [String: StartGate] = [:]
     private var seq = 0
-    private var pumping = false
-    /// After a 429 no request starts before this (`rateLimited`).
-    private var pausedUntil = Date.distantPast
     /// The last 429's Retry-After in seconds, nil when it sent none (Ling doesn't). Read right
     /// after the throw, with no suspension in between, so it is that request's.
     private var lastRetryAfter: Double?
 
+    /// A server's identity for gates and refusals: host and port (two local servers differ by port).
+    private static func server(_ base: URL?) -> String {
+        guard let base, let host = base.host else { return "" }
+        return base.port.map { "\(host):\($0)" } ?? host
+    }
+
+    /// The gate of the server at `base` (nil: the service's own).
+    private func gate(_ base: URL? = nil) -> StartGate {
+        let host = Self.server(base ?? config().base)
+        if let g = gates[host] { return g }
+        let g = StartGate()
+        gates[host] = g
+        return g
+    }
+
     /// Waits for this request's turn to start. `ticket` is a retry's first one, which keeps its
     /// place ahead of requests queued after it. Returns the ticket.
     @discardableResult
-    private func acquire(_ priority: Priority, ticket: Int? = nil) async -> Int {
+    private func acquire(_ priority: Priority, ticket: Int? = nil, gate g: StartGate? = nil) async -> Int {
+        let gate = g ?? self.gate()
         let n: Int
         if let ticket { n = ticket } else { seq += 1; n = seq }
-        if waiting.isEmpty && Date().timeIntervalSince(lastStart) >= provider.spacing && pausedUntil <= Date() {
-            lastStart = Date()
+        if gate.waiting.isEmpty && Date().timeIntervalSince(gate.lastStart) >= provider.spacing && gate.pausedUntil <= Date() {
+            gate.lastStart = Date()
             return n
         }
         await withCheckedContinuation { cont in
-            waiting.append((priority, n, cont))
-            pump()
+            gate.waiting.append((priority, n, cont))
+            pump(gate)
         }
         return n
     }
 
-    private func pump() {
-        guard !pumping, !waiting.isEmpty else { return }
-        pumping = true
+    private func pump(_ gate: StartGate) {
+        guard !gate.pumping, !gate.waiting.isEmpty else { return }
+        gate.pumping = true
         let now = Date()
-        let wait = max(0, provider.spacing - now.timeIntervalSince(lastStart), pausedUntil.timeIntervalSince(now))
+        let wait = max(0, provider.spacing - now.timeIntervalSince(gate.lastStart), gate.pausedUntil.timeIntervalSince(now))
         DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.pumping = false
+                gate.pumping = false
                 // A 429 came in while this one waited: wait out the pause first.
-                if self.pausedUntil > Date() { self.pump(); return }
-                guard let i = self.waiting.indices.min(by: {
-                    (self.waiting[$0].priority, self.waiting[$0].seq) < (self.waiting[$1].priority, self.waiting[$1].seq)
+                if gate.pausedUntil > Date() { self.pump(gate); return }
+                guard let i = gate.waiting.indices.min(by: {
+                    (gate.waiting[$0].priority, gate.waiting[$0].seq) < (gate.waiting[$1].priority, gate.waiting[$1].seq)
                 }) else { return }
-                let next = self.waiting.remove(at: i)
-                self.lastStart = Date()
+                let next = gate.waiting.remove(at: i)
+                gate.lastStart = Date()
                 next.resume.resume()
-                self.pump()
+                self.pump(gate)
             }
         }
     }

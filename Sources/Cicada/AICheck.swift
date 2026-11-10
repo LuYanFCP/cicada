@@ -56,6 +56,18 @@ struct AICheck: Equatable {
     var translate: Speed?
     /// A custom service that recognizes the meeting: whether its speech model took audio.
     var hear: Hearing?
+    /// A custom service whose notes go to another model or server: how that one answered. nil
+    /// while notes use the translation model (then `steps` say it all). A notes failure doesn't
+    /// stop translation: `failure` and `passed` stay about translation.
+    var notes: Notes?
+
+    enum Notes: Equatable {
+        case running
+        case ok(seconds: Double)
+        case fail(Reason, code: Int? = nil)
+        var ok: Bool { if case .ok = self { true } else { false } }
+        var reason: Reason? { if case .fail(let r, _) = self { r } else { nil } }
+    }
 
     struct Speed: Equatable {
         let seconds: Double
@@ -91,7 +103,9 @@ struct AICheck: Equatable {
         return nil
     }
 
-    var running: Bool { steps.contains { $0.state == .running } }
+    var running: Bool { steps.contains { $0.state == .running } || notes == .running }
+    /// Translation works but the notes' own model or server doesn't (a busy one fixes itself).
+    var notesFailed: Bool { notes?.reason.map { $0 != .busy } ?? false }
     var busy: Bool { steps.contains { $0.state == .busy } }
     /// Every step passed (busy counts; a step nothing has tested yet does not block).
     var passed: Bool { at != nil && failure == nil && !running }
@@ -234,6 +248,25 @@ struct AICheck: Equatable {
             : L("翻一句要 \(secs) 秒，超过 6 秒会改用 Google。换一个更小的模型会快一些。")
     }
 
+    /// The notes' own model or server's problem, in one sentence. `sharedKey`: notes use the
+    /// translation key, so a refused key wants one of their own.
+    func notesLine(host: String, model: String, sharedKey: Bool) -> String? {
+        guard let reason = notes?.reason else { return nil }
+        switch reason {
+        case .invalidKey, .mgmtKey:
+            return sharedKey ? L("\(host) 不认上面的 key，给它单独填一个。") : L("\(host) 说这个 key 无效，可能没复制全，或已删除。")
+        case .unreachable: return L("这台 Mac 访问不到 \(host)。")
+        case .badAddress: return L("地址要用 https；这台 Mac 和局域网里的服务可以用 http。")
+        case .noCredit: return L("\(host) 账户余额不足。")
+        case .noModel: return L("\(host) 上找不到 \(model) 这个模型。")
+        case .noJSON: return L("这个模型没按要求返回 JSON，写不了纪要。换一个通用模型。")
+        case .busy: return nil
+        case .serverError:
+            if case .fail(_, let code) = notes { return L("\(host) 暂时出错（HTTP \(code ?? 0)），稍后再试。") }
+            return nil
+        }
+    }
+
     /// The speech model's problem, in one sentence.
     func hearLine(host: String, model: String) -> String? {
         switch hear {
@@ -279,5 +312,6 @@ struct AICheck: Equatable {
             + (passive ? " passive" : "")
             + (translate.map { " translate=\(String(format: "%.1f", $0.seconds))s\($0.thinks ? " thinks" : "")" } ?? "")
             + (hear.map { " hear=\($0)" } ?? "")
+            + (notes.map { " notes=\($0)" } ?? "")
     }
 }

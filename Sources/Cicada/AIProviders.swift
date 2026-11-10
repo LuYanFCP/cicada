@@ -149,10 +149,30 @@ struct AIConfig: Equatable {
     /// when recognition stays on this Mac.
     var hearModel: String? = nil
     var hearBase: URL? = nil
+    /// A custom service's notes (实时纪要, 说话人, files' corrections): another model, and with
+    /// 另一个服务 another server with its own key. nil: the same as translation.
+    var notesModel: String? = nil
+    var notesBase: URL? = nil
+    /// 另一个服务 is picked: notes use their own key file when there is one.
+    var notesOwnService = false
+    /// 另一个服务 with an address that can't be used (http to the internet): notes fail the check.
+    var notesBadAddress = false
 
     var hasVoices: Bool { voiceModel != nil && voiceBase != nil }
     /// The meeting is recognized by the custom service instead of on this Mac.
     var transcribes: Bool { provider.id == .custom && hearModel != nil && hearBase != nil }
+
+    /// Notes go somewhere translation doesn't: they get their own check, result and start gate.
+    var notesApart: Bool { provider.id == .custom && (notesModel != nil || notesBase != nil || notesOwnService) }
+
+    /// What a notes call is sent with: notes' model at notes' address, the rest as translation.
+    var forNotes: AIConfig {
+        guard notesApart else { return self }
+        var c = self
+        if let notesModel { c.textModel = notesModel }
+        if let notesBase { c.base = notesBase }
+        return c
+    }
 
     /// The voices the room can pick from with this service.
     var voices: [CloudVoice] {

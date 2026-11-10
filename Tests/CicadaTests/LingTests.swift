@@ -7,12 +7,14 @@ import Testing
 final class LingStub: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var reply: (Int, String) = (200, "")
     nonisolated(unsafe) static var seen: [(at: Date, body: [String: Any])] = []
+    /// Where each request went and the key it carried, in order.
+    nonisolated(unsafe) static var sent: [(host: String, auth: String?)] = []
     /// Answers each request by what it asked, instead of `reply`.
     nonisolated(unsafe) static var respond: (([String: Any]) -> (Int, String))?
     private static let lock = NSLock()
 
     static func reset(_ status: Int = 200, _ body: String) {
-        lock.withLock { reply = (status, body); seen = []; respond = nil }
+        lock.withLock { reply = (status, body); seen = []; sent = []; respond = nil }
     }
 
     static func chatReply(_ text: String, finish: String? = "stop") -> String {
@@ -34,7 +36,11 @@ final class LingStub: URLProtocol, @unchecked Sendable {
             stream.close()
         }
         let body = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
-        let (status, text) = Self.lock.withLock { Self.seen.append((Date(), body)); return Self.respond?(body) ?? Self.reply }
+        let (status, text) = Self.lock.withLock {
+            Self.seen.append((Date(), body))
+            Self.sent.append((request.url?.host ?? "", request.value(forHTTPHeaderField: "Authorization")))
+            return Self.respond?(body) ?? Self.reply
+        }
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data(text.utf8))
@@ -89,6 +95,76 @@ final class LingStub: URLProtocol, @unchecked Sendable {
         #expect(LingStub.seen.last?.body["response_format"] == nil && LingStub.seen.last?.body["chat_template_kwargs"] != nil)
         _ = try await ling.chat(content: "y", instruction: "Translate.", priority: .translate)
         #expect(LingStub.seen.last?.body["chat_template_kwargs"] != nil)
+    }
+
+    // MARK: Notes apart
+
+    private func notesClient(own: Bool) -> LingClient {
+        let ling = client()
+        AIKey.save("sk-main-1111111111", "custom")
+        ling.config = { AIConfig(provider: .custom, base: URL(string: "https://main.example/v1/"), textModel: "mt",
+                                 notesModel: "big", notesBase: own ? URL(string: "https://notes.example/v1/") : nil,
+                                 notesOwnService: own) }
+        return ling
+    }
+
+    @Test func notesGoToTheirModelAndServerTranslationStays() async throws {
+        LingStub.reset(200, LingStub.chatReply("{}"))
+        let ling = notesClient(own: true)
+        AIKey.save("sk-notes-222222222", LingClient.notesKeyName)
+        _ = try await ling.chat(content: "x", instruction: "Notes.", priority: .notes, json: true)
+        _ = try await ling.chat(content: "y", instruction: "Translate.", priority: .translate)
+        #expect(LingStub.seen.map { $0.body["model"] as? String } == ["big", "mt"])
+        #expect(LingStub.sent.map(\.host) == ["notes.example", "main.example"])
+        #expect(LingStub.sent.map(\.auth) == ["Bearer sk-notes-222222222", "Bearer sk-main-1111111111"])
+    }
+
+    @Test func notesWithoutTheirOwnKeyUseTheTranslationKey() async throws {
+        LingStub.reset(200, LingStub.chatReply("{}"))
+        let ling = notesClient(own: true)
+        _ = try await ling.chat(content: "x", instruction: "Notes.", priority: .notes)
+        #expect(LingStub.sent.first?.auth == "Bearer sk-main-1111111111")
+        // The same service, another model: same address and key.
+        let same = notesClient(own: false)
+        AIKey.save("sk-notes-222222222", LingClient.notesKeyName)
+        _ = try await same.chat(content: "x", instruction: "Notes.", priority: .notes)
+        #expect(LingStub.sent.last?.host == "main.example" && LingStub.sent.last?.auth == "Bearer sk-main-1111111111")
+        #expect(LingStub.seen.last?.body["model"] as? String == "big")
+    }
+
+    @Test func aRefusedNotesKeyLeavesTranslationWorking() async throws {
+        LingStub.reset(200, "")
+        LingStub.respond = { body in body["model"] as? String == "big" ? (401, "{}") : (200, LingStub.chatReply("好")) }
+        let ling = notesClient(own: true)
+        await #expect(throws: LingClient.Failure.invalidKey) {
+            try await ling.chat(content: "x", instruction: "Notes.", priority: .notes)
+        }
+        #expect(ling.keyState != .invalid)
+        #expect(try await ling.chat(content: "y", instruction: "Translate.", priority: .translate) == "好")
+    }
+
+    @Test func notesAtAnUnusableAddressSendNothing() async throws {
+        LingStub.reset(200, LingStub.chatReply("{}"))
+        let ling = client()
+        AIKey.save("sk-main-1111111111", "custom")
+        AIKey.save("sk-notes-222222222", LingClient.notesKeyName)
+        ling.config = { AIConfig(provider: .custom, base: URL(string: "https://main.example/v1/"), textModel: "mt",
+                                 notesOwnService: true, notesBadAddress: true) }
+        await #expect(throws: LingClient.Failure.noKey) {
+            try await ling.chat(content: "x", instruction: "Notes.", priority: .notes)
+        }
+        #expect(LingStub.sent.isEmpty)
+    }
+
+    @Test func notesFallBackToTranslationUntilSet() {
+        let base = URL(string: "https://main.example/v1/")
+        let plain = AIConfig(provider: .custom, base: base, textModel: "mt")
+        #expect(!plain.notesApart && plain.forNotes == plain)
+        let model = AIConfig(provider: .custom, base: base, textModel: "mt", notesModel: "big")
+        #expect(model.notesApart && model.forNotes.textModel == "big" && model.forNotes.base == base)
+        // Only the custom service splits.
+        let ling = AIConfig(provider: .ling, base: AIProvider.ling.base, textModel: "x", notesModel: "big")
+        #expect(!ling.notesApart && ling.forNotes.textModel == "x")
     }
 
     // MARK: Retries
