@@ -117,7 +117,7 @@ Mac 버전은 해당 기능을 쓸 때만 권한을 요청하며, 거부해도 �
 1. [Ling 오픈 플랫폼](https://chat.ant-ling.com/platform/api)에 가입·로그인하여 토큰을 만들고 `sk-`로 시작하는 키를 복사합니다.
 2. Cicada의 "설정 › AI 서비스"(또는 회의록 창 상단 입력란)를 열고 붙여넣어 저장하면 됩니다.
 
-**Ling에 가입할 수 없나요?** "설정 › AI 서비스" 오른쪽 위(또는 초기 안내에서 "Ling을 사용할 수 없나요?" 클릭)에서 OpenRouter, ZenMux, OpenAI 또는 모든 OpenAI 호환 서비스(Ollama, vLLM, SGLang, Qwen3-ASR, Whisper 등 로컬·LAN 서비스 포함)로 바꿀 수 있습니다. 실시간 회의록과 문장 번역 모두 작동하며, OpenRouter와 ZenMux에서는 Gemini의 자연스러운 음성으로 동시통역도 쓸 수 있습니다. 원스텝 음성 번역과 목소리 복제는 Ling만 지원합니다. Windows, Linux, Android에서 다른 서비스로 바꾸면 "상대방 듣기"도 해당 서비스가 처리하며 자막이 Ling보다 1~2초 늦습니다. 연결되지 않을 때는 키, 모델, 프록시 중 어디에 문제가 있는지 설정에서 바로 알려 줍니다(프록시 설명은 [설정 페이지](https://cicada.indaloop.app/ko/start/#proxy) 참고).
+**Ling에 가입할 수 없나요?** "설정 › AI 서비스" 오른쪽 위(또는 초기 안내에서 "Ling을 사용할 수 없나요?" 클릭)에서 OpenRouter, ZenMux, OpenAI 또는 모든 OpenAI 호환 서비스(Ollama, vLLM, SGLang, Qwen3-ASR, Whisper 등 로컬·LAN 서비스 포함)로 바꿀 수 있습니다. 실시간 회의록과 문장 번역 모두 작동하며, OpenRouter와 ZenMux에서는 Gemini의 자연스러운 음성으로 동시통역도 쓸 수 있습니다. 원스텝 음성 번역과 목소리 복제는 Ling만 지원합니다.자체 서비스를 쓸 때는 회의록과 화자 구분만 더 강한 모델이나 주소·키가 다른 별도 서비스로 돌릴 수 있습니다. 모델은 서비스 목록에서 검색하고, 목록에 없는 이름도 직접 입력할 수 있습니다. Windows, Linux, Android에서 다른 서비스로 바꾸면 "상대방 듣기"도 해당 서비스가 처리하며 자막이 Ling보다 1~2초 늦습니다. 연결되지 않을 때는 키, 모델, 프록시 중 어디에 문제가 있는지 설정에서 바로 알려 줍니다(프록시 설명은 [설정 페이지](https://cicada.indaloop.app/ko/start/#proxy) 참고).
 
 ## 시스템 요구 사항 및 설치
 

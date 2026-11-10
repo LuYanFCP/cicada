@@ -117,7 +117,7 @@ Mac 版只在用到某项功能时才要权限，拒绝后其他功能照常：
 1. 去 [Ling 开放平台](https://chat.ant-ling.com/platform/api) 注册登录，创建令牌，复制 `sk-` 开头的 key。
 2. 打开知了“设置 › AI 服务”（或纪要窗口顶部提示框），粘贴保存即可。
 
-**注册不了 Ling？** 在“设置 › AI 服务”右上角（或引导页点“用不了 Ling？”）可以换成 OpenRouter、ZenMux、OpenAI，或任何 OpenAI 兼容服务（包括 Ollama、vLLM、SGLang、Qwen3-ASR、Whisper 等本机或局域网服务）。实时纪要和整句翻译都能用，OpenRouter 和 ZenMux 还能用 Gemini 的自然人声做同传；一步语音翻译和声音克隆只有 Ling 支持。Windows、Linux、Android 换用其他服务时，“听对方”也交给该服务，字幕比 Ling 晚 1–2 秒。连不上时设置里会直接提示是 key、模型还是代理问题（代理说明见[设置页](https://cicada.indaloop.app/start/#proxy)）。
+**注册不了 Ling？** 在“设置 › AI 服务”右上角（或引导页点“用不了 Ling？”）可以换成 OpenRouter、ZenMux、OpenAI，或任何 OpenAI 兼容服务（包括 Ollama、vLLM、SGLang、Qwen3-ASR、Whisper 等本机或局域网服务）。实时纪要和整句翻译都能用，OpenRouter 和 ZenMux 还能用 Gemini 的自然人声做同传；一步语音翻译和声音克隆只有 Ling 支持。用自建服务时，纪要和说话人识别可以单独换个更强的模型，或接另一个服务（自己的地址和 key）；模型从服务列出的清单里搜，清单里没有也能直接填。Windows、Linux、Android 换用其他服务时，“听对方”也交给该服务，字幕比 Ling 晚 1–2 秒。连不上时设置里会直接提示是 key、模型还是代理问题（代理说明见[设置页](https://cicada.indaloop.app/start/#proxy)）。
 
 ## 系统要求与安装
 
