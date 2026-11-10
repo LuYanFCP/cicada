@@ -447,15 +447,18 @@ class Controller:
             self.set_ai_provider("ling")
 
     def set_ai_model(self, kind: str, model: str) -> None:
-        """A model chosen over the recommended one ("text", "hear" or "voice"; "" goes back to it)."""
+        """A model chosen over the recommended one ("text", "hear", "voice", or a custom service's
+        "notes"; "" goes back to it)."""
         s = self.settings
         p = s.aiProvider
         if kind == "text" and p == "ling":
             s.model = model or s.FIELDS["model"]
         else:
-            table = {"text": s.aiModels, "hear": s.aiHearModels, "voice": s.aiVoiceModels}.get(kind)
+            table = {"text": s.aiModels, "hear": s.aiHearModels, "voice": s.aiVoiceModels, "notes": s.aiModels}.get(kind)
             if table is None:
                 return
+            if kind == "notes":
+                p = "custom.notes"  # the custom service's notes model ("": the translation one)
             if model:
                 table[p] = model
             else:

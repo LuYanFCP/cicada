@@ -79,6 +79,7 @@ combobox arrow { -gtk-icon-source: -gtk-icontheme("pan-down-symbolic"); min-widt
 combobox cellview, combobox button label { font-size: 12px; }
 entry { background-image: none; background-color: #FFFFFF; border: 1px solid #E4E6EA; box-shadow: none; border-radius: 7px; min-height: 26px; padding: 0 9px; font-size: 13px; color: #15171C; caret-color: #15171C; }
 entry:focus { border-color: #E8552B; box-shadow: 0 0 0 2px rgba(232,85,43,0.18); }
+entry.error { border-color: #B3261E; }
 entry.search { background-color: #E8EAEE; border-color: transparent; min-height: 28px; font-size: 12px; }
 entry.search:focus { background-color: #FFFFFF; }
 entry selection, label selection { background-color: rgba(232,85,43,0.22); color: #15171C; }
@@ -200,6 +201,7 @@ button.iconbtn.on { background-color: #F3F4F6; color: #15171C; }
 .breathemark.late { animation-delay: 1.1s; }
 .idledot { background-color: #C9CCD3; border-radius: 4px; min-width: 7px; min-height: 7px; }
 /* The custom service's per-use rows: how each use is doing (AISettings.swift sectionHeader). */
+separator.hairline { background-color: #E4E6EA; min-height: 1px; margin: 4px 0; }
 .statedot { background-color: #C9CCD3; border-radius: 4px; min-width: 8px; min-height: 8px; }
 .statedot.ok { background-color: #1F7A45; }
 .statedot.warn { background-color: #8A5A00; }

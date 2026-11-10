@@ -66,6 +66,10 @@ class AICheck:
         self.balance: float | None = None
         # A custom service: the real sentence the check translated (Speed).
         self.translate: Speed | None = None
+        # A custom service whose notes go to another model or server: how that one answered (a State:
+        # running, ok or fail). None while notes use the translation model (then the steps say it
+        # all). A notes failure doesn't stop translation: `failure` and `passed` stay about it.
+        self.notes: State | None = None
 
     def copy(self) -> "AICheck":
         return copy.deepcopy(self)
@@ -92,7 +96,12 @@ class AICheck:
 
     @property
     def running(self) -> bool:
-        return any(st.kind == RUNNING for st in self.steps.values())
+        return any(st.kind == RUNNING for st in self.steps.values()) or (self.notes is not None and self.notes.kind == RUNNING)
+
+    @property
+    def notes_failed(self) -> bool:
+        """Translation works but the notes' own model or server doesn't (a busy one fixes itself)."""
+        return self.notes is not None and self.notes.kind == FAIL and self.notes.reason != BUSY
 
     @property
     def busy(self) -> bool:
@@ -195,6 +204,25 @@ class AICheck:
             return LF("这个模型先思考再回答，翻一句要 %@ 秒，超过 6 秒会改用 Google。在服务端关掉思考，或换一个不思考的模型。", secs)
         return LF("翻一句要 %@ 秒，超过 6 秒会改用 Google。换一个更小的模型会快一些。", secs)
 
+    def notes_line(self, host: str, model: str, shared_key: bool) -> str | None:
+        """The notes' own model or server's problem, in one sentence. `shared_key`: notes use the
+        translation key, so a refused key wants one of their own."""
+        n = self.notes
+        if n is None or n.kind != FAIL:
+            return None
+        reason = n.reason
+        if reason in (INVALID_KEY, MGMT_KEY):
+            return LF("%@ 不认上面的 key，给它单独填一个。", host) if shared_key else LF("%@ 说这个 key 无效，可能没复制全，或已删除。", host)
+        if reason == SERVER_ERROR:
+            return LF("%@ 暂时出错（HTTP %lld），稍后再试。", host, n.code or 0)
+        return {
+            UNREACHABLE: lambda: LF("这台电脑访问不到 %@。", host),
+            BAD_ADDRESS: lambda: L("地址要用 https；这台电脑和局域网里的服务可以用 http。"),
+            NO_CREDIT: lambda: LF("%@ 账户余额不足。", host),
+            NO_MODEL: lambda: LF("%@ 上找不到 %@ 这个模型。", host, model),
+            NO_JSON: lambda: L("这个模型没按要求返回 JSON，写不了纪要。换一个通用模型。"),
+        }.get(reason, lambda: None)()
+
     def proxy_line(self, service: str, host: str) -> str | None:
         """Under "can't reach": what this computer's proxy looks like, and what to do."""
         from .providers import is_nearby
@@ -222,16 +250,7 @@ class AICheck:
 
     def summary(self) -> str:
         """Debug and logs: "reach=ok key=fail(invalidKey) text=skipped hear=skipped"."""
-        out = []
-        for s in STEPS:
-            st = self.steps[s]
-            if st.kind == OK:
-                v = "ok" if st.seconds is None else "ok(%.1fs)" % st.seconds
-            elif st.kind == FAIL:
-                v = "fail(%s%s)" % (st.reason, "" if st.code is None else " %d" % st.code)
-            else:
-                v = st.kind
-            out.append("%s=%s" % (s, v))
+        out = ["%s=%s" % (s, _state(self.steps[s])) for s in STEPS]
         if self.proxy is not None:
             out.append("proxy=" + ":".join(str(p) for p in self.proxy))
         if self.balance is not None:
@@ -240,7 +259,17 @@ class AICheck:
             out.append("passive")
         if self.translate is not None:
             out.append("translate=%.1fs%s" % (self.translate.seconds, " thinks" if self.translate.thinks else ""))
+        if self.notes is not None:
+            out.append("notes=" + _state(self.notes))
         return " ".join(out)
+
+
+def _state(st: State) -> str:
+    if st.kind == OK:
+        return "ok" if st.seconds is None else "ok(%.1fs)" % st.seconds
+    if st.kind == FAIL:
+        return "fail(%s%s)" % (st.reason, "" if st.code is None else " %d" % st.code)
+    return st.kind
 
 
 def title(step: str, host: str) -> str:

@@ -4,8 +4,9 @@ per connection, one JSON line back. Never in release builds.
 
   state | start | stop | feed <wav> | sample | view notes|subtitles | show records|notes|settings|onboarding
   target <code> | key-reload | windows | select <record id> | append <record id> <n> (a growing meeting)
-  provider ling|openrouter|zenmux|custom | ai-model hear|text|voice <id> (设置 › AI 服务; "" back to the recommended) |
-  ai-base text|voice|hear <url> (其他（兼容 OpenAI）'s addresses; "" for voice/hear: the text one)
+  provider ling|openrouter|zenmux|custom | ai-model hear|text|voice|notes <id> (设置 › AI 服务; "" back to the recommended) |
+  ai-base text|voice|hear|notes <url> (其他（兼容 OpenAI）'s addresses; "" for voice/hear/notes: the text one)
+  ai-notes same|own (纪要: 同一个服务 / 另一个服务, the Mac's aiCustomNotesOwn)
   ai-custom-only on|off (语音和文字只发给你的服务, the Mac's aiCustomOnly)
   speak-enable on|off | speak on|off (同声传译) | quit
   calls <program=name,…>|none|real (meeting apps in a call) | endtimes <silence> <countdown> <grace>|off | endkeep
@@ -276,10 +277,16 @@ def command(app, line: str) -> dict:
     if cmd == "ai-base":
         # A custom service's addresses: text, voice or hear ("" for voice and hear: the text one).
         kind, _, url = arg.partition(" ")
-        field = {"text": "aiCustomBase", "voice": "aiCustomVoiceBase", "hear": "aiCustomHearBase"}.get(kind)
+        field = {"text": "aiCustomBase", "voice": "aiCustomVoiceBase", "hear": "aiCustomHearBase",
+                 "notes": "aiCustomNotesBase"}.get(kind)
         if field is None:
-            return {"ok": False, "error": "ai-base text|voice|hear <url>"}
+            return {"ok": False, "error": "ai-base text|voice|hear|notes <url>"}
         setattr(app.settings, field, url.strip())
+        app.settings.save()
+        app.ai_changed()
+        return {"ok": True, "ai": _ai(app)}
+    if cmd == "ai-notes":
+        app.settings.aiCustomNotesOwn = arg == "own"
         app.settings.save()
         app.ai_changed()
         return {"ok": True, "ai": _ai(app)}
@@ -707,5 +714,7 @@ def _ai(app) -> dict:
             "keyWorks": app.key_works, "asking": getattr(app, "_asking", None) is not None,
             "lastVoice": list(ling.last_voice) if ling.last_voice else None, "simulate": ling.simulate,
             "catalog": [len(ling.text_catalog), len(ling.hear_catalog)], "keyFile": os.path.basename(app.key.path),
+            "notes": {"apart": c.notes_apart, "base": c.for_notes.base, "model": c.for_notes.text_model,
+                      "ownKey": ling.notes_has_own_key, "catalog": len(ling.notes_catalog)},
             "customOnly": app.settings.aiCustomOnly, "googleOff": app.translator.google_off,
             "sentencesUntranslated": app.translator.sentences_untranslated}

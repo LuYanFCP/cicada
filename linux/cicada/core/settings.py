@@ -26,6 +26,11 @@ class AppSettings:
         # The custom service's hear model at an address of its own (the port's, like the Mac's
         # aiCustomHearBase); empty: the same address as the text model.
         "aiCustomHearBase": "",
+        # The custom service's notes (the Mac's keys): 另一个服务, at its own address (empty: the same
+        # one) with its own key in the `custom-notes` key file. Off keeps the address. The notes
+        # model is aiModels["custom.notes"] (empty: the translation model).
+        "aiCustomNotesOwn": False,
+        "aiCustomNotesBase": "",
         # 语音和文字只发给你的服务 (the Mac's aiCustomOnly): with the custom service, Google Translate is
         # never asked. Kept when another service is picked, but only acts on the custom one.
         "aiCustomOnly": False,
