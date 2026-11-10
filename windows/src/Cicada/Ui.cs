@@ -246,7 +246,7 @@ static class Ui
     static void AutomationName(UIElement e, string name) => System.Windows.Automation.AutomationProperties.SetName(e, name);
 
     /// Rounded, no Windows 7 chrome. Plain buttons get a grey wash on hover; filled ones dim a little.
-    static ControlTemplate Template(bool plain, bool onDark = false, Type? target = null, double radius = 10, bool soft = false)
+    public static ControlTemplate Template(bool plain, bool onDark = false, Type? target = null, double radius = 10, bool soft = false)
     {
         var t = new ControlTemplate(target ?? typeof(Button));
         var border = new FrameworkElementFactory(typeof(Border), "bg");

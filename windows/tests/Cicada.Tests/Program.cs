@@ -1982,11 +1982,13 @@ static class Tests
     sealed class Service(Func<string, string, HttpResponseMessage> respond) : HttpMessageHandler
     {
         public readonly List<(string url, string body)> Sent = [];
+        /// The key each request carried ("Bearer …"), in the order of Sent.
+        public readonly List<string?> Auth = [];
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancel)
         {
             var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancel);
             var url = request.RequestUri!.ToString();
-            lock (Sent) Sent.Add((url, body));
+            lock (Sent) { Sent.Add((url, body)); Auth.Add(request.Headers.Authorization?.ToString()); }
             return respond(url, body);
         }
     }
@@ -2276,6 +2278,148 @@ static class Tests
             await ling.Chat("x", "Translate.", Priority.Translate);
             Check(fake.Sent.Single().body.Contains("chat_template_kwargs"), "the text server still gets it");
             Check(ling.Health.Translate is { Thinks: false } && !ling.Health.Slow, ling.Health.Summary);
+        }
+        finally { LingClient.Spacing = old; }
+    }
+
+    // MARK: Notes apart (LingTests.swift › Notes apart)
+
+    /// A custom service whose notes use "big"; with `own`, at notes.example with 另一个服务.
+    static (LingClient ling, AppSettings settings, Service fake) NotesClient(bool own, Func<string, string, HttpResponseMessage> respond, string? notesKey = null, GateClock? clock = null)
+    {
+        var s = new AppSettings
+        {
+            AiProvider = "custom", AiCustomBase = "https://main.example/v1", AiModels = { ["custom"] = "mt", ["custom.notes"] = "big" },
+            AiCustomNotesOwn = own, AiCustomNotesBase = own ? "https://notes.example/v1" : "",
+        };
+        var k = new AIKey(new PlainProtector(), service: () => s.AiProvider);
+        k.Remove(); k.Remove(LingClient.NotesKeyName);
+        k.Save("sk-main-1111111111");
+        if (notesKey is not null) k.Save(notesKey, LingClient.NotesKeyName);
+        var fake = new Service(respond);
+        return (new LingClient(k, fake, s.AIConfig, clock), s, fake);
+    }
+
+    public static async Task NotesGoToTheirModelAndServerTranslationStays()
+    {
+        var old = LingClient.Spacing; LingClient.Spacing = 0;
+        try
+        {
+            var (ling, _, fake) = NotesClient(true, (_, _) => Reply("{}"), notesKey: "sk-notes-222222222");
+            await ling.Chat("x", "Notes.", Priority.Notes, json: true);
+            await ling.Chat("y", "Translate.", Priority.Translate);
+            Equal("big,mt", string.Join(",", fake.Sent.Select(x => JsonNode.Parse(x.body)!["model"]!.GetValue<string>())), "models");
+            Equal("https://notes.example/v1/chat/completions,https://main.example/v1/chat/completions", string.Join(",", fake.Sent.Select(x => x.url)), "servers");
+            Equal("Bearer sk-notes-222222222,Bearer sk-main-1111111111", string.Join(",", fake.Auth), "keys");
+            // A live line's corrections ride at Notes priority but are translation's.
+            await ling.Chat("z", "JSON only.", Priority.Notes, notes: false);
+            Check(fake.Sent[^1].url.StartsWith("https://main.example/") && fake.Auth[^1] == "Bearer sk-main-1111111111", "corrections stay with translation");
+        }
+        finally { LingClient.Spacing = old; }
+    }
+
+    public static async Task NotesWithoutTheirOwnKeyUseTheTranslationKey()
+    {
+        var old = LingClient.Spacing; LingClient.Spacing = 0;
+        try
+        {
+            var (ling, _, fake) = NotesClient(true, (_, _) => Reply("{}"));
+            await ling.Chat("x", "Notes.", Priority.Notes);
+            Equal("Bearer sk-main-1111111111", fake.Auth[0], "不填就用上面的 key");
+            Check(!ling.NotesHasOwnKey, "no key of their own");
+            // The same service, another model: same address and key, even with a notes key file left over.
+            var (same, _, f2) = NotesClient(false, (_, _) => Reply("{}"), notesKey: "sk-notes-222222222");
+            await same.Chat("x", "Notes.", Priority.Notes);
+            Check(f2.Sent[0].url.StartsWith("https://main.example/") && f2.Auth[0] == "Bearer sk-main-1111111111", "same service: its key");
+            Equal("big", JsonNode.Parse(f2.Sent[0].body)!["model"]!.GetValue<string>(), "the notes model");
+            Check(!same.NotesHasOwnKey, "同一个服务 has no key of its own");
+            // 另一个服务 at an http address on the internet: notes aren't sent anywhere else instead.
+            var (bad, s3, f3) = NotesClient(true, (_, _) => Reply("{}"), notesKey: "sk-notes-222222222");
+            s3.AiCustomNotesBase = "http://notes.example/v1";
+            try { await bad.Chat("x", "Notes.", Priority.Notes); Check(false, "not sent"); } catch (LingException) { }
+            Equal(0, f3.Sent.Count, "nothing sent with a bad notes address");
+        }
+        finally { LingClient.Spacing = old; }
+    }
+
+    public static async Task ARefusedNotesKeyLeavesTranslationWorking()
+    {
+        var old = LingClient.Spacing; LingClient.Spacing = 0;
+        try
+        {
+            var (ling, _, _) = NotesClient(true, (_, body) => body.Contains("\"big\"") ? Status(401) : Reply("好"));
+            try { await ling.Chat("x", "Notes.", Priority.Notes); Check(false, "notes refused"); }
+            catch (LingException e) { Equal(LingException.Kind.InvalidKey, e.Failure, "refused"); }
+            Check(ling.KeyState != KeyState.Invalid, "translation's key isn't marked bad");
+            Equal(AICheck.Reason.InvalidKey, ling.Health.Notes?.Why, "the notes' result says so");
+            Check(ling.Health.Failure is null, "translation's steps untouched");
+            Equal("好", await ling.Chat("y", "Translate.", Priority.Translate), "translation still works");
+            Equal("%@ 不认上面的 key，给它单独填一个。".Replace("%@", "notes.example"), ling.Health.NotesLine("notes.example", "big", sharedKey: true), "wants a key of its own");
+        }
+        finally { LingClient.Spacing = old; }
+    }
+
+    public static async Task ANotesServerBusyDoesNotHoldTranslationBack()
+    {
+        var old = LingClient.Spacing; LingClient.Spacing = 0;
+        try
+        {
+            var clock = new FakeClock();
+            var (ling, _, fake) = NotesClient(true, (url, _) => url.Contains("notes.example") ? Busy("20") : Reply("好"), clock: clock);
+            try { await ling.Chat("x", "Notes.", Priority.Notes); Check(false, "busy"); }
+            catch (LingException e) { Equal(LingException.Kind.RateLimited, e.Failure, "notes gave up"); }
+            Check(clock.Now > clock.Start, "notes waited at their own gate");
+            // A translation fails at once while its server cools down; this one isn't.
+            Equal("好", await ling.Chat("y", "Translate.", Priority.Translate), "translation's gate isn't paused");
+            Check(ling.Health.Failure is null && !ling.Health.NotesFailed, "busy is no failure: " + ling.Health.Summary);
+        }
+        finally { LingClient.Spacing = old; }
+    }
+
+    public static void NotesFallBackToTranslationUntilSet()
+    {
+        const string b = "https://main.example/v1/";
+        var plain = new AIConfig(AIProvider.Custom, b, "mt", "");
+        Check(!plain.NotesApart && plain.ForNotes == plain, "nothing set: translation's");
+        var model = new AIConfig(AIProvider.Custom, b, "mt", "", NotesModel: "big");
+        Check(model.NotesApart && model.ForNotes.TextModel == "big" && model.ForNotes.Base == b, "another model, same address");
+        // Only the custom service splits.
+        var ling = new AIConfig(AIProvider.Ling, AIProvider.Ling.Base, "x", "", NotesModel: "big");
+        Check(!ling.NotesApart && ling.ForNotes.TextModel == "x", "Ling doesn't");
+        // From settings: the translation model named again is no model of its own; 另一个服务 off keeps
+        // the address but doesn't use it; an http address on the internet can't be used.
+        var s = new AppSettings { AiProvider = "custom", AiCustomBase = "https://main.example/v1", AiModels = { ["custom"] = "mt", ["custom.notes"] = "mt" } };
+        Check(!s.AIConfig().NotesApart, "same model: not apart");
+        s.AiCustomNotesBase = "https://notes.example/v1";
+        Check(!s.AIConfig().NotesApart && s.AIConfig().ForNotes.Base == b, "同一个服务: the address is kept, not used");
+        s.AiCustomNotesOwn = true;
+        Equal("https://notes.example/v1/", s.AIConfig().ForNotes.Base, "另一个服务");
+        Equal("mt", s.AIConfig().ForNotes.TextModel, "with the translation model");
+        s.AiCustomNotesBase = "http://notes.example/v1";
+        Check(s.AIConfig().NotesBadAddress && s.AIConfig().ForNotes.Base == b, "http to the internet");
+        s.AiCustomNotesBase = "";
+        Check(s.AIConfig().NotesApart && s.AIConfig().ForNotes.Base == b && !s.AIConfig().NotesBadAddress, "另一个服务, no address: the same one, its own key");
+    }
+
+    public static async Task ACheckTestsNotesApartWithoutFailingTranslation()
+    {
+        var old = LingClient.Spacing; LingClient.Spacing = 0;
+        try
+        {
+            // The notes model is gone from the notes server; translation's model, typed by hand, isn't listed but answers.
+            var (ling, _, fake) = NotesClient(true, (url, body) =>
+                url == "https://main.example/v1/models" ? Status(200, "{\"data\":[{\"id\":\"other\"}]}")
+                : url == "https://notes.example/v1/models" ? Status(200, "{\"data\":[{\"id\":\"n1\"},{\"id\":\"n2\"}]}")
+                : url.StartsWith("https://notes.example/") ? Status(404)
+                : Reply("周五发布。"), notesKey: "sk-notes-222222222");
+            await ling.Check();
+            var h = ling.Health;
+            Check(h[AICheck.StepId.Text].Kind == AICheck.Kind.Ok && h.Failure?.Step == AICheck.StepId.Hear, "translation passes (no hear model here): " + h.Summary);
+            Equal(AICheck.Reason.NoModel, h.Notes?.Why, "the notes fail on their own: " + h.Summary);
+            Check(h.NotesFailed && h.Summary.Contains("notes=fail(noModel 404)"), h.Summary);
+            Equal("n1,n2", string.Join(",", ling.NotesCatalog), "the notes server's models, for its menu");
+            Check(!fake.Sent.Any(x => x.url == "https://main.example/v1/chat/completions" && x.body.Contains("JSON object")), "no JSON test against translation");
+            Equal(KeyState.Ok, ling.KeyState, "translation's key is fine");
         }
         finally { LingClient.Spacing = old; }
     }

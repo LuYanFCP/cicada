@@ -1054,6 +1054,11 @@ sealed class Controller
     {
         var p = Settings.AiProvider;
         if (kind == "text" && p == "ling") Settings.Model = model.Length > 0 ? model : LingClient.DefaultModel;
+        // A custom service's notes model: "" is the translation model's.
+        else if (kind == "notes")
+        {
+            if (model.Length > 0) Settings.AiModels["custom.notes"] = model; else Settings.AiModels.Remove("custom.notes");
+        }
         else
         {
             var table = kind switch { "text" => Settings.AiModels, "hear" => Settings.AiHearModels, "voice" => Settings.AiVoiceModels, _ => null };
@@ -1175,6 +1180,7 @@ sealed class Controller
         return new JsonObject
         {
             ["provider"] = c.Provider.Id, ["base"] = c.Base, ["hearBase"] = c.HearBase, ["text"] = c.TextModel, ["hear"] = c.HearModel, ["voice"] = c.VoiceModel,
+            ["notesBase"] = c.NotesApart ? c.ForNotes.Base : null, ["notesModel"] = c.NotesApart ? c.ForNotes.TextModel : null, ["notesOwnKey"] = Ling.NotesHasOwnKey,
             ["state"] = Ling.KeyState.ToString(), ["hears"] = Ling.Hears, ["seconds"] = Ling.Seconds is { } s ? Math.Round(s, 1) : null,
             ["check"] = Ling.Health.Summary,
             ["problem"] = Ling.Health.Message(Ling.ServiceName, Ling.ServiceHost, Ling.Config.TextModel, Ling.HearName),
@@ -1442,6 +1448,15 @@ static class DebugServer
                 _ = app.Ling.Check();
                 break;
             case "ai-custom-only": app.Settings.AiCustomOnly = arg == "on"; app.Settings.Save(); app.AIChanged(); break;
+            // 纪要 on a custom service: "ai-notes same|own [address]" (the notes model: ai-model notes <id>).
+            case "ai-notes":
+            {
+                var p = arg.Split(' ', 2);
+                app.Settings.AiCustomNotesOwn = p[0] == "own";
+                if (p.Length > 1) app.Settings.AiCustomNotesBase = p[1].Trim();
+                app.Settings.Save(); app.AIChanged();
+                break;
+            }
             case "ai-model":
             {
                 var kv = arg.Split(' ', 2);

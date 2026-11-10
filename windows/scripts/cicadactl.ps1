@@ -1,6 +1,6 @@
 # Sends one debug command to a running dev build (Cicada.exe --dev) and prints its JSON state.
 #   .\cicadactl.ps1 state | start | stop | end | notesproblem failed | sample | feed C:\clip.wav | view subtitles | capture on | show records | hide notes | quit
-#   AI 服务: provider ling|openrouter|zenmux|custom | switchtoling (a status line's 改用 Ling) | ai-model hear|text|voice <id> | ai-custom-only on|off | show settings ai models
+#   AI 服务: provider ling|openrouter|zenmux|custom | switchtoling (a status line's 改用 Ling) | ai-model hear|text|voice|notes <id> | ai-notes same|own [address] | ai-custom-only on|off | show settings ai models
 #   AI 服务检查: ai-check | ai-check-sim <unreachable|invalidKey|noCredit|mgmtKey|noModel|noJSON|deaf|busy|serverError|lowBalance|off> (state › ai.check: every step)
 #   结束会议: calls zoom.exe=Zoom|none|real | realcalls | endtimes <silence> <countdown> <grace>|off | endkeep
 #   改正听错的词: silentlisten zh-CN | heard <text> | fixstate | fixanswer yes|no | fixlater | fixrevert <line> | fixedit <line>=<text>[|one][|keep0] | fixundo | vocabadd Morpho=莫拉 | vocabstate (… @<id> for another meeting)

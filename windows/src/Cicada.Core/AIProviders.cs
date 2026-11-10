@@ -127,9 +127,20 @@ public sealed record AIProvider(string Id, string Name, string? Base, string? Si
 /// (Settings.swift › aiConfig). `Base` is null for a custom service without a valid address yet;
 /// `VoiceModel` null when the service can't speak here. `HearBase` is where the hear model is
 /// asked: the service's address, or a custom service's own one for it (null: not a valid address).
+///
+/// A custom service's notes (实时纪要, 说话人): `NotesModel` another model, and with 另一个服务
+/// (`NotesOwnService`) `NotesBase` another server with its own key; null: the same as translation.
+/// `NotesBadAddress`: 另一个服务 with an address that can't be used (http to the internet).
 public sealed record AIConfig(AIProvider Provider, string? Base, string TextModel, string HearModel,
-    string? VoiceModel = null, string? VoiceBase = null, string? CustomVoice = null, string? HearBase = null)
+    string? VoiceModel = null, string? VoiceBase = null, string? CustomVoice = null, string? HearBase = null,
+    string? NotesModel = null, string? NotesBase = null, bool NotesOwnService = false, bool NotesBadAddress = false)
 {
+    /// Notes go somewhere translation doesn't: they get their own check, result, key and start gate.
+    public bool NotesApart => Provider.Id == "custom" && (NotesModel is not null || NotesBase is not null || NotesOwnService);
+
+    /// What a notes call is sent with: notes' model at notes' address, the rest as translation.
+    public AIConfig ForNotes => !NotesApart ? this : this with { TextModel = NotesModel ?? TextModel, Base = NotesBase ?? Base };
+
     public bool IsLing => Provider.Id == "ling";
     public bool HasVoices => VoiceModel is not null && VoiceBase is not null;
     /// What the UI and errors call it ("其他（兼容 OpenAI）" is a UI key, localized by the caller).
@@ -196,8 +207,15 @@ public sealed record AIConfig(AIProvider Provider, string? Base, string TextMode
             var name = s.AiCustomVoice.Trim();
             // The hear model may run as its own server; empty is the text model's address.
             var hearBase = s.AiCustomHearBase.Trim().Length > 0 ? AIProvider.CustomBase(s.AiCustomHearBase) : b;
-            return new(p, b, Pick(s.AiModels), Pick(s.AiHearModels), voice.Length > 0 ? voice : null,
-                voice.Length > 0 ? voiceBase : null, name.Length > 0 ? name : null, hearBase);
+            var textModel = Pick(s.AiModels);
+            var notesModel = s.AiModels.TryGetValue("custom.notes", out var nm) ? nm.Trim() : "";
+            var notesAddress = s.AiCustomNotesOwn ? s.AiCustomNotesBase.Trim() : "";
+            var notesBase = notesAddress.Length == 0 ? null : AIProvider.CustomBase(notesAddress);
+            return new(p, b, textModel, Pick(s.AiHearModels), voice.Length > 0 ? voice : null,
+                voice.Length > 0 ? voiceBase : null, name.Length > 0 ? name : null, hearBase,
+                NotesModel: notesModel.Length == 0 || notesModel == textModel ? null : notesModel,
+                NotesBase: notesBase == b ? null : notesBase, NotesOwnService: s.AiCustomNotesOwn,
+                NotesBadAddress: notesAddress.Length > 0 && notesBase is null);
         }
         static string Or(string v, AIModel[] rec) => v.Length > 0 ? v : rec[0].Id;
         return new(p, p.Base, Or(Pick(s.AiModels), p.TextModels), Or(Pick(s.AiHearModels), p.HearModels), Or(Pick(s.AiVoiceModels), p.VoiceModels), p.Base, HearBase: p.Base);

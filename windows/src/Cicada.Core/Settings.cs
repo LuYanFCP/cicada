@@ -26,6 +26,11 @@ public sealed class AppSettings
     /// 语音和文字只发给你的服务 (the Mac's key): with the custom service, Google Translate is never
     /// asked. Kept when another service is picked, but only acts on the custom one (GoogleOff).
     [JsonPropertyName("aiCustomOnly")] public bool AiCustomOnly { get; set; }
+    /// A custom service's notes (the Mac's keys): 另一个服务 (its own address, empty: the same one, and
+    /// its own key in the `custom-notes` key file). Off keeps the address, so switching back and
+    /// forth loses nothing. The notes model is AiModels["custom.notes"] (empty: the translation model).
+    [JsonPropertyName("aiCustomNotesOwn")] public bool AiCustomNotesOwn { get; set; }
+    [JsonPropertyName("aiCustomNotesBase")] public string AiCustomNotesBase { get; set; } = "";
     [JsonIgnore] public bool GoogleOff => AiProvider == "custom" && AiCustomOnly;
     /// 打开麦克风: "both" while the mic is on, else "system" (the Mac's listenSource values; "room",
     /// the mic alone, is the Mac's on macOS 14/15). Not saved: every launch starts with the mic off.

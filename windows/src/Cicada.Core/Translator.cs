@@ -250,7 +250,8 @@ public sealed class Translator(LingClient ling, HttpMessageHandler? google = nul
         prompt += "\nSubtitle: " + text;
         try
         {
-            var out_ = await ling.Chat(prompt, "JSON only.", priority, maxTokens: 600, timeout: 6);
+            // A live line's translation, even at Notes priority: it goes to translation's model and server.
+            var out_ = await ling.Chat(prompt, "JSON only.", priority, maxTokens: 600, timeout: 6, notes: false);
             if (out_.Length == 0) return null;
             if (Correction.Parse(out_, text) is not { } parsed)
             {
