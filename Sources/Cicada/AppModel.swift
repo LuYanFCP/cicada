@@ -1691,6 +1691,8 @@ final class AppModel: ObservableObject {
 
     private func importFinished(_ id: String) {
         guard let s = store.session(id) else { return }
+        // The voices are known now: Ling's guess at who 说话人 1, 2… are, as at the end of a meeting.
+        if settings.speakerVoices { speakerNamer.guess(id, force: true) }
         let notesToo = settings.importNotes && ling.hasKey && !s.lines.isEmpty
         if notesToo { notes.generate(for: id) }
         let content = UNMutableNotificationContent()

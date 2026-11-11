@@ -241,7 +241,13 @@ final class SessionStore: ObservableObject {
     }
 
     func setVoice(lineID: String, _ voice: Int) {
-        guard let id = liveID, let i = index(id),
+        guard let id = liveID else { return }
+        setVoice(in: id, lineID: lineID, voice)
+    }
+
+    /// An imported file's line got its voice (`ImportVoices`).
+    func setVoice(in id: String, lineID: String, _ voice: Int) {
+        guard let i = index(id),
               let j = sessions[i].lines.firstIndex(where: { $0.id == lineID }) else { return }
         sessions[i].lines[j].voice = voice
         scheduleSave(id)
@@ -348,6 +354,9 @@ final class SessionStore: ObservableObject {
         guard let i = index(id) else { return }
         sessions[i].lines = []
         sessions[i].notes = nil
+        // Voices are numbered afresh: names given to the old ones would land on other people.
+        sessions[i].voiceNames = nil
+        sessions[i].voiceGuesses = nil
         sessions[i].importing = true
         saveNow(id)
     }
@@ -460,6 +469,10 @@ enum TranscriptExport {
 
     static func speakerNumbers(_ s: Session) -> [String: Int] { voices ? SpeakerLabels.numbers(s.lines) : [:] }
 
+    /// Whether lines say who spoke. An imported file has no "other side" to call 对方: its lines
+    /// are named only once its voices are told apart.
+    static func saysWho(_ s: Session, _ numbers: [String: Int]) -> Bool { s.sourceFile == nil || !numbers.isEmpty }
+
     static func header(_ s: Session) -> String {
         let mins = Int(s.duration / 60)
         return "\(dateText(s.startedAt, "yMMMdHHmm")) · " + (mins < 1 ? L("不到 1 分钟") : L("\(mins) 分钟"))
@@ -495,8 +508,7 @@ enum TranscriptExport {
         if !notes.isEmpty { out += notes + "## \(L("文字记录"))\n\n" }
         let numbers = speakerNumbers(s), names = SpeakerLabels.names(s)
         for l in s.lines {
-            // An imported file has no "other side" to name.
-            let who = s.sourceFile == nil ? " \(speakerName(l, numbers, names))" : ""
+            let who = saysWho(s, numbers) ? " \(speakerName(l, numbers, names))" : ""
             out += "**[\(clock(l.t))]\(who)**  \n\(l.shown)\n"
             if let d = l.dst, d != l.shown { out += "> \(d)\n" }
             out += "\n"
@@ -562,7 +574,7 @@ enum TranscriptExport {
         }
         let numbers = speakerNumbers(s), names = SpeakerLabels.names(s)
         for l in s.lines {
-            add("[\(clock(l.t))]" + (s.sourceFile == nil ? " \(speakerName(l, numbers, names))" : ""), size: 9, weight: .semibold, color: .darkGray, after: 2)
+            add("[\(clock(l.t))]" + (saysWho(s, numbers) ? " \(speakerName(l, numbers, names))" : ""), size: 9, weight: .semibold, color: .darkGray, after: 2)
             add(l.shown, size: 11, after: 2)
             if let d = l.dst, d != l.shown { add(d, size: 11, color: NSColor(calibratedWhite: 0.3, alpha: 1), after: 10) }
         }
