@@ -320,7 +320,8 @@ class RecordActivity : Activity() {
         // The last lines end above the floating player, but scroll under it.
         list.setPadding(0, 0, 0, ui.dp(if (playable) 124 else 40))
         val lines = if (tab == 1) app.store.lines(id) else emptyList()
-        adapter.show(lines, SpeakerLabels.numbers(lines), SpeakerLabels.names(s), s.sourceFile == null, playable)
+        val numbers = SpeakerLabels.numbers(lines)
+        adapter.show(lines, numbers, SpeakerLabels.names(s), SpeakerLabels.saysWho(s, numbers), playable)
         updatePlayer()
     }
 
