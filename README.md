@@ -58,11 +58,11 @@ Cicada detects the spoken language within seconds and translates it into your sy
 
 ### In-person and hybrid meetings
 
-Click **Turn on mic** to listen to people in the meeting room. Hybrid meetings use the exact same button: computer audio is marked **Online** and microphone audio is marked **In room**, combined in a single record (on macOS 14 and 15, turning on the mic listens only to the room). On speakers, Cicada automatically deduplicates audio so nothing is recorded twice; with headphones on, both sides can talk at once and both are kept. Windows and Linux follow the same rules. On the Mac, the small arrow beside the button picks which microphone to use (an iPhone or a conference mic, say) without changing the system default.
+Click **Turn on mic** to listen to people in the meeting room. Hybrid meetings use the exact same button: computer audio is marked **Online** and microphone audio is marked **In room**, combined in a single record (on macOS 14 and 15, turning on the mic listens only to the room). On speakers, Cicada automatically deduplicates audio so nothing is recorded twice; with headphones on, both sides can talk at once and both are kept. Windows and Linux follow the same rules. On the Mac, the small arrow beside the button picks which microphone to use (an iPhone or a conference mic, say) without changing the system default. What the mic hears only goes into the notes, never into the meeting; to be heard by the other side, use interpreting below.
 
 ### Simultaneous interpreting
 
-Hold the right `⌥` key and speak so the other side hears your translated voice in the meeting app. Or turn on **Hands-free** in **Settings › Interpreting** and just start talking while Cicada listens to a meeting: the meeting is turned down while you speak, and the translation goes out after a one-second pause. Anyone talking near the Mac counts as you, so hold the key when others are around (Mac only). Turning on interpreting automatically switches the system microphone to BlackHole 2ch, a virtual driver you can download and install with one click. With a Ling API key you can use natural voices or clone your own voice from an 8 to 30 second sample; without a key, it uses built-in macOS voices.
+Hold the right `⌥` key and speak so the other side hears your translated voice in the meeting app. Or turn on **Hands-free** in **Settings › Interpreting** (Mac only) and just start talking while Cicada listens to a meeting: the meeting is turned down while you speak, and the translation goes out after a one-second pause. It pauses while the mic is on, so hold the key then. Anyone talking near the Mac counts as you, so hold the key when others are around. Turning on interpreting automatically switches the system microphone to BlackHole 2ch, a virtual driver you can download and install with one click. With a Ling API key you can use natural voices or clone your own voice from an 8 to 30 second sample; without a key, it uses built-in macOS voices.
 
 <p align="center">
   <img src="docs/interpreting.png" width="640" alt="Interpreting settings showing the right Option talk key, target language, Ming voice previews, and macOS voices">
@@ -89,7 +89,7 @@ The Mac app only asks for a permission when you use the corresponding feature, a
 | Permission | What it's for | Without it |
 |---|---|---|
 | System audio recording (Screen & System Audio Recording) | Hears system audio for subtitles; never records the screen | Subtitles and notes won't work |
-| Microphone | Hold-to-talk interpreting; **Turn on mic** for meeting rooms | Can't speak to translate or listen to the room |
+| Microphone | Interpreting (hold the talk key, or Hands-free); **Turn on mic** for meeting rooms | Can't speak to translate or listen to the room |
 | Input Monitoring | Detects whether right `⌥` is pressed (doesn't block or log other keys) | Switch to a `⌃`/`⌘` shortcut in Settings to skip this permission |
 | Administrator password | Installs the BlackHole 2ch virtual microphone (asked once) | The other side can't hear interpreting; everything else works |
 

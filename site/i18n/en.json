@@ -177,10 +177,11 @@
   "gain3_t": "Speaks in about 2 seconds in a natural voice; with Ling, in your own",
   "without_key": "Without a key, live subtitles and meeting records still work.",
   "s3_h": "Open Cicada and follow the guide",
-  "s3_p": "The first-run guide takes you through three things:",
+  "s3_p": "The first-run guide takes you through these steps:",
   "s3_li1": "Let Cicada hear your Mac’s audio",
   "s3_li2": "Play the sample meeting and watch live subtitles appear",
   "s3_li3": "Connect an AI service for notes and sharper translation",
+  "s3_li4": "If you want to speak in meetings, set up interpreting",
   "s3_after": "After that, Cicada starts on its own whenever a video or call plays.",
   "shot_perm_alt": "Cicada first-run step 1: let it hear the Mac’s audio (sound only, never the screen)",
   "shot_key_alt": "Cicada first-run step 3: create a key on the Ling platform, copy the sk- key, then paste and check",
@@ -188,7 +189,7 @@
   "shot_key_cap": "Guide 3/4: connect an AI service",
   "later_h": "Turn on when you need it",
   "later1_h": "Interpreting",
-  "later1_p": "Hold right ⌥ and talk; the meeting hears you translated. The first time, Cicada walks you through installing a virtual microphone.",
+  "later1_p": "Hold right ⌥ and talk; the meeting hears you translated. Or turn on Hands-free in Settings › Interpreting (Mac only): while Cicada listens to a meeting, just talk, and the translation goes out after a one-second pause; with the mic on it pauses, so hold the key. The first time, Cicada walks you through installing a virtual microphone.",
   "later2_h": "Your own voice",
   "later2_p": "Record 15 seconds and the translation is spoken in your voice. Record it in Settings › Interpreting.",
   "more": "Models, shortcuts, uninstalling and other details are in the <a href=\"{{REPO}}/blob/main/README.md\">README on GitHub</a>.",
@@ -224,10 +225,10 @@
   "privacy_url": "https://github.com/wquguru/cicada/blob/main/README.md#privacy--permissions",
   "p1_small": "On your Mac",
   "p1_h": "On the Mac, audio becomes text on your computer",
-  "p1_p": "Recordings and meeting records stay on your own device. On the Mac, the only things sent out are the recognized text (for translation and notes) and, when you use interpreting, the few sentences you speak while holding the key; if you hand speech recognition to your own server, the meeting audio goes to that machine. The Windows, Linux and Android apps send what is said in short pieces to the AI service you chose.",
+  "p1_p": "Recordings and meeting records stay on your own device. On the Mac, the only things sent out are the recognized text (for translation and notes) and, when you use interpreting, the few sentences you speak; if you hand speech recognition to your own server, the meeting audio goes to that machine. The Windows, Linux and Android apps send what is said in short pieces to the AI service you chose.",
   "p2_small": "Permissions",
   "p2_h": "Asked only when needed, optional where possible",
-  "p2_p": "On the Mac, system audio is for subtitles; the microphone records only while you hold the talk key or when “Listen to › Room” is selected; Input Monitoring only watches the right ⌥ (not needed with a key combination). On Mac, Windows and Android the notes window stays hidden when you share your screen.",
+  "p2_p": "On the Mac, system audio is for subtitles; the microphone records only while you hold the talk key, while Hands-free is on during a meeting, or after you click Turn on mic; Input Monitoring only watches the right ⌥ (not needed with a key combination). On Mac, Windows and Android the notes window stays hidden when you share your screen.",
   "p3_small": "Open",
   "p3_h": "No tracking, open source",
   "p3_p": "It only connects to the translation service, the AI service you configure, the official download of the virtual microphone and GitHub. No analytics and no servers of our own. Installers can be checked against their SHA-256.",
@@ -296,7 +297,7 @@
     ],
     [
       "Is meeting audio uploaded?",
-      "On the Mac, audio turns into text on your computer; only the recognized text leaves it, plus the few sentences you say while holding the talk key for interpreting. If you set Settings › AI Service › Speech recognition to Your service, the meeting audio goes to that machine. The Windows, Linux and Android apps send what is said in short pieces to the AI service you chose. Recordings stay on your own device."
+      "On the Mac, audio turns into text on your computer; only the recognized text leaves it, plus the few sentences you say when interpreting. If you set Settings › AI Service › Speech recognition to Your service, the meeting audio goes to that machine. The Windows, Linux and Android apps send what is said in short pieces to the AI service you chose. Recordings stay on your own device."
     ],
     [
       "Which languages does it support?",
