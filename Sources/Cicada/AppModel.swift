@@ -2357,6 +2357,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
     private lazy var mainToolbar = MainToolbar(model: model)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // The palette is light only: in Dark Mode unstyled text and checkboxes turn white on white cards.
+        NSApp.appearance = NSAppearance(named: .aqua)
         NSApp.setActivationPolicy(model.settings.showInDock ? .regular : .accessory)
         menu.showMainWindow = { [weak self] in self?.showMainWindow() }
         menu.showOnboarding = { [weak self] in self?.showOnboarding() }
