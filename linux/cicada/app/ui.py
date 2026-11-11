@@ -125,6 +125,10 @@ dialog.sharesheet entry.mono { font-family: "Ubuntu Sans Mono", monospace; }
 .statusdot.needsyou { background-color: #B42318; }
 button.quietbtn.statusaction, button.quietbtn.statusaction:hover { background-color: transparent; padding: 4px 0; min-width: 0; }
 .panel.dark .endingstrip { background-color: rgba(232,85,43,0.16); }
+/* The light fills would sit as pale slabs, their grey text washed out, on the dark notes window. */
+.panel.dark .statusline, .panel.dark .notice { background-color: #2A2C32; }
+.panel.dark .notice.error { background-color: rgba(180,35,24,0.22); }
+.panel.dark .segmented button { color: #A3A7B1; }
 entry.notes-search { min-height: 32px; font-size: 13px; border-radius: 9px; }
 .panel.dark entry.notes-search { background-color: #2A2C32; color: #F2F3F5; }
 button.iconbtn.on { background-color: #F3F4F6; color: #15171C; }
