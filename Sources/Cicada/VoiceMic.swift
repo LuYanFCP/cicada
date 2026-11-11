@@ -18,8 +18,17 @@ import CoreAudio
 /// the talk key's first words wait for it) and let go of as soon as nobody needs it; the plain mic
 /// in this process is starved by it the same way. The room holds it for the whole meeting.
 /// AGC is off (it lifts the room's noise with the voice, which recognition likes less), and other
-/// audio's ducking is set to its minimum: the meeting must stay audible while you talk.
+/// audio's ducking is set to its minimum: the meeting must stay audible while you talk. Hands-free
+/// (`advancedDucking`) asks for Apple's advanced ducking instead: the meeting drops while you speak.
 final class VoiceMic: @unchecked Sendable {
+    /// Hands-free: other audio ducked while the unit hears speech (Apple's advanced ducking at its
+    /// most), for the units made from now on; a ready unit made the other way is made again when
+    /// nobody uses it. Measured with an ESP32 10 cm from the mic as me and the meeting on the MacBook's
+    /// speakers, 200 ms stretches of my sentence that came through the unit: at 56 % 12 of 27 with
+    /// minimum ducking, 23 with this; at 100 % 3 and 15. Plain maximum ducking (26–25) ducks the
+    /// meeting by ~25 dB for as long as the unit runs, Cicada's own capture of it too; this one only
+    /// while I speak (the capture dips with it then, and is back to its level when I stop).
+    var advancedDucking = false
     static let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
 
     private let queue = DispatchQueue(label: "com.wquguru.cicada.voicemic")
@@ -27,7 +36,7 @@ final class VoiceMic: @unchecked Sendable {
     private enum UnitState {
         case none
         /// Made for these devices: another mic or output means making it again.
-        case ready(AudioUnit, input: AudioObjectID, output: AudioObjectID)
+        case ready(AudioUnit, input: AudioObjectID, output: AudioObjectID, advanced: Bool)
         /// Failed to start: given back once nobody uses it.
         case stale(AudioUnit)
     }
@@ -35,7 +44,7 @@ final class VoiceMic: @unchecked Sendable {
     private var unit: AudioUnit? {
         switch state {
         case .none: nil
-        case .ready(let u, _, _), .stale(let u): u
+        case .ready(let u, _, _, _), .stale(let u): u
         }
     }
     private var building = false
@@ -66,13 +75,24 @@ final class VoiceMic: @unchecked Sendable {
     /// Whether anyone is attached (then nobody may use the plain mic, which the unit starves).
     var inUse: Bool { lock.withLock { !consumers.isEmpty } }
 
+    /// Whether `key` is attached to a unit made for `input` and the current output (headphones plugged
+    /// in or AirPods taking the output leave it on a unit for the old one).
+    func serves(_ key: String, input: AudioObjectID) -> Bool {
+        let output = SystemAudioTap.defaultOutputDevice()
+        return lock.withLock {
+            guard consumers[key] != nil, case .ready(_, let i, let o, let a) = state else { return false }
+            return i == input && o == output && a == advancedDucking
+        }
+    }
+
     /// Makes the unit for `input` and the current output in the background, unless it already is;
     /// `then` hears whether it is ready (at once when it already was).
     func prepare(input: AudioObjectID, then: ((Bool) -> Void)? = nil) {
         guard let output = SystemAudioTap.defaultOutputDevice() else { then?(false); return }
         lock.lock()
         var ready = false
-        if case .ready(_, let i, let o) = state { ready = (i, o) == (input, output) }
+        let advanced = advancedDucking
+        if case .ready(_, let i, let o, let a) = state { ready = (i, o, a) == (input, output, advanced) }
         if ready { lock.unlock(); then?(true); return }
         if let then { waiting.append(then) }
         if building { lock.unlock(); return }
@@ -80,11 +100,11 @@ final class VoiceMic: @unchecked Sendable {
         lock.unlock()
         queue.async { [self] in
             let t0 = Date()
-            let made = make(input: input, output: output)
+            let made = make(input: input, output: output, advanced: advanced)
             let (ok, told) = lock.withLock { () -> (Bool, [(Bool) -> Void]) in
                 if let old = unit, consumers.isEmpty { AudioComponentInstanceDispose(old); state = .none }
                 var ok = false
-                if let made, unit == nil { state = .ready(made, input: input, output: output); bypassed = nil; ok = true } else if let made { AudioComponentInstanceDispose(made) }
+                if let made, unit == nil { state = .ready(made, input: input, output: output, advanced: advanced); bypassed = nil; ok = true } else if let made { AudioComponentInstanceDispose(made) }
                 building = false
                 defer { waiting = [] }
                 return (ok, waiting)
@@ -102,7 +122,7 @@ final class VoiceMic: @unchecked Sendable {
     func attach(_ key: String, input: AudioObjectID, processing: Bool = true, onAudio: @escaping (AVAudioPCMBuffer) -> Void) -> Bool {
         guard let output = SystemAudioTap.defaultOutputDevice() else { return false }
         lock.lock()
-        guard case .ready(let unit, let i, let o) = state, (i, o) == (input, output) else { lock.unlock(); return false }
+        guard case .ready(let unit, let i, let o, _) = state, (i, o) == (input, output) else { lock.unlock(); return false }
         let first = consumers.isEmpty
         consumers[key] = onAudio
         if processing { processed.insert(key) } else { processed.remove(key) }
@@ -175,7 +195,7 @@ final class VoiceMic: @unchecked Sendable {
         }
     }
 
-    private func make(input: AudioObjectID, output: AudioObjectID) -> AudioUnit? {
+    private func make(input: AudioObjectID, output: AudioObjectID, advanced: Bool) -> AudioUnit? {
         var desc = AudioComponentDescription(componentType: kAudioUnitType_Output, componentSubType: kAudioUnitSubType_VoiceProcessingIO,
                                              componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0)
         guard let comp = AudioComponentFindNext(nil, &desc) else { return nil }
@@ -193,7 +213,7 @@ final class VoiceMic: @unchecked Sendable {
             && set(kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, output)
         _ = set(kAUVoiceIOProperty_VoiceProcessingEnableAGC, kAudioUnitScope_Global, 0, UInt32(0))
         _ = set(kAUVoiceIOProperty_OtherAudioDuckingConfiguration, kAudioUnitScope_Global, 0,
-                AUVoiceIOOtherAudioDuckingConfiguration(mEnableAdvancedDucking: false, mDuckingLevel: .min))
+                AUVoiceIOOtherAudioDuckingConfiguration(mEnableAdvancedDucking: DarwinBoolean(advanced), mDuckingLevel: advanced ? .max : .min))
         let asbd = Self.format.streamDescription.pointee
         ok = ok && set(kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 1, asbd)
             && set(kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, asbd)

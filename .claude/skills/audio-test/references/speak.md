@@ -41,7 +41,33 @@ Two rounds right after room rounds had every press at 0.0 s (unit setting change
 
 What it found: with the plain mic (`VP=off`) the meeting's English came back from the speakers and Ming interpreted it as me — my sentences 50/27/23 %, the meeting sent back into itself, and a silent press sent the meeting back 3 of 3 times. Through echo cancellation: 86–100 %, none of the meeting. A silent press in a quiet room came back as 嗯 → "Hmm." until PressSpeech and the filler check.
 
+## 不用按键 (hands-free)
+
+`lsctl handsFree:on`; the unit runs the whole time with Apple's advanced ducking at max (`VoiceMic.advancedDucking`), `HandsFreeDetector` cuts sentences, and each goes through the press pipeline. Debug: `handsFreeDump:<path>` writes the echo-cancelled stream as raw 16 kHz float32; the log has `hands-free: voice began / sentence of / only … of voice / … chars, too short / the meeting's own words`.
+
+| Round | What plays | Pass |
+|---|---|---|
+| Quiet | ESP32 says one sentence, nothing on the speakers | ≥ 90 % |
+| Meeting 56 % | meeting from the speakers, ESP32 talks over it | ≥ 70 %, none of the meeting's words |
+| Two sentences | the same, 2 s apart | both sent |
+| Meeting only, 100 % | nobody talks, 5 rounds | 0 sent |
+
+2026-11-11 (MacBook Pro 14, ESP32 10 cm from the mic, the sentence `我同意这个数字。设计那个岗位很急，周四之前我会回复。`, scored on the `me` lines). Rounds were run before the echo check, the three-unit minimum and listening-only were added, except where marked:
+
+- Quiet: 23/23 ×3.
+- Meeting 56 %: 20, 20, 18, 16, 18/23; with the final filters 20, 16, 16. The first word or two is lost: the unit takes the voice away for ~0.5 s before the ducking holds.
+- Two sentences 2 s apart: 4 of 4 sent (one only after the round's record had ended: room noise held the sentence open to the 20 s cut).
+- Meeting 100 % with the ESP32: nothing detected (too quiet there; the iPhone was louder).
+- Meeting only, 100 %: before the echo check 2 of 15 sentences heard were the meeting's own words ("营收增长；四名工程师；下半年"); after it, none in 5 rounds. The check itself hasn't been seen firing on a reproduced leak yet.
+- The other sends in those rounds ("妈妈，我饿了。", "云南是不是雨季？", "喂。", "咳咳。") were people in the room: a minute of the idle stream with nothing playing ran at −7 to −15 dB and the on-device recognizer heard Chinese speech in it.
+
+Unit ducking, measured on the stream (share of 200 ms frames of the ESP32's sentence over −45 dB): min 12/27 at 56 %, 3/27 at 100 %; advanced max 23 and 15; plain max 25 and 23, but that ducks the meeting ~25 dB for as long as the unit runs, Cicada's capture too (−65 against −40 dB). Advanced max dips Cicada's capture to −66 dB only while someone speaks near the mic.
+
+To do, in a quiet room: meeting only for 5 minutes at 56 % and 100 %; the rounds above again on the final build with each sentence matched to its START/END; the talk-key rounds with hands-free off and on, and `MIC=on`; `voiced` against sent.
+
 ## Open
+
+- **Hands-free hears everyone near the Mac as me**, and each loud stretch costs a Ming call. While it runs the unit's processing is on, so other apps hear the built-in mic muted (#24); it runs only while a meeting is listened to, when the meeting hears the virtual mic. Not measured: a real voice, typing, music.
 
 - **Sounds that aren't speech.** In a quiet room a silent press with typing nearby went out as "The sound of typing on a computer keyboard." (Ming described the sound). The on-device recognizer can't vote it down: it heard 0 characters of a real sentence too.
 - **Voice output stalls.** Now and then a sentence's voice to BlackHole stops until the next one's stall check rebuilds the output (`voice output stalled … rebuilt`): seen with echo cancellation on and off, once a sentence going out 8 s late. Count `voiced` against `sent`.

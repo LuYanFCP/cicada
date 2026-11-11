@@ -808,6 +808,10 @@
 "把我说的翻译给对方" = "Translate what I say for them";
 "说话" = "Speaking";
 "按住说话" = "Hold to talk";
+"不用按键" = "Hands-free";
+"打开麦克风时暂停" = "Paused while the mic is on";
+"开始听会议后生效" = "Starts when you start listening";
+"开口就翻译，停顿 1 秒后说出去" = "Translates as you speak, sent after a 1-second pause";
 "说%@，对方听到" = "You speak %@, they hear";
 "按键还需要“输入监控”权限" = "The key needs Input Monitoring";
 "系统麦克风还是 %@，别的软件听不到你" = "System mic is still %@; other apps can't hear you";

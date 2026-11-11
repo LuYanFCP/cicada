@@ -33,6 +33,9 @@ final class AppModel: ObservableObject {
     var roomEchoGate = true
     /// The Mac's lines of late (wall clock), and room lines waiting to be told apart from their echo.
     private var recentOnline: [EchoMatch.Heard] = []
+    /// The meeting's last 30 s, its lines and their translations, for 不用按键 to tell its echo.
+    private var recentMeeting: [EchoMatch.Heard] = []
+    private var recentMeetingSegs: [Int: (start: Double, end: Double)] = [:]
     private(set) var heldRoom: [(id: Int, seg: Segment, duration: Double, heard: EchoMatch.Heard)] = []
     /// What each engine shows as the line in progress, and when it last changed.
     private var liveMain = (src: "", dst: "", at: Date.distantPast)
@@ -169,6 +172,7 @@ final class AppModel: ObservableObject {
     /// The last speaker edit, offered as 撤销 at the bottom of both windows for a few seconds.
     @Published var speakerUndo: SpeakerUndo?
     private var speakerSetting: AnyCancellable?
+    private var handsFreeSetting: AnyCancellable?
     var openOnboarding: (() -> Void)?
 
     var openMainWindow: (() -> Void)?
@@ -231,6 +235,20 @@ final class AppModel: ObservableObject {
             self.store.setVoice(lineID: line, voice)
             if let id = self.store.liveID { self.speakerNamer.guess(id) }
         }
+        // 不用按键 runs only while a meeting is being listened to: its lines are what tells the meeting's
+        // echo (`meetingSaid`), and the running unit mutes the built-in mic for other apps (#24), which
+        // then hear the virtual mic anyway. It pauses while 打开麦克风 is on: the room shares the unit and
+        // is heard unprocessed, and everyone at the table would be interpreted as me.
+        handsFreeSetting = Publishers.CombineLatest4(settings.$speakHandsFree, settings.$listenSource, settings.$speakEnabled, $running)
+            .sink { [weak self] on, _, _, _ in
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.speak.handsFree = on && self.settings.speakEnabled && !self.settings.hearsRoom && self.running
+                        self.speak.refreshHandsFree()
+                    }
+                }
+            }
         speakerSetting = settings.$speakerVoices.sink { [weak self] on in
             TranscriptExport.voices = on
             self?.listen.router.setVoiceCapture(on)
@@ -347,6 +365,15 @@ final class AppModel: ObservableObject {
             } else {
                 self.overlay.setSpeaking(.init(phase: phase, source: src, translation: dst))
             }
+        }
+        speak.meetingSaid = { [weak self] text, from, to in
+            let heard = EchoMatch.Heard(text: text, start: from.timeIntervalSinceReferenceDate, end: to.timeIntervalSinceReferenceDate)
+            guard let self else { return false }
+            if EchoMatch.isEcho(heard, online: self.recentMeeting) { return true }
+            // The meeting was playing: its line (and translation) may land a moment after Ming's answer.
+            guard self.listen.router.stats().silenceRun < EchoMatch.window else { return false }
+            try? await Task.sleep(nanoseconds: UInt64(EchoMatch.hold * 1_000_000_000))
+            return EchoMatch.isEcho(heard, online: self.recentMeeting)
         }
         speak.onUtterance = { [weak self] src, dst, from, to, ago in
             self?.recordSaid(src, dst, from: from, to: to, secondsAgo: ago)
@@ -1408,6 +1435,11 @@ final class AppModel: ObservableObject {
 
     /// A sentence from the Mac's audio: recorded, and remembered to tell the room's copy of it.
     private func heardOnline(_ seg: Segment, duration: Double) {
+        let at = CFAbsoluteTimeGetCurrent()
+        recentMeeting.append(.init(text: seg.text, start: at - duration, end: at))
+        recentMeeting.removeAll { $0.end < at - 30 }
+        recentMeetingSegs[seg.id] = (at - duration, at)
+        recentMeetingSegs = recentMeetingSegs.filter { $0.value.end >= at - 30 }
         if roomListen.isRunning {
             let now = CFAbsoluteTimeGetCurrent()
             recentOnline.append(.init(text: seg.text, start: now - duration, end: now))
@@ -1459,6 +1491,7 @@ final class AppModel: ObservableObject {
     }
 
     private func translated(_ segID: Int, _ text: String) {
+        if let t = recentMeetingSegs[segID] { recentMeeting.append(.init(text: text, start: t.start, end: t.end)) }
         if heldJoin?.seg.id == segID { heldJoin?.translation = text }
         if let i = heldRoom.firstIndex(where: { $0.id == segID }) { heldRoom[i].seg.translation = text }
         guard let line = lineForSegment[segID], !refinedLines.contains(line) else { return }
@@ -2210,6 +2243,9 @@ final class AppModel: ObservableObject {
         case "speakOut": speak.debugOutputURL = arg.isEmpty ? nil : URL(fileURLWithPath: arg)
         case "speakFile": speak.speakFile(URL(fileURLWithPath: arg))
         // talkDown / talkUp: the talk key held and let go, with the real microphone (audio tests).
+        // handsFree:on|off: 不用按键, as the setting.
+        case "handsFree": settings.speakHandsFree = arg != "off"
+        case "handsFreeDump": speak.setHandsFreeDump(arg.isEmpty ? nil : arg)
         case "talkDown": speak.pressBegan()
         case "talkUp": speak.pressEnded()
         // stall:<seconds> blocks the main thread, to check the watchdog samples it.

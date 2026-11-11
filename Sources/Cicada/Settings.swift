@@ -35,6 +35,11 @@ final class AppSettings: ObservableObject {
     @Published var speakConfirmed: Bool {
         didSet { save() }
     }
+    /// 不用按键: interpret whenever I speak, no key held (`HandsFreeDetector`). Mac only: the ports
+    /// have no echo cancellation to hear me over the meeting.
+    @Published var speakHandsFree: Bool {
+        didSet { save() }
+    }
     /// Locale of the language I speak.
     @Published var speakFrom: String {
         didSet { save() }
@@ -264,6 +269,7 @@ final class AppSettings: ObservableObject {
         speakConfirmed = defaults.object(forKey: "speakConfirmed") as? Bool ?? defaults.bool(forKey: "speakEnabled")
         speakFrom = defaults.string(forKey: "speakFrom")
             ?? speakLocale(forLanguage: Cicada.myLanguage(systemLanguages: Locale.preferredLanguages))
+        speakHandsFree = defaults.bool(forKey: "speakHandsFree")
         speakTo = defaults.string(forKey: "speakTo") ?? "room"
         speakOutput = defaults.string(forKey: "speakOutput") ?? ""
         autoSystemMic = defaults.object(forKey: "autoSystemMic") as? Bool ?? true
@@ -323,6 +329,7 @@ final class AppSettings: ObservableObject {
         defaults.set(speakEnabled, forKey: "speakEnabled")
         defaults.set(speakConfirmed, forKey: "speakConfirmed")
         defaults.set(speakFrom, forKey: "speakFrom")
+        defaults.set(speakHandsFree, forKey: "speakHandsFree")
         defaults.set(speakTo, forKey: "speakTo")
         defaults.set(speakOutput, forKey: "speakOutput")
         defaults.set(autoSystemMic, forKey: "autoSystemMic")

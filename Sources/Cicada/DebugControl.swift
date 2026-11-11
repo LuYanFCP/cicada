@@ -119,6 +119,7 @@ extension AppModel {
         all["speak"] = { [
             "enabled": self.settings.speakEnabled, "phase": "\(self.speakPhase)", "mic": self.speak.micDeviceName,
             "output": self.speak.outputDevice()?.name ?? "", "voiceMicInUse": self.voiceMic.inUse,
+            "handsFree": self.speak.handsFree,
             "test": ["shown": self.speakTestShown, "phase": "\(self.speakTester.phase)"] as [String: Any],
         ] }
         all["ai"] = { [
