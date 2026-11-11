@@ -1439,6 +1439,8 @@ class Speakers(Base):
         md = session_store.markdown(got, voices=True)
         self.assertIn("**[00:00] 说话人 1**", md)
         self.assertIn("**[00:30] 未识别**", md)
+        got.sourceFile = "call.m4a"
+        self.assertIn("**[00:00] 说话人 1**", session_store.markdown(got, voices=True), "an imported file with voices names them")
         notes = MeetingNotes(summary="说话人 2 会发说明", topics=[NoteTopic(title="说话人2 的计划")])
         named = speakers.named(notes, {2: "George"})
         self.assertEqual(("George 会发说明", "George 的计划"), (named.summary, named.topics[0].title))

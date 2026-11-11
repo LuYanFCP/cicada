@@ -1288,9 +1288,12 @@ class RecordsWindow(Gtk.Window):
 
     def _speakers(self, s):
         """(line id → number, voice → number, number → name) for the voices on show; empty when off."""
-        if not self.app.settings.speakerVoices or s.sourceFile is not None:
+        if not self.app.settings.speakerVoices:
             return {}, {}, {}
         vnums = speakers.voice_numbers(s.lines)
+        # An imported file without voices on show has no "other side" to label.
+        if not speakers.says_who(s, vnums):
+            return {}, {}, {}
         return speakers.numbers(s.lines), vnums, (speakers.names(s) if vnums else {})
 
     def _speaker_state_key(self, s):

@@ -444,8 +444,7 @@ def markdown(s: Session, voices: bool = False) -> str:
     if notes:
         out.append(notes + "## %s\n\n" % strings.L("文字记录"))
     for l in s.lines:
-        # An imported file has no "other side" to name.
-        who = (" " + speakers.speaker_name(l, nums, shown)) if s.sourceFile is None else ""
+        who = (" " + speakers.speaker_name(l, nums, shown)) if speakers.says_who(s, nums) else ""
         out.append("**[%s]%s**  \n%s\n" % (clock(l.t), who, l.shown))
         if l.dst and l.dst != l.shown:
             out.append("> %s\n" % l.dst)
