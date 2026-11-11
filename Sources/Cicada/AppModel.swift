@@ -1413,6 +1413,7 @@ final class AppModel: ObservableObject {
         guard !roomListen.isRunning, !Recognition.legacy else { return }
         roomListen.echoCancelled = roomEchoCancel
         roomListen.echoBypassed = roomEchoBypass
+        roomListen.shareModels(from: listen)
         // Last meeting's measurement may be another room or another output: assume echo until measured.
         roomListen.echoGate.reset()
         // A, the gate: only the plain room mic heeds it (echo cancellation keeps talk over a remote speaker).

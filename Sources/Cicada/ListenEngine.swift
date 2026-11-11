@@ -31,6 +31,9 @@ final class ListenEngine {
     static let roomIDs = 1_000_000
     /// `.room`: the microphone side of 电脑和会议室 (no prompts, offers or remembered language).
     let role: Role
+    /// A language picked by hand is the meeting's: the people at the table may speak another
+    /// (yours, from 同声传译's 我说), so the room side always detects, starting with yours.
+    private var sourceMode: SourceMode { role == .room ? .auto : settings.sourceMode }
     // Outputs
     var onSubtitle: ((_ source: String, _ translation: String) -> Void)?
     var onStatus: ((String) -> Void)?
@@ -159,7 +162,7 @@ final class ListenEngine {
     /// language they were heard in, dropped on a switch (the replay into the new model redoes them).
     private var unconfirmed: [(seg: Segment, at: Date, duration: Double)] = []
     private var recordable: Bool {
-        settings.sourceMode != .auto || detection.settledEnough
+        sourceMode != .auto || detection.settledEnough
             || legacySingleLanguage || cloudListening
             // The room side's 听不出 never reaches the panel (it reads the main engine): held lines would
             // stay held all meeting. Measured: a show from a phone across the table scored 0.56–0.71 for
@@ -177,13 +180,13 @@ final class ListenEngine {
     var hidesSource: Bool { mismatch && !recordable }
     /// Someone has spoken and the language isn't settled yet: what 此刻 says instead of 等有人开口.
     var identifyingLanguage: Bool {
-        isRunning && settings.sourceMode == .auto && !recordable && firstHeardAt != nil
+        isRunning && sourceMode == .auto && !recordable && firstHeardAt != nil
     }
     /// How much audio a switch can replay: all of it since the start while the language is unknown.
     /// Three minutes (≈6 MB): a model download seen taking 106 s fits with room to spare.
     private static let holdUnknown = 180.0
     private func updateHold() {
-        router.holdAudio(settings.sourceMode == .auto && !languageConfirmed ? Self.holdUnknown : 10)
+        router.holdAudio(sourceMode == .auto && !languageConfirmed ? Self.holdUnknown : 10)
     }
     private var failureStreak = 0
 
@@ -256,7 +259,7 @@ final class ListenEngine {
         if cloudListening, let service = cloudService {
             return "\(activeLang?.name ?? "…") → \(target) · \(service)"
         }
-        switch settings.sourceMode {
+        switch sourceMode {
         case .fixed(let lang):
             return "\(lang.name) → \(target)"
         case .auto:
@@ -274,6 +277,13 @@ final class ListenEngine {
 
     // MARK: Models
 
+    /// The room side never lists the models itself: without the main engine's list it starts in
+    /// the last online meeting's language instead of yours.
+    func shareModels(from main: ListenEngine) {
+        installedLocales = main.installedLocales
+        candidates = main.candidates
+    }
+
     func refreshInstalledLocales() async {
         installedLocales = await Recognition.installedLocales()
         if let simulatedModels { installedLocales.formIntersection(simulatedModels) }
@@ -290,7 +300,7 @@ final class ListenEngine {
     /// background, one at a time (each one's end refreshes the list and asks for the next).
     private func fetchSecondModel(besides starting: Lang? = nil) {
         // The service hears every language (`cloudOnly`): a "download" would only restart it.
-        guard !Recognition.cloudOnly, settings.sourceMode == .auto, fetchingModel == nil, candidates.count < 2 else { return }
+        guard !Recognition.cloudOnly, sourceMode == .auto, fetchingModel == nil, candidates.count < 2 else { return }
         let last = UserDefaults.standard.string(forKey: "lastDetected")
         // The model being started is fetched by `ensureModel` already. At a start that is `starting`:
         // `activeLang` is still the last run's then, and may be a model since taken away.
@@ -372,7 +382,7 @@ final class ListenEngine {
         serverFellBack = false
         startedAt = Date()
         updateHold()
-        debugLog("listen start mode=\(settings.sourceMode) target=\(resolvedTarget)")
+        debugLog("listen start mode=\(sourceMode) target=\(resolvedTarget)")
 
         // Debug (`silentListen:<locale>`): a meeting with no audio at all, its lines given by
         // `heard:` — to try what follows a finished sentence while another app is recording.
@@ -390,7 +400,7 @@ final class ListenEngine {
         startTickTimer()
 
         let initial: Lang
-        switch settings.sourceMode {
+        switch sourceMode {
         case .fixed(let lang):
             initial = lang
         case .auto:
@@ -415,7 +425,7 @@ final class ListenEngine {
         // ended before detection settled it. Not when the only model said the audio isn't its
         // language: those lines are noise, and the recording keeps what was said.
         flushCarry()
-        if settings.sourceMode == .auto, !recordable, !mismatch { flushUnconfirmed() }
+        if sourceMode == .auto, !recordable, !mismatch { flushUnconfirmed() }
         unconfirmed = []
         heardSpeech = isRunning && (router.stats().voicedTotal >= 3 || firstHeardAt != nil)
         isRunning = false
@@ -620,7 +630,7 @@ final class ListenEngine {
     func sourceModeChanged() {
         detection.modeChanged()
         updateHold()
-        if isRunning, case .fixed(let lang) = settings.sourceMode {
+        if isRunning, case .fixed(let lang) = sourceMode {
             // Chosen by hand: what was held back in that language is now confirmed.
             if lang == activeLang { flushUnconfirmed() }
             Task { await switchTranscriber(to: lang) }
@@ -635,7 +645,7 @@ final class ListenEngine {
     }
 
     func redetect() {
-        guard isRunning, settings.sourceMode == .auto else { return }
+        guard isRunning, sourceMode == .auto else { return }
         detection.redetect()
         updateHold()
         onStateChange?()
@@ -669,7 +679,7 @@ final class ListenEngine {
         // settings only becomes its hint (`cloudHint`).
         if Recognition.cloudOnly || serverHears {
             guard isRunning else { return }
-            if case .fixed = settings.sourceMode { activeLang = lang } else if activeLang == nil { activeLang = lang }
+            if case .fixed = sourceMode { activeLang = lang } else if activeLang == nil { activeLang = lang }
             if !cloudListening { startCloud() }
             return
         }
@@ -710,7 +720,7 @@ final class ListenEngine {
         do {
             do {
                 try await ensureModel(for: lang)
-            } catch where settings.sourceMode == .auto && previous != nil && previous != lang {
+            } catch where sourceMode == .auto && previous != nil && previous != lang {
                 // A model that can't be had (no network, or the Mac's five reserved languages taken):
                 // retrying would fail the same way every 30 s. Go back to the one that works, unsure again.
                 debugLog("model for \(lang.locale) unavailable, back to \(previous!.locale): \(error)")
@@ -887,7 +897,7 @@ final class ListenEngine {
             } else {
                 translateSegment(id: seg.id)
             }
-            if settings.sourceMode == .auto, conf < 0.6, text.count >= 4, !cloudListening {
+            if sourceMode == .auto, conf < 0.6, text.count >= 4, !cloudListening {
                 detection.due = true
             }
             checkForeignLetters(text)
@@ -923,7 +933,7 @@ final class ListenEngine {
         let last = segments.last.map { fixedText[$0.id] ?? $0.text } ?? ""
         let source = [last, draft].filter { !$0.isEmpty }
             .joined(separator: srcJoin.isEmpty ? " " : srcJoin)
-        if settings.sourceMode == .auto, !recordable {
+        if sourceMode == .auto, !recordable {
             onSubtitle?(source, asksLanguage ? L("听不出是哪种语言，到菜单栏里选一下") : L("正在识别语言…"))
             return
         }
@@ -941,7 +951,7 @@ final class ListenEngine {
     /// ends in a run of Latin letters counts: English words mixed into Chinese ("还在做 onboarding
     /// 的 UI") would ask for checks that each risk a wrong switch.
     private func checkForeignLetters(_ text: String) {
-        guard settings.sourceMode == .auto, !detection.due, !cloudListening, let code = activeLang?.code,
+        guard sourceMode == .auto, !detection.due, !cloudListening, let code = activeLang?.code,
               ["zh", "ja", "ko"].contains(where: { code.hasPrefix($0) }),
               Date().timeIntervalSince(lastForeignCheck) >= 8, HeardText.endsInLatin(text) else { return }
         lastForeignCheck = Date()
@@ -951,7 +961,7 @@ final class ListenEngine {
 
     private func maybeDetectLanguage() {
         // One model can still tell whether the audio is its language, until the language is known.
-        guard isRunning, settings.sourceMode == .auto, !detecting, !legacySingleLanguage, !cloudListening,
+        guard isRunning, sourceMode == .auto, !detecting, !legacySingleLanguage, !cloudListening,
               candidates.count >= 2 || (!languageConfirmed && candidates.first == activeLang && activeLang != nil) else { return }
         var stats = router.stats(window: 6)
         // Speech under the gate's line (a quiet remote voice, an app turned low: measured at RMS 0.008
@@ -979,7 +989,7 @@ final class ListenEngine {
 
     /// A model that just arrived checks the speech held back, without waiting for someone to talk again.
     private func detectHeld() {
-        guard isRunning, settings.sourceMode == .auto, !languageConfirmed, !detecting, candidates.count >= 2, !cloudListening else { return }
+        guard isRunning, sourceMode == .auto, !languageConfirmed, !detecting, candidates.count >= 2, !cloudListening else { return }
         let held = router.voicedSnapshot(seconds: 6)
         guard held.seconds >= 2.5 else { return }
         debugLog(String(format: "detect: new model, checking %.1f s of held speech", held.seconds))
@@ -995,7 +1005,7 @@ final class ListenEngine {
             let ranked = await LanguageDetector.rank(clip, candidates: candidates)
             guard let self else { return }
             self.detection.checkEnded()
-            guard self.isRunning, self.settings.sourceMode == .auto else { return }
+            guard self.isRunning, self.sourceMode == .auto else { return }
             let summary = ranked.map { String(format: "%@ s=%.2f c=%.2f n=%d", $0.lang.locale, $0.score, $0.confidence, $0.chars) }
             debugLog("detect (\(String(format: "%.2f", Date().timeIntervalSince(started)))s): \(summary.joined(separator: " | "))")
             self.applyDetection(ranked)
@@ -1098,7 +1108,7 @@ final class ListenEngine {
     /// could settle it (no check running, no model coming). Too quiet for a check, two models that
     /// keep disagreeing, a model that couldn't be fetched: one click ends each.
     var asksLanguage: Bool {
-        guard isRunning, settings.sourceMode == .auto, !languageConfirmed, fetchingModel == nil, !cloudListening,
+        guard isRunning, sourceMode == .auto, !languageConfirmed, fetchingModel == nil, !cloudListening,
               !legacySingleLanguage, let firstHeardAt else { return false }
         // Once offered it stays until answered: a check running meanwhile doesn't make it blink.
         if askShown { return true }
@@ -1125,7 +1135,7 @@ final class ListenEngine {
     /// The language picked from 听不出: confirmed for this run (settings stay on auto). A model
     /// not on the Mac yet is downloaded as when it is detected.
     func pickLanguage(_ lang: Lang) {
-        guard isRunning, settings.sourceMode == .auto else { return }
+        guard isRunning, sourceMode == .auto else { return }
         debugLog("language picked: \(lang.locale) (was \(activeLang?.locale ?? "-"))")
         let replay = languageConfirmed ? 8 : Self.holdUnknown
         detection.picked()
@@ -1264,7 +1274,7 @@ final class ListenEngine {
 
     /// The language the meeting has been in, which keeps Ming from flipping on a short stretch.
     private var cloudHint: String? {
-        if case .fixed(let lang) = settings.sourceMode { return lang.code }
+        if case .fixed(let lang) = sourceMode { return lang.code }
         guard let cloud else { return nil }
         return cloud.lang?.code ?? (cloud.replaced.confirmed ? cloud.replaced.lang?.code : nil)
     }
@@ -1276,7 +1286,7 @@ final class ListenEngine {
         guard cloud != nil else { return }
         if cloud?.lang != lang { debugLog("cloud: heard \(lang.locale)") }
         cloud?.lang = lang
-        if settings.sourceMode == .auto, activeLang != lang {
+        if sourceMode == .auto, activeLang != lang {
             activeLang = lang
             if role == .main { UserDefaults.standard.set(lang.locale, forKey: "lastDetected") }
         }
@@ -1288,7 +1298,7 @@ final class ListenEngine {
         guard !serverHears else { return }
         guard let awaiting = cloud?.awaiting, installedLocales.contains(awaiting.locale) else { return }
         let want: Lang
-        if case .fixed(let lang) = settings.sourceMode {
+        if case .fixed(let lang) = sourceMode {
             want = lang
         } else if let heard = cloud?.lang, installedLocales.contains(heard.locale) {
             want = heard
