@@ -1694,6 +1694,7 @@ static class Tests
         }
         finally { LingClient.Spacing = old; }
         Check(PressSpeech.Filler("嗯嗯。") && PressSpeech.Filler("Um, uh...") && !PressSpeech.Filler("嗯，好的。") && !PressSpeech.Filler("OK."), "fillers");
+        Check(PressSpeech.Filler("翻译结果：") && PressSpeech.Filler("Translation:") && !PressSpeech.Filler("我想补充三点：价格、时间和人手。"), "a bare heading is no sentence");
     }
 
     public static void EchoIsDroppedOnlyFromThePlainMic()

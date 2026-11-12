@@ -350,6 +350,9 @@ public static class PressSpeech
     /// Nothing but fillers (嗯, 啊, um, hmm…), whatever the punctuation.
     public static bool Filler(string text)
     {
+        // A heading with nothing after it ("翻译结果：", "Translation:"): the model's answer to noise, not a sentence.
+        var trimmed = text.Trim();
+        if (trimmed.Length is > 0 and <= 12 && (trimmed.EndsWith(':') || trimmed.EndsWith('：'))) return true;
         var words = System.Text.RegularExpressions.Regex.Split(text.ToLowerInvariant(), @"[^\p{L}]+").Where(w => w.Length > 0).ToList();
         return words.Count == 0 || words.All(w => Fillers.Contains(w) || (w.Length > 1 && w.Distinct().Count() == 1 && Fillers.Contains(w[0].ToString())));
     }
