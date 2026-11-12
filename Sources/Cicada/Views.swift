@@ -840,6 +840,7 @@ struct MainWindowView: View {
     @State private var editingLine: String?
     @State private var editingStart = ""
     @State private var hoveredLine: String?
+    @State private var wordClick = WordClick()
 
     /// Wide enough for the notes and the bilingual transcript side by side.
     private var sideBySide: Bool { showQuotes && wideEnough }
@@ -891,6 +892,15 @@ struct MainWindowView: View {
         .onChange(of: store.liveID) { _, _ in loadPlayer() }
         // Opened afresh: a file opened before the room was mixed in (#19) would play one side only.
         .onChange(of: store.audioFinished) { _, id in if id == current?.id { player.unload(); loadPlayer() } }
+        // A click on a line's words: its selectable text takes the mouse before the row's tap.
+        .onAppear {
+            wordClick.install(line: { hoveredLine.flatMap { id in editingLine == id ? nil : id } }) { id in
+                guard let s = current, player.sessionID == s.id, player.ready,
+                      let l = s.lines.first(where: { $0.id == id }) else { return }
+                player.play(from: l.t)
+            }
+        }
+        .onDisappear { wordClick.remove() }
         .onReceive(NotificationCenter.default.publisher(for: .debugPlay)) { n in
             if let t = n.object as? Double { player.play(from: t) }
         }
@@ -1817,4 +1827,47 @@ extension Notification.Name {
     static let debugPlay = Notification.Name("cicada.debugPlay")
     /// Debug `shareSheet:<id>`: the 分享… sheet opens for that record (no id: it closes).
     static let debugShareSheet = Notification.Name("cicada.debugShareSheet")
+}
+
+/// A click on the words of a transcript line plays from it, as a click elsewhere on the line does:
+/// selectable text takes the mouse before SwiftUI's tap. A drag (selecting) or a double click
+/// (a word) does nothing; the time and 改这句… keep their own buttons.
+final class WordClick {
+    private var monitor: Any?
+
+    func install(line: @escaping () -> String?, play: @escaping (String) -> Void) {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { e in
+            guard e.clickCount == 1, let id = line(), Self.onText(e) else { return e }
+            // The text tracks the mouse until it is let go, and its mouse-up never reaches a
+            // monitor: look once that tracking is over.
+            let start = NSEvent.mouseLocation
+            Self.whenReleased(within: 1) {
+                let now = NSEvent.mouseLocation
+                guard hypot(now.x - start.x, now.y - start.y) < 3, line() == id else { return }
+                play(id)
+            }
+            return e
+        }
+    }
+
+    /// Once the button is up (a click, not a press held to select): checked every 50 ms.
+    private static func whenReleased(within seconds: Double, _ action: @escaping () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            if NSEvent.pressedMouseButtons & 1 == 0 { action() } else if seconds > 0.05 { whenReleased(within: seconds - 0.05, action) }
+        }
+    }
+
+    func remove() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+
+    /// The mouse went down on selectable text, not on a button or the row's empty space (which
+    /// the row's own tap handles).
+    private static func onText(_ e: NSEvent) -> Bool {
+        guard let content = e.window?.contentView,
+              let hit = content.hitTest(content.convert(e.locationInWindow, from: nil)) else { return false }
+        return hit is NSText || String(describing: type(of: hit)).contains("TextField")
+    }
 }

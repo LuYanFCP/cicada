@@ -21,6 +21,8 @@ final class RecordingPlayer: ObservableObject {
     var ownScroll = Date.distantPast
     private var player: AVPlayer?
     private var observer: Any?
+    /// The end of the recording: the time observer stops firing there, so it would still say playing.
+    private var ended: NSObjectProtocol?
 
     var ready: Bool { player != nil }
 
@@ -40,6 +42,9 @@ final class RecordingPlayer: ObservableObject {
         }
         let p = AVPlayer(url: url)
         player = p
+        ended = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: p.currentItem, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.playing = false }
+        }
         observer = p.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 4), queue: .main) { [weak self] t in
             MainActor.assumeIsolated {
                 guard let self, let p = self.player else { return }
@@ -58,6 +63,8 @@ final class RecordingPlayer: ObservableObject {
 
     func unload() {
         if let observer { player?.removeTimeObserver(observer) }
+        if let ended { NotificationCenter.default.removeObserver(ended) }
+        ended = nil
         player?.pause()
         observer = nil
         player = nil
@@ -84,6 +91,7 @@ final class RecordingPlayer: ObservableObject {
 
     func play(from t: Double) {
         guard let player else { return }
+        debugLog("play from \(String(format: "%.1f", t))")
         seek(t)
         player.playImmediately(atRate: rate)
         playing = true
