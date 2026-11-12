@@ -299,6 +299,9 @@ class LingClient(
     /// The service's name for messages ("这个服务" for a custom address, localized) and its host.
     val serviceName: String get() = provider.let { if (it.id == "custom") Strings.L("这个服务") else it.name }
     val serviceHost: String get() = host(config().base ?: provider.base)
+    /// Who a status line names: a custom service by its address, which says more than 这个服务
+    /// and reads right in "The … key doesn't work".
+    val serviceLabel: String get() = serviceHost.let { if (provider.id == "custom" && it.isNotEmpty()) it else serviceName }
     /// Where the hear model is asked: the service's host unless a custom service names its own.
     val hearHost: String get() = config().let { c -> if (c.hearsElsewhere) host(c.hearBase) else serviceHost }
     /// Who a line about hearing names (连不上 …, … 的 key 无效): a custom service by the address it
@@ -311,7 +314,7 @@ class LingClient(
     /// can't be reached names that server.
     fun checkMessage(): String? = config().let {
         val host = if (aiCheck.failure?.step == AICheck.StepID.Hear) hearHost else serviceHost
-        aiCheck.message(serviceName, host, it.textModel, it.hearModel)
+        aiCheck.message(serviceLabel, host, it.textModel, it.hearModel)
     }
 
     /// The server that can't be reached is on this phone or the local network: a proxy has nothing
@@ -334,7 +337,7 @@ class LingClient(
     /// listening notification and the live screens. Null without a key (onboarding asks for it).
     val blocking: String? get() {
         if (!hasKey) return null
-        val (what, stops) = config().let { aiCheck.blocking(serviceName, it.textModel, it.hearModel) } ?: return null
+        val (what, stops) = config().let { aiCheck.blocking(serviceLabel, it.textModel, it.hearModel) } ?: return null
         return what.trimEnd('。', '.') + " · " + stops
     }
 
