@@ -165,6 +165,8 @@ final class SpeakEngine {
     private var player = AVAudioPlayerNode()
     private var outObserver: NSObjectProtocol?
     private var outFormat: AVAudioFormat?
+    /// Where the output was last pointed, to wire a replaced engine the same way.
+    private var outDevice: OutputDevice?
     private var outDeviceUID: String?
     /// The device the latest `speak` call played to.
     private(set) var lastDevice: OutputDevice?
@@ -887,6 +889,7 @@ final class SpeakEngine {
             debugLog("voice output failed: \(error)")
             return
         }
+        guard outputReady(for: first.format) else { return }
         for b in buffers.dropLast() { player.scheduleBuffer(b, completionHandler: nil) }
         firstAudioAt = Date()
         player.play()
@@ -926,8 +929,10 @@ final class SpeakEngine {
                     firstAt = Date().timeIntervalSince(started)
                     firstAudioAt = Date()
                     configureOutput(format: format, device: device)
-                    if !out.isRunning { try out.start() }
                 }
+                // The engine may have been replaced while the stream ran (the echo-cancelling unit
+                // let go): a player not wired for this format throws, and that took the app down.
+                guard outputReady(for: format) else { break }
                 player.scheduleBuffer(buf, completionHandler: nil)
                 if !player.isPlaying { player.play() }
                 count += 1
@@ -951,6 +956,7 @@ final class SpeakEngine {
     /// Schedules `buffer` last and waits until it has played, or `limit` seconds. A stalled output
     /// never calls back, and would otherwise hold every later sentence; it is rebuilt instead.
     private func waitPlayed(_ buffer: AVAudioPCMBuffer, limit: TimeInterval) async {
+        guard outputReady(for: buffer.format) else { return }
         let once = Once()
         let played = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
             player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in once.run { cont.resume(returning: true) } }
@@ -993,6 +999,18 @@ final class SpeakEngine {
         out.connect(player, to: out.mainMixerNode, format: format)
         outFormat = format
         outDeviceUID = uid
+        outDevice = device
+    }
+
+    /// The player is wired for `format` and the engine runs (wired again after the engine was
+    /// replaced or reset); false when it can't be started.
+    private func outputReady(for format: AVAudioFormat) -> Bool {
+        if outFormat != format { configureOutput(format: format, device: outDevice) }
+        guard !out.isRunning else { return true }
+        do { try out.start(); return true } catch {
+            debugLog("voice output failed: \(error)")
+            return false
+        }
     }
 
     /// Plays a short sample through the chosen output so the user can check it.
