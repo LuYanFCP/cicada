@@ -247,6 +247,7 @@ final class AppModel: ObservableObject {
                     MainActor.assumeIsolated {
                         guard let self else { return }
                         self.speak.handsFree = on && self.settings.speakEnabled && !self.settings.hearsRoom && self.running
+                        self.speak.keepUnit = self.settings.speakEnabled && self.running
                         self.speak.refreshHandsFree()
                     }
                 }

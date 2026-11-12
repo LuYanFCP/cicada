@@ -104,11 +104,7 @@ final class SpeakEngine {
     let settings: AppSettings
     private(set) var phase: Phase = .idle {
         didSet {
-            // The press's echo-cancelling unit is kept until its sentence has gone out, not let go of
-            // at key-up: a press while that sentence still plays reuses it instead of remaking the
-            // voice output under it. Idle, it would silence the mic for every other app (the room's
-            // and hands-free's own use keeps it).
-            if phase == .idle, !voiceMic.inUse { voiceMic.release() }
+            if phase == .idle { unitIdle() }
             // Hands-free: a sentence said while the last one was translated waits its turn.
             if handsFree, phase == .idle || phase == .speaking, !segments.isEmpty {
                 DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.nextSegment() } }
@@ -243,7 +239,7 @@ final class SpeakEngine {
                     guard let self else { return }
                     // Stopped while it was being made: nobody else may be left to give it back.
                     guard self.handsFreeInput == d else {
-                        if self.phase == .idle, !self.voiceMic.inUse { self.voiceMic.release() }
+                        if self.phase == .idle { self.unitIdle() }
                         return
                     }
                     let queue = self.micQueue
@@ -264,8 +260,7 @@ final class SpeakEngine {
         micQueue.sync { detector.reset(); segment = nil; recent = []; recentSeconds = 0 }
         // The talk key's unit keeps the meeting at its level again (made anew once nobody uses it).
         voiceMic.advancedDucking = false
-        // Not kept for the next press: while it exists every other app's mic hears almost nothing (#24).
-        if phase == .idle, !voiceMic.inUse { voiceMic.release() }
+        if phase == .idle { unitIdle() }
         debugLog("hands-free: stopped")
     }
 
@@ -403,6 +398,20 @@ final class SpeakEngine {
             debugLog("speak transcriber failed: \(error)")
             onStatus?(L("无法准备语音识别：\(error.localizedDescription)"))
         }
+    }
+
+    /// While a meeting is listened to with 同声传译 on, the echo-cancelling unit is made ahead and
+    /// kept between presses. Made at each press, a press lost its first ~1.4 s and the fresh unit let
+    /// the meeting from the speakers through as what I said: a press nobody spoke in sent the meeting
+    /// back into it (audio-test, meeting at 56 %: 1.8.0 100 % and 0 sent; made per press 14–87 % and
+    /// 2 of 3 silent presses sent). The meeting app hears the virtual mic then, so the built-in mic
+    /// it mutes for other apps (#24) matters only outside a meeting, when it is let go of.
+    var keepUnit = false {
+        didSet { if keepUnit != oldValue, phase == .idle { unitIdle() } }
+    }
+
+    private func unitIdle() {
+        if keepUnit, echoCancel, let d = echoInput { voiceMic.prepare(input: d) } else if !voiceMic.inUse { voiceMic.release() }
     }
 
     func teardownAnalyzer() async {
@@ -560,7 +569,7 @@ final class SpeakEngine {
     private func attachPress(_ press: Date, ok: Bool, device: AudioObjectID, format: AVAudioFormat, input cont: RecognitionStream) {
         // The key was let go of before the unit was ready: the phase going idle found nothing to give back.
         guard phase == .listening, pressStarted == press, utterance?.input === cont else {
-            if phase == .idle, !voiceMic.inUse { voiceMic.release() }
+            if phase == .idle { unitIdle() }
             return
         }
         let conv = converter
