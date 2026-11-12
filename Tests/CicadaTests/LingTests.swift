@@ -363,6 +363,37 @@ final class LingStub: URLProtocol, @unchecked Sendable {
         #expect(String(decoding: LingStub.raw.last ?? Data(), as: UTF8.self).contains("verbose_json"))
     }
 
+    /// 语音识别 › 内置: the engine in the app is brought up first, asked for a streamed answer (the
+    /// only one that names the language), and never sent the key saved for a server.
+    @Test func theBuiltInEngineIsStartedFirstAndNamesTheLanguage() async throws {
+        let speech = speechClient()
+        #expect(speech.saveKey("sk-for-my-server", for: speech.config()))
+        let base = URL(string: "http://127.0.0.1:50123/v1/")
+        speech.config = { AIConfig(provider: .custom, base: base, textModel: "", hearModel: "Qwen3-ASR-1.7B-8bit", hearBase: base, builtIn: true) }
+        var starts = 0
+        speech.startEngine = { starts += 1 }
+        #expect(speech.key == "" && speech.transcribes)
+        let done = #"{"type":"transcript.text.done","text":" Bonjour à tous. ","generation_metadata":{"generated_token_count":7,"language":"French","finish_reason":"stop"}}"#
+        LingStub.reset(200, ":\n\ndata: \(done)\n\ndata: [DONE]\n\n")
+        let heard = try await speech.transcribe(CloudHearing.wav(Array(repeating: 0, count: 1600)), language: nil)
+        #expect(heard.text == "Bonjour à tous." && heard.language == "French" && starts == 1)
+        let first = try #require(LingStub.seen.first)
+        #expect(first.url?.absoluteString == "http://127.0.0.1:50123/v1/audio/transcriptions" && first.authorization == nil)
+        let body = String(decoding: try #require(LingStub.raw.first), as: UTF8.self)
+        #expect(body.contains("name=\"stream\"\r\n\r\ntrue\r\n") && body.contains("name=\"include_generation_metadata\"\r\n\r\ntrue\r\n"))
+        #expect(!body.contains("response_format"))
+
+        // It ended on an error instead of a transcript.
+        LingStub.reset(200, #"data: {"type":"error","error":{"code":"transcription_failed"}}"# + "\n\n")
+        await #expect(throws: LingClient.Failure.parse) { _ = try await speech.transcribe(Data(), language: nil) }
+        // It would not start: nothing is sent, and it reads as a server on this Mac that isn't running.
+        LingStub.reset(200, "")
+        speech.startEngine = { throw SpeechEngine.Failure.noModel }
+        await #expect(throws: LingClient.Failure.network) { _ = try await speech.transcribe(Data(), language: nil) }
+        #expect(LingStub.seen.isEmpty)
+        speech.removeKey()
+    }
+
     @Test func aSpeechServerWithoutTheModelOrAnsweringNDJSONSaysWhy() async throws {
         LingStub.reset(404, #"{"detail":"Model not found"}"#)
         let speech = speechClient()

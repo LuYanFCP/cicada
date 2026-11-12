@@ -91,7 +91,7 @@ Mac 版は機能を使うときにだけ権限を求め、拒否してもほか�
 | 入力監視 | 右の `⌥` が押されたか判定するだけ（ほかのキーの遮断や記録はしません） | 設定で `⌃`/`⌘` のショートカットに変えればこの権限は不要です |
 | 管理者パスワード | 仮想マイク BlackHole 2ch のインストール（初回のみ） | 相手に通訳が聞こえません。ほかは通常どおり動作します |
 
-- **通信の透明性**：通信を行うのは、翻訳（`translate.googleapis.com`）、設定した AI サービス（`api.ant-ling.com` など）、Apple の公証済み BlackHole ドライバーのダウンロード（SHA-256 を検証）、1 日 1 回の GitHub での更新確認だけです。統計やトラッキング、独自のサーバーはありません。
+- **通信の透明性**：通信を行うのは、翻訳（`translate.googleapis.com`）、設定した AI サービス（`api.ant-ling.com` など）、Apple の公証済み BlackHole ドライバーのダウンロード（SHA-256 を検証）、ダウンロードをクリックしたときの内蔵エンジン用音声モデルの取得（Hugging Face から。接続できないときはミラー `hf-mirror.com`。同じく SHA-256 を検証）、1 日 1 回の GitHub での更新確認だけです。統計やトラッキング、独自のサーバーはありません。
 - **データは端末内に保存**：記録と録音は `~/Library/Application Support/LiveSubs` に保存されます。キーと声のサンプルは現在のシステムアカウントのみが読み取れ、Time Machine やログには含まれません。
 - **画面収録の防止**：Mac では画面共有、画面収録、スクリーンショットにメモのウィンドウは映りません。デモを録画するときは手動で「画面共有で相手にも見せる」をオンにできます。
 
@@ -114,7 +114,9 @@ Mac では、**翻訳とメモ** と **音声理解** にそれぞれ、メイ�
 
 **音声理解** の既定は **上と同じ**（Ling では `Ming-3.0-audio-flash`）です。互換 API にする場合は、サービスが受け付ける形式として OpenAI（`input_audio`）または Ming 互換（`audio_url`）も選びます。Ling の `api.ant-ling.com` を入力すると Ming 互換が自動で選ばれます。翻訳とメモがすでに互換 API を使っていれば、**翻訳とメモのアドレスと key を使う** で同じアドレスとキーを引き継いでモデル一覧を取得するので、音声モデルを選ぶだけです。**保存して確認** は 1 秒の実際の音声で確認します。話すキーを押したときの音声理解と、Intel Mac または手動で選んだクラウド音声認識に使います。Apple シリコンの Mac は既定で引き続き端末内で認識します。キーは行ごとに 0600 の権限で Mac に保存され、引き継いだキーも別のコピーとして保存されて表示されません。音声合成と声のクローンは元の Ming TTS 設定を使います。
 
-**音声認識** は Apple シリコンの Mac では標準で端末内で行います。中国語や方言、言語の混ざった発言をより正確に認識したいときは **自分のサービス** に切り替えられます。おすすめは、この Mac で [mlx-audio](https://github.com/Blaizzy/mlx-audio) を使って Qwen3-ASR を動かす方法で、メインのサービスが何であっても、会議の音声はこの Mac の外に出ません。ターミナルで一度インストールして起動します：
+**音声認識** は Apple シリコンの Mac では標準で端末内で行います。中国語や方言、言語の混ざった発言をより正確に認識したいときは、**機能ごとのサービス › 音声認識** で **内蔵** を選ぶのがいちばん手軽です（macOS 15 以降）。Cicada には Qwen3-ASR エンジンが入っているので、**モデルをダウンロード**（1.7B は約 2.5 GB、メモリを節約できる 0.6B は約 0.7 GB）をクリックするだけです。ほかに何もインストールする必要はなく、会議の音声はこの Mac の外に出ません。エンジンは会議の開始時に読み込まれ、終了の 2 分後にメモリを解放します。起動できないときは自動で端末内の認識に戻ります。
+
+**自分のサービス** に切り替えて、認識サーバーを自分で動かすこともできます。おすすめは、この Mac で [mlx-audio](https://github.com/Blaizzy/mlx-audio) を使って Qwen3-ASR を動かす方法で、メインのサービスが何であっても、会議の音声はこの Mac の外に出ません。ターミナルで一度インストールして起動します：
 
 ```bash
 uv tool install --upgrade "mlx-audio[stt,server]"   # uv がない場合：pip3 install -U "mlx-audio[stt,server]"（Python 3.10 以降）
@@ -189,4 +191,4 @@ scripts/package.sh          # 打包正式版 DMG、zip 和 SHA-256 校验值
 
 ## ライセンス
 
-本プロジェクトは [Apache-2.0](LICENSE) ライセンスのもとで公開されています。仮想マイクドライバーの BlackHole 2ch は GPL ライセンスであり、インストーラーには同梱されず、インストールをクリックした際に公式の配布元からダウンロードされます。同梱の声紋モデルは [WeSpeaker](https://github.com/wenet-e2e/wespeaker) が VoxCeleb で学習した ResNet34-LM（CC BY 4.0 ライセンス）で、`scripts/convert-voiceprint.py` によって Core ML に変換されています。
+本プロジェクトは [Apache-2.0](LICENSE) ライセンスのもとで公開されています。仮想マイクドライバーの BlackHole 2ch は GPL ライセンスであり、インストーラーには同梱されず、インストールをクリックした際に公式の配布元からダウンロードされます。内蔵の音声認識エンジンは [SGLang-Omni](https://github.com/sgl-project/sglang-omni)（Apache-2.0）のネイティブ Qwen3-ASR サーバーで、[MLX](https://github.com/ml-explore/mlx)（MIT）上で動きます。各部分のライセンスはアプリ内の `Resources/engine/LICENSES` に同梱され、モデルはダウンロードをクリックしたときにだけ Hugging Face から取得されます。同梱の声紋モデルは [WeSpeaker](https://github.com/wenet-e2e/wespeaker) が VoxCeleb で学習した ResNet34-LM（CC BY 4.0 ライセンス）で、`scripts/convert-voiceprint.py` によって Core ML に変換されています。

@@ -151,7 +151,13 @@ final class AppModel: ObservableObject {
     /// 语音识别 › 自建服务: the meeting heard by the user's own speech server (Qwen3-ASR on this Mac).
     let speechAI = LingClient(keyNamespace: "asr", checksJSON: false, checksTranscription: true)
     /// Who hears the meeting when this Mac doesn't (always, on an Intel Mac).
-    var hearingAI: LingClient { settings.speechServer ? speechAI : audioAI }
+    var hearingAI: LingClient { settings.speechOwn ? speechAI : audioAI }
+    /// 语音识别 › 内置: the speech engine inside the app, started for a meeting and stopped when idle.
+    let engine = SpeechEngine()
+    /// The speech client's service: the engine, else the user's server.
+    var speechConfig: AIConfig? {
+        settings.speechBuiltIn ? engine.config(EngineModel.named(settings.speechEngineModel)) : settings.speechConfig
+    }
     /// It can hear now: Ming with a working key, or a model or server of its own once a check
     /// has put audio through it.
     var hearingReady: Bool {
@@ -288,8 +294,14 @@ final class AppModel: ObservableObject {
             self?.settings.audioConfig ?? AIConfig(provider: .custom, base: nil, textModel: "")
         }
         speechAI.config = { [weak self] in
-            self?.settings.speechConfig ?? AIConfig(provider: .custom, base: nil, textModel: "")
+            self?.speechConfig ?? AIConfig(provider: .custom, base: nil, textModel: "")
         }
+        speechAI.startEngine = { [weak self] in
+            guard let self else { return }
+            try await self.engine.ensure(EngineModel.named(self.settings.speechEngineModel))
+        }
+        engine.inUse = { [weak self] in self?.listen.isRunning == true || self?.roomListen.isRunning == true }
+        engine.onChange = { [weak self] in self?.applySpeechServer() }
         // Recognition set up under the custom service: its key comes along to 自建服务, once.
         if settings.speechMovedFromCustom, let key = AIKey.read("custom"), let c = settings.speechConfig,
            !speechAI.hasStoredKey(for: c) {
@@ -297,7 +309,7 @@ final class AppModel: ObservableObject {
         }
         translator.audioClient = { [weak self] in self?.audioAI }
         translator.speechClient = { [weak self] in
-            guard let self, self.settings.speechServer else { return nil }
+            guard let self, self.settings.speechOwn else { return nil }
             return self.speechAI
         }
         speakTester.audioClient = { [weak self, fallback = ling] in self?.audioAI ?? fallback }
@@ -1245,7 +1257,9 @@ final class AppModel: ObservableObject {
     /// already running goes back to this Mac rather than on to another server (`aiServiceChanged`).
     func applySpeechServer() {
         speechAI.reconfigure()
-        Recognition.serverPreferred = settings.speechConfig?.transcribes == true
+        Recognition.serverPreferred = speechConfig?.transcribes == true
+        // Another model, or no engine any more: the one loaded gives its memory back.
+        if !settings.speechBuiltIn { engine.stop() }
         listen.aiServiceChanged()
         roomListen.aiServiceChanged()
         objectWillChange.send()
@@ -2257,7 +2271,8 @@ final class AppModel: ObservableObject {
             if let url = URL(string: arg) { Task { _ = await LocalNetworkProbe.denied(url) } }
         // AI service: aiProvider:<ling|openrouter|zenmux|openai|custom>, aiTextModel:<id>, aiVoiceModel:<id|"">,
         // aiCustomBase:<url>, aiCustomVoiceBase:<url|"">, aiCustomVoice:<name>; the meeting's speech server:
-        // speechService:<custom|default>, speechBase:<url>, speechModel:<id>, speechState.
+        // speechService:<custom|engine|default>, speechBase:<url>, speechModel:<id>, speechState; the engine
+        // inside the app: engineModel:<id>, engineFetch, engineCancel, engineDelete, engineStop.
         case "aiProvider": settings.aiProvider = AIProvider.named(arg).id.rawValue; applyAIService()
         // switchToLing: the 改用 Ling on a status line (logs why when it isn't offered).
         case "switchToLing": debugLog("switchToLing offered=\(canSwitchToLing)"); switchToLing()
@@ -2268,12 +2283,23 @@ final class AppModel: ObservableObject {
         case "audioBase": settings.audioBase = arg; applyAudioUnderstanding()
         case "audioModel": settings.audioModel = arg; applyAudioUnderstanding()
         case "audioFormat": settings.audioFormat = AudioInputFormat(rawValue: arg)?.rawValue ?? "openai"; applyAudioUnderstanding()
-        case "speechService": settings.speechServer = arg == "custom"; applySpeechServer()
+        case "speechService":
+            settings.speechServer = arg == "custom"
+            settings.speechEngine = arg == "engine"
+            applySpeechServer()
+        case "engineModel": settings.speechEngineModel = EngineModel.named(arg).id; applySpeechServer()
+        case "engineFetch": engine.fetch(EngineModel.named(settings.speechEngineModel))
+        case "engineCancel": engine.cancelFetch()
+        case "engineDelete": engine.delete(EngineModel.named(settings.speechEngineModel))
+        case "engineStop": engine.stop()
         case "speechBase": settings.speechBase = arg; applySpeechServer()
         case "speechModel": settings.speechModel = arg; applySpeechServer()
         case "speechState":
+            let m = EngineModel.named(settings.speechEngineModel)
             debugLog("speech enabled=\(settings.speechServer) preferred=\(Recognition.serverPreferred) "
-                     + "model=\(settings.speechConfig?.hearModel ?? "-") check=[\(speechAI.aiCheck.summary)] "
+                     + "engine=\(settings.speechEngine) available=\(SpeechEngine.available) installed=\(engine.installed(m)) "
+                     + "running=\(engine.running) fetch=\(engine.progress.map { String(format: "%.0f%%", $0.fraction * 100) } ?? "-") "
+                     + "model=\(speechConfig?.hearModel ?? "-") check=[\(speechAI.aiCheck.summary)] "
                      + "hearing=\(listen.cloudService ?? "none") serverHears=\(listen.serverHears)")
         case "audioState":
             debugLog("audio enabled=\(settings.audioUnderstanding) model=\(audioAI.audioModel) check=[\(audioAI.aiCheck.summary)] "
@@ -2501,6 +2527,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
 
     func applicationWillTerminate(_ notification: Notification) {
         model.stop()
+        model.engine.stop()
         // Other apps would be left on the virtual mic, hearing nothing.
         model.systemMic.release()
     }

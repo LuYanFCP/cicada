@@ -600,7 +600,13 @@ struct AISettingsView: View {
         } else {
             usageRow(L("你自己的声音"), tag: L("只有 Ling"), style: .ling, note: L("换用 Ling 才有"))
         }
-        if settings.speechServer {
+        if settings.speechBuiltIn {
+            // The engine inside the app: ready once its model is on disk.
+            let m = EngineModel.named(settings.speechEngineModel)
+            let ready = model.engine.installed(m)
+            usageRow(L("语音识别"), tag: ready ? L("内置") : L("还没下载"), style: ready ? .ok : .off,
+                     note: ready ? L("下一场会议起用 \(m.name)，声音不出这台 Mac") : L("下载模型后可用"), divider: false)
+        } else if settings.speechServer {
             // The user's own speech server: ready once a second of audio went through it.
             let ready = speech.usable && speech.aiCheck.passed && speech.aiCheck.hear?.ok == true
             let unset = settings.speechConfig?.transcribes != true

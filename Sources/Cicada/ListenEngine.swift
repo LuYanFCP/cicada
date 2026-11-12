@@ -108,6 +108,8 @@ final class ListenEngine {
     /// when there is none.
     var cloudService: String? {
         guard let ling = translator?.hearing, ling.hearsAudio || ling.transcribes else { return nil }
+        // The engine inside the app has no address worth showing.
+        if ling.config().builtIn { return "Qwen3-ASR" }
         return ling.provider.id == .custom ? (ling.config().base?.host ?? ling.serviceName) : ling.provider.name
     }
     /// 先用○○听 is offered: a model listening needs has been downloading a while, or couldn't be had.
@@ -1260,6 +1262,7 @@ final class ListenEngine {
         }
         cloudListening = true
         cloudVia = (translator.hearing.config(), serverHears)
+        translator.hearing.warmEngine()
         cloudReplaced = replaced
         cloudAwaiting = awaiting
         cloudLang = nil

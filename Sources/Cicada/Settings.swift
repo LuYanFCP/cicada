@@ -136,6 +136,19 @@ final class AppSettings: ObservableObject {
     @Published var speechModel: String {
         didSet { save() }
     }
+    /// 语音识别 › 内置: the meeting recognized by the engine inside the app (`SpeechEngine`) with
+    /// this model, instead of this Mac's own recognition or a server (`speechServer` is off then).
+    @Published var speechEngine: Bool {
+        didSet { save() }
+    }
+    @Published var speechEngineModel: String {
+        didSet { save() }
+    }
+    /// The engine is chosen and this build on this Mac has it.
+    var speechBuiltIn: Bool { speechEngine && SpeechEngine.available }
+    /// The meeting is recognized by a speech client of its own (a server or the engine) rather
+    /// than by this Mac's recognition or the audio model.
+    var speechOwn: Bool { speechServer || speechBuiltIn }
     /// 语音和文字只发给你的服务: with the custom service, Google Translate is never asked (partial
     /// lines show the original). Kept when another service is picked, but only acts on the custom one.
     @Published var aiCustomOnly: Bool {
@@ -307,6 +320,8 @@ final class AppSettings: ObservableObject {
         speechServer = defaults.bool(forKey: "speechServer")
         speechBase = defaults.string(forKey: "speechBase") ?? ""
         speechModel = defaults.string(forKey: "speechModel") ?? ""
+        speechEngine = defaults.bool(forKey: "speechEngine")
+        speechEngineModel = defaults.string(forKey: "speechEngineModel") ?? EngineModel.all[0].id
         sentenceTranslation = defaults.bool(forKey: "sentenceTranslation")
         sentenceBase = defaults.string(forKey: "sentenceBase") ?? ""
         sentenceModel = defaults.string(forKey: "sentenceModel") ?? ""
@@ -384,6 +399,8 @@ final class AppSettings: ObservableObject {
         defaults.set(speechServer, forKey: "speechServer")
         defaults.set(speechBase, forKey: "speechBase")
         defaults.set(speechModel, forKey: "speechModel")
+        defaults.set(speechEngine, forKey: "speechEngine")
+        defaults.set(speechEngineModel, forKey: "speechEngineModel")
         defaults.set(sentenceTranslation, forKey: "sentenceTranslation")
         defaults.set(sentenceBase, forKey: "sentenceBase")
         defaults.set(sentenceModel, forKey: "sentenceModel")

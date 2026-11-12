@@ -12,6 +12,11 @@ ARCHS="${ARCH:-arm64 x86_64}"
 rm -f build/Cicada-*.zip build/Cicada-*.dmg build/LiveSubs-*.zip build/LiveSubs-*.dmg build/checksums.txt
 rm -rf build/dmg && mkdir -p build/dmg
 
+# The Apple silicon app carries the built-in speech engine (ENGINE=0 packages without it).
+if [[ "${ENGINE:-1}" == 1 && " $ARCHS " == *" arm64 "* && "$(uname -m)" == arm64 ]]; then
+  scripts/build-engine.sh
+fi
+
 for A in $ARCHS; do
   if [[ "$A" == "x86_64" ]]; then
     SUFFIX="macOS-Intel"

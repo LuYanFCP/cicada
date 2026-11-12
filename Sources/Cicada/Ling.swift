@@ -222,6 +222,8 @@ final class LingClient: ObservableObject {
     var key: String? {
         if hideKey { return nil }
         let c = config()
+        // The engine inside the app: a key saved for a server is not its to see.
+        if c.builtIn { return "" }
         if c.provider.id == .custom {
             guard let base = c.base else { return nil }
             return AIKey.read(keyService) ?? (AIProvider.isNearby(base.absoluteString) ? "" : nil)
@@ -247,6 +249,14 @@ final class LingClient: ObservableObject {
     /// The speech server refused `verbose_json` once (OpenAI's newer transcription models take
     /// only `json`): plain JSON, without the language, until settings change.
     private var noVerboseJSON = false
+    /// 语音识别 › 内置: brings the engine inside the app up (it stops when idle) before it is asked.
+    var startEngine: (() async throws -> Void)?
+
+    /// A meeting is about to need the engine: load it now rather than on the first sentence.
+    func warmEngine() {
+        guard config().builtIn, let startEngine else { return }
+        Task { try? await startEngine() }
+    }
 
     init(keyNamespace: String? = nil, checksJSON: Bool = true, checksAudio: Bool = false, checksTranscription: Bool = false) {
         self.keyNamespace = keyNamespace
@@ -900,6 +910,20 @@ final class LingClient: ObservableObject {
         }
         req.httpBody = body(noVerboseJSON ? "json" : "verbose_json")
         do {
+            if c.builtIn {
+                // Not up (no model, it would not start): the same as a server on this Mac that isn't running.
+                do { try await startEngine?() } catch {
+                    debugLog("engine: not started: \(error)")
+                    throw Failure.network
+                }
+                // The engine names the language only in the last event of a streamed answer.
+                var fields = [("model", model), ("stream", "true"), ("include_generation_metadata", "true")]
+                if let language { fields.append(("language", String(language.prefix { $0 != "-" }))) }
+                req.httpBody = Self.multipart(fields: fields, file: wav, boundary: boundary)
+                guard let heard = Self.engineReply(try await send(req, key: key, contentType: nil)) else { throw Failure.parse }
+                report(call, .translate, at: started, queued: queued, outcome: "ok", chars: heard.text.count)
+                return heard
+            }
             var data: Data
             do {
                 data = try await send(req, key: key, contentType: nil)
@@ -926,6 +950,18 @@ final class LingClient: ObservableObject {
             report(call, .translate, at: started, queued: queued, outcome: "parse")
             throw Failure.parse
         }
+    }
+
+    /// The engine's streamed answer (server-sent events): the text and language of its
+    /// `transcript.text.done` event; nil when it ended without one (`error`).
+    nonisolated static func engineReply(_ data: Data) -> (text: String, language: String?)? {
+        for line in String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline) where line.hasPrefix("data:") {
+            guard let event = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any],
+                  event["type"] as? String == "transcript.text.done", let text = event["text"] as? String else { continue }
+            let language = (event["generation_metadata"] as? [String: Any])?["language"] as? String
+            return (text.trimmingCharacters(in: .whitespacesAndNewlines), language)
+        }
+        return nil
     }
 
     nonisolated static func multipart(fields: [(String, String)], file: Data, boundary: String) -> Data {

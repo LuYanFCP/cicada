@@ -91,7 +91,7 @@ Mac 版只在用到某项功能时才要权限，拒绝后其他功能照常：
 | 输入监控 | 判断右 `⌥` 是否被按下（不拦截、不记别的键） | 设置里改成 `⌃`/`⌘` 组合键就不用这个权限 |
 | 管理员密码 | 安装虚拟麦克风 BlackHole 2ch（只问一次） | 对方听不到同传，其余照常 |
 
-- **联网透明**：只有翻译（`translate.googleapis.com`）、你配的 AI 服务（如 `api.ant-ling.com`）、下载苹果公证过的 BlackHole 驱动（会核对 SHA-256）和每天去 GitHub 检查更新会联网。没有统计、没有埋点，也没有我们自己的服务器。
+- **联网透明**：只有翻译（`translate.googleapis.com`）、你配的 AI 服务（如 `api.ant-ling.com`）、下载苹果公证过的 BlackHole 驱动（会核对 SHA-256）、你点下载时从 Hugging Face（连不上时走镜像 `hf-mirror.com`）取内置引擎的语音模型（同样核对 SHA-256）和每天去 GitHub 检查更新会联网。没有统计、没有埋点，也没有我们自己的服务器。
 - **数据存本机**：记录和录音存在 `~/Library/Application Support/LiveSubs`。Key 和声音样本只对当前系统账户可读，不进 Time Machine 和日志。
 - **防录屏**：Mac 上共享屏幕、录屏和截图都拍不到纪要窗口，录演示时可手动打开“共享屏幕时让对方看到”。
 
@@ -114,7 +114,9 @@ Mac 上的翻译和纪要、语音理解还可以各自接一个 OpenAI 兼容�
 
 “语音理解”默认同上（Ling 用 `Ming-3.0-audio-flash`）；换成兼容接口时，除了地址、模型和 key，还要按服务要求选 OpenAI（`input_audio`）或 Ming 兼容（`audio_url`）格式，地址填 Ling 的 `api.ant-ling.com` 时会自动选 Ming 兼容。翻译和纪要已经接了兼容接口时，点“用翻译和纪要的地址和 key”就能把同一个地址和 key 带过来，再从读到的列表里挑一个音频模型。“保存并检查”会用一秒实际音频验证。它用于按住说话的语音理解，以及 Intel Mac 或手动选择的云端识别；Apple 芯片 Mac 默认仍在本机识别。翻译和纪要、语音理解的 key 各存一份（0600 权限，只在本机），带过来的 key 也是另存一份、不显示；声音合成和克隆仍使用原来的 Ming TTS 配置。
 
-“语音识别”在 Apple 芯片的 Mac 上默认用本机识别；想要更准的中文、方言和中英混说，可以换成“自建服务”。推荐在这台 Mac 上用 [mlx-audio](https://github.com/Blaizzy/mlx-audio) 跑 Qwen3-ASR，会议的声音同样不出这台 Mac，不管主服务选的是哪家。在终端里装一次、启动它：
+“语音识别”在 Apple 芯片的 Mac 上默认用本机识别；想要更准的中文、方言和中英混说，最省事的是在“按功能换服务 › 语音识别”选“内置”（macOS 15 及以上）：知了自带 Qwen3-ASR 引擎，点“下载模型”（1.7B 约 2.5 GB，或更省内存的 0.6B 约 0.7 GB）即可，不用装别的，会议的声音不出这台 Mac；引擎在会议开始时加载，结束两分钟后把内存还回去，启动不了时自动换回本机识别。
+
+也可以换成“自建服务”，自己跑一个识别服务。推荐在这台 Mac 上用 [mlx-audio](https://github.com/Blaizzy/mlx-audio) 跑 Qwen3-ASR，会议的声音同样不出这台 Mac，不管主服务选的是哪家。在终端里装一次、启动它：
 
 ```bash
 uv tool install --upgrade "mlx-audio[stt,server]"   # 没有 uv 时：pip3 install -U "mlx-audio[stt,server]"（要 Python 3.10+）
@@ -189,4 +191,4 @@ scripts/package.sh          # 打包正式版 DMG、zip 和 SHA-256 校验值
 
 ## 开源协议
 
-本项目采用 [Apache-2.0](LICENSE) 协议开源。虚拟麦克风驱动 BlackHole 2ch 采用 GPL 协议，不打包在安装包内，点安装时从其官方地址下载。随附的声纹模型是 [WeSpeaker](https://github.com/wenet-e2e/wespeaker) 在 VoxCeleb 上训练的 ResNet34-LM（CC BY 4.0 协议），由 `scripts/convert-voiceprint.py` 转为 Core ML。
+本项目采用 [Apache-2.0](LICENSE) 协议开源。虚拟麦克风驱动 BlackHole 2ch 采用 GPL 协议，不打包在安装包内，点安装时从其官方地址下载。内置的语音识别引擎是 [SGLang-Omni](https://github.com/sgl-project/sglang-omni)（Apache-2.0）的原生 Qwen3-ASR 服务，跑在 [MLX](https://github.com/ml-explore/mlx)（MIT）上，各部分的许可随安装包附在 `Resources/engine/LICENSES`；模型在你点下载时才从 Hugging Face 取。随附的声纹模型是 [WeSpeaker](https://github.com/wenet-e2e/wespeaker) 在 VoxCeleb 上训练的 ResNet34-LM（CC BY 4.0 协议），由 `scripts/convert-voiceprint.py` 转为 Core ML。

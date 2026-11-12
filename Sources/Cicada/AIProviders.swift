@@ -189,6 +189,9 @@ struct AIConfig: Equatable {
     var hearModel: String? = nil
     var hearBase: URL? = nil
     var audioInputFormat: AudioInputFormat? = nil
+    /// `hearBase` is the engine inside the app (`SpeechEngine`): started before it is asked, and
+    /// never sent a key.
+    var builtIn = false
 
     var hasVoices: Bool { voiceModel != nil && voiceBase != nil }
     var acceptsAudio: Bool { provider.hearsAudio || audioInputFormat != nil }

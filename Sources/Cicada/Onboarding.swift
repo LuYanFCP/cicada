@@ -587,7 +587,7 @@ struct OnboardingView: View {
                           badge: settings.target == "system" ? L("跟随系统") : nil, options: targetOptions) { model.targetSelection = $0 }
             }
             OnboardingNotesTeaser(ling: model.textAI, hearing: model.hearingAI, ready: model.hearingReady,
-                                  own: settings.speechServer || settings.audioUnderstanding)
+                                  own: settings.speechOwn || settings.audioUnderstanding)
         }
     }
 

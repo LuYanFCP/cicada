@@ -6,6 +6,8 @@ import SwiftUI
 /// Following, a row is one line that says what it uses. On its own service it opens to the address,
 /// model and key, and folds back to that line (address, model, how the check went) once it works.
 /// Speech recognition starts from Qwen3-ASR on this Mac (mlx-audio's server): nothing leaves the Mac.
+/// It has a third choice where the build carries the engine, 内置: no address, model or key, only
+/// which model and its download (`EngineForm`).
 struct ServiceOverrideRow: View {
     enum Kind { case text, speech, audio }
 
@@ -31,13 +33,16 @@ struct ServiceOverrideRow: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            if on && open { form }
+            if builtIn && open {
+                EngineForm(model: model, settings: settings, engine: model.engine, client: client)
+                    .padding(.leading, 34).padding(.trailing, 16).padding(.bottom, 14)
+            } else if on && open { form }
             if divider { Divider().padding(.leading, 16) }
         }
         .onAppear {
             sync()
             // Not set up, or not working: open where it needs filling in.
-            open = on && (!configured || !client.hasKey || client.aiCheck.failure != nil)
+            open = needsAttention
         }
         .onChange(of: savedBase) { _, _ in sync() }
         .onChange(of: savedModel) { _, _ in sync() }
@@ -52,6 +57,19 @@ struct ServiceOverrideRow: View {
         case .audio: settings.audioUnderstanding
         }
     }
+    /// 语音识别 › 内置: the engine inside the app hears the meeting.
+    private var builtIn: Bool { kind == .speech && settings.speechBuiltIn }
+    private var engineModel: EngineModel { EngineModel.named(settings.speechEngineModel) }
+    /// Everything it needs is filled in (or, for the engine, downloaded).
+    private var ready: Bool { builtIn ? model.engine.installed(engineModel) : on && configured && client.hasKey }
+    private var needsAttention: Bool { (on || builtIn) && (!ready || client.aiCheck.failure != nil) }
+    private var choice: String { builtIn ? "engine" : on ? "custom" : "follow" }
+    private var choices3: [(id: String, title: String)] {
+        var options = [("follow", followTitle)]
+        if kind == .speech, SpeechEngine.available { options.append(("engine", L("内置"))) }
+        return options + [("custom", ownTitle)]
+    }
+
     private var savedBase: String {
         switch kind {
         case .text: settings.sentenceBase
@@ -109,13 +127,13 @@ struct ServiceOverrideRow: View {
     private var header: some View {
         HStack(spacing: 10) {
             // Following, there is nothing to open: the line is just text.
-            if on {
+            if on || builtIn {
                 Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: { headerLabel }
                     .buttonStyle(.plain)
             } else {
                 headerLabel
             }
-            Segments(options: [("follow", followTitle), ("custom", ownTitle)], value: on ? "custom" : "follow") { pick($0) }
+            Segments(options: choices3, value: choice) { pick($0) }
         }
         .padding(.horizontal, 16).frame(minHeight: 52)
     }
@@ -126,13 +144,15 @@ struct ServiceOverrideRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(title).font(.system(size: 13)).foregroundStyle(Palette.ink)
-                    if on {
+                    if on || builtIn {
                         Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(Palette.secondary).rotationEffect(.degrees(open ? 90 : 0))
                     }
                 }
                 HStack(spacing: 6) {
-                    Text(detail).foregroundStyle(Palette.tertiary).lineLimit(1).truncationMode(.middle)
+                    // Three choices leave the engine's line room for one thing: the model, or what is wrong.
+                    if !builtIn { Text(detail).foregroundStyle(Palette.tertiary).lineLimit(1).truncationMode(.middle) }
+                    else if state == nil { EngineLine(engine: model.engine, model: engineModel) }
                     if let s = state { Text(s.text).foregroundStyle(s.color).lineLimit(1).fixedSize() }
                 }
                 .font(.system(size: 11))
@@ -149,7 +169,8 @@ struct ServiceOverrideRow: View {
         case .text:
             return p.id == .custom ? L("用上面填的服务") : L("用 \(p.name)")
         case .speech:
-            if !Recognition.cloudOnly { return L("更快，不花钱，声音不出这台 Mac") }
+            // Three choices leave the line less room (English runs wider).
+            if !Recognition.cloudOnly { return SpeechEngine.available ? L("更快，不花钱") : L("更快，不花钱，声音不出这台 Mac") }
             if settings.audioUnderstanding { return L("用语音理解的模型") }
             return p.hearsAudio ? L("用 Ling 的 Ming") : L("还没有能听的服务")
         case .audio:
@@ -167,7 +188,7 @@ struct ServiceOverrideRow: View {
 
     private var dot: Color {
         let check = client.aiCheck
-        guard on, configured, client.hasKey else { return Color(white: 0.75) }
+        guard ready else { return Color(white: 0.75) }
         if check.running { return Palette.accent }
         if check.failure != nil { return Palette.error }
         if check.slow || check.busy { return Palette.warn }
@@ -176,7 +197,7 @@ struct ServiceOverrideRow: View {
 
     /// How the last check went, after the address in the folded line.
     private var state: (text: String, color: Color)? {
-        guard on, configured, client.hasKey else { return nil }
+        guard ready else { return nil }
         let check = client.aiCheck
         if check.running { return (L("正在检查…"), Palette.tertiary) }
         if let f = check.failure { return (shortProblem(f.reason), Palette.error) }
@@ -185,6 +206,7 @@ struct ServiceOverrideRow: View {
         case .text:
             guard let t = check.translate else { return check.passed ? (L("能用"), Palette.ok) : nil }
             return (L("翻一句 \(String(format: "%.1f", t.seconds)) 秒"), t.slow ? Palette.warn : Palette.tertiary)
+        case .speech where builtIn: return nil
         case .speech, .audio:
             if case .ok(let s)? = check.hear { return (L("听一秒音频 \(String(format: "%.1f", s)) 秒"), Palette.tertiary) }
             return check.passed ? (L("能用"), Palette.ok) : nil
@@ -193,7 +215,7 @@ struct ServiceOverrideRow: View {
 
     private func shortProblem(_ reason: AICheck.Reason) -> String {
         switch reason {
-        case .unreachable: client.aiCheck.localNetworkDenied ? L("没有本地网络权限") : L("暂时连不上")
+        case .unreachable: builtIn ? L("没能启动") : client.aiCheck.localNetworkDenied ? L("没有本地网络权限") : L("暂时连不上")
         case .badAddress: L("地址不对")
         case .invalidKey, .mgmtKey: L("这个 key 用不了")
         case .noCredit: L("余额不足")
@@ -204,14 +226,15 @@ struct ServiceOverrideRow: View {
         }
     }
 
-    private func pick(_ choice: String) {
-        let custom = choice == "custom"
-        guard custom != on else { return }
+    private func pick(_ picked: String) {
+        guard picked != choice else { return }
+        let custom = picked == "custom"
+        if kind == .speech { settings.speechEngine = picked == "engine" }
         setOn(custom)
         error = nil
         if custom { sync() }
         apply()
-        withAnimation(.easeOut(duration: 0.15)) { open = custom && (!configured || !client.hasKey || client.aiCheck.failure != nil) }
+        withAnimation(.easeOut(duration: 0.15)) { open = needsAttention }
     }
 
     // MARK: Form
@@ -600,5 +623,97 @@ struct FieldStyle: ViewModifier {
             .padding(.horizontal, 12).frame(height: 32)
             .background(RoundedRectangle(cornerRadius: 9).fill(Color.white))
             .overlay(RoundedRectangle(cornerRadius: 9).stroke(Palette.line, lineWidth: 1))
+    }
+}
+
+/// 语音识别 › 内置, folded: the model and where it stands.
+private struct EngineLine: View {
+    @ObservedObject var engine: SpeechEngine
+    let model: EngineModel
+
+    var body: some View {
+        Text(text).foregroundStyle(Palette.tertiary).lineLimit(1)
+    }
+
+    private var text: String {
+        if let p = engine.progress, p.model == model.id { return L("正在下载 \(Int(p.fraction * 100))%") }
+        return engine.installed(model) ? model.name : L("要先下载模型")
+    }
+}
+
+/// 语音识别 › 内置, open: which model, its download, and how the check of it went. Nothing to
+/// type: the engine is in the app, and the model comes from Hugging Face checked against its hash.
+private struct EngineForm: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var engine: SpeechEngine
+    @ObservedObject var client: LingClient
+
+    private var picked: EngineModel { EngineModel.named(settings.speechEngineModel) }
+    private var fetching: SpeechEngine.Progress? { engine.progress.flatMap { $0.model == picked.id ? $0 : nil } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("知了自带的 Qwen3-ASR 引擎：不用装别的，会议的声音不出这台 Mac。")
+                .font(.system(size: 11)).foregroundStyle(Palette.tertiary).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Text("模型").font(.system(size: 12)).foregroundStyle(Palette.secondary).frame(width: 64, alignment: .leading)
+                Segments(options: EngineModel.all.map { ($0.id, "\($0.name) · \(Self.size($0.bytes))") }, value: picked.id) { id in
+                    guard id != picked.id, engine.progress == nil else { return }
+                    settings.speechEngineModel = id
+                    model.applySpeechServer()
+                }
+                Spacer(minLength: 0)
+            }
+            Group {
+                if let p = fetching {
+                    HStack(spacing: 10) {
+                        ProgressView(value: p.fraction).frame(maxWidth: 220)
+                        Text("\(Self.size(p.received)) / \(Self.size(p.total))").font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(Palette.secondary)
+                        SoftButton(L("取消")) { engine.cancelFetch() }
+                    }
+                } else if !engine.installed(picked) {
+                    HStack(spacing: 10) {
+                        SoftButton(L("下载模型（\(Self.size(picked.bytes))）"), dark: true) { engine.fetch(picked) }
+                            .disabled(engine.progress != nil)
+                        if let problem = engine.problem { line(problem, Palette.error) }
+                    }
+                } else {
+                    status
+                }
+            }
+            .padding(.leading, 72)
+        }
+    }
+
+    @ViewBuilder private var status: some View {
+        let check = client.aiCheck
+        HStack(spacing: 10) {
+            if check.running {
+                line(L("正在检查…第一次要加载模型，可能要几分钟"), Palette.secondary)
+            } else if let failure = check.failure {
+                line(failure.reason == .unreachable ? L("内置引擎没能启动，会议先用本机识别。")
+                     : failure.code.map { L("内置引擎出错了（HTTP \($0)），会议先用本机识别。") } ?? L("内置引擎出错了，会议先用本机识别。"),
+                     Palette.error)
+                SoftButton(L("重新检查")) { Task { await client.check() } }
+            } else if check.passed {
+                line(L("检查通过，下一场会议起用它识别；启动不了时自动换回本机"), Palette.ok)
+            }
+            Spacer(minLength: 0)
+            if engine.owns(picked), !check.running {
+                Button("删除模型") { engine.delete(picked) }
+                    .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Palette.secondary)
+            }
+        }
+    }
+
+    private func line(_ text: String, _ color: Color) -> some View {
+        Text(text).font(.system(size: 12)).foregroundStyle(color).fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// "2.5 GB", "713 MB": decimal, as download sizes are quoted.
+    static func size(_ bytes: Int64) -> String {
+        bytes >= 1_000_000_000 ? String(format: "%.1f GB", Double(bytes) / 1e9) : String(format: "%.0f MB", Double(bytes) / 1e6)
     }
 }
