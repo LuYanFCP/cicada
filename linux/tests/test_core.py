@@ -1264,6 +1264,7 @@ class Speaking(Base):
         self.assertEqual([], fake.spoken, "nothing sent to the voice")
         from cicada.core.speak import filler
         self.assertTrue(filler("嗯嗯。") and filler("Um, uh...") and not filler("嗯，好的。") and not filler("OK."))
+        self.assertTrue(filler("翻译结果：") and filler("Translation:") and not filler("我想补充三点：价格、时间和人手。"))
 
     def test_fetches_the_next_voice_while_the_last_one_plays(self):
         eng, fake, player = self._engine("ORIGINAL: 你好\nTRANSLATION: Hello")

@@ -307,7 +307,11 @@ FILLERS = {"嗯", "啊", "呃", "哦", "唔", "额", "噢", "哎", "um", "uh", "
 
 
 def filler(text: str) -> bool:
-    """Nothing but fillers (嗯, 啊, um, hmm…), whatever the punctuation (the Mac's PressSpeech.filler)."""
+    """Nothing but fillers (嗯, 啊, um, hmm…), whatever the punctuation (the Mac's PressSpeech.filler).
+    A heading with nothing after it ("翻译结果：", "Translation:") is the model's answer to noise, too."""
+    trimmed = text.strip()
+    if 0 < len(trimmed) <= 12 and trimmed[-1] in ":：":
+        return True
     words = [w for w in re.split(r"[^\w]+|[\d_]+", text.lower()) if w]
     return not words or all(w in FILLERS or (len(w) > 1 and len(set(w)) == 1 and w[0] in FILLERS) for w in words)
 
