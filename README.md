@@ -121,7 +121,7 @@ uv tool install --upgrade "mlx-audio[stt,server]"   # 没有 uv 时：pip3 insta
 mlx_audio.server --port 8000
 ```
 
-然后在“按功能换服务 › 语音识别”选“自建服务”：地址 `http://localhost:8000/v1` 和模型 `mlx-community/Qwen3-ASR-1.7B-8bit` 已经填好，点“保存并检查”，第一次会下载约 2.5 GB 的模型，要等几分钟。想省内存可以换成 `mlx-community/Qwen3-ASR-0.6B-8bit`（约 1 GB）。在 M4 Pro 上实测，模型加载好以后一段 9 秒的话约 0.5 秒识别完。下一场会议起由它识别，服务没开或连不上时自动换回本机识别。第一次检查说找不到模型，多半是下载没成功，看看启动服务的终端窗口里的报错；经代理下载大文件失败时，启动前加上 `HF_HUB_DISABLE_XET=1`。任何支持 `/audio/transcriptions` 的服务都能接（比如 vLLM 跑的 Qwen3-ASR、Whisper），局域网里的地址可以用 http。MLX 只能跑在 Apple 芯片上：Intel 版 Mac 可以填局域网里另一台 Apple 芯片 Mac 的地址（那边启动时加 `--host 0.0.0.0`）。以前在“其他（兼容 OpenAI）”里设的语音识别会自动搬到这里，步骤也写在网站的[设置页](https://cicada.indaloop.app/start/#local-asr)。
+然后在“按功能换服务 › 语音识别”选“自建服务”：地址 `http://localhost:8000/v1` 和模型 `mlx-community/Qwen3-ASR-1.7B-8bit` 已经填好，点“保存并检查”，第一次会下载约 2.5 GB 的模型，要等几分钟。想省内存可以换成 `mlx-community/Qwen3-ASR-0.6B-8bit`（约 1 GB）。在 M4 Pro 上实测，模型加载好以后一段 9 秒的话约 0.5 秒识别完。服务在这台 Mac 或局域网里时，一句话还在说就先出草稿，约每秒更新一次，说完换成定稿。下一场会议起由它识别，服务没开或连不上时自动换回本机识别。第一次检查说找不到模型，多半是下载没成功，看看启动服务的终端窗口里的报错；经代理下载大文件失败时，启动前加上 `HF_HUB_DISABLE_XET=1`。任何支持 `/audio/transcriptions` 的服务都能接（比如 vLLM 跑的 Qwen3-ASR、Whisper），局域网里的地址可以用 http。MLX 只能跑在 Apple 芯片上：Intel 版 Mac 可以填局域网里另一台 Apple 芯片 Mac 的地址（那边启动时加 `--host 0.0.0.0`）。以前在“其他（兼容 OpenAI）”里设的语音识别会自动搬到这里，步骤也写在网站的[设置页](https://cicada.indaloop.app/start/#local-asr)。
 
 ## 配置 Ling API key
 

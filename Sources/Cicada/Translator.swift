@@ -369,6 +369,16 @@ final class TranslationService {
         return nil
     }
 
+    /// A line still being said, as the user's own speech server hears it so far (`CloudStream`'s
+    /// drafts). nil for nothing, noise or a call that failed: the next draft says more, and the
+    /// line's final is asked for on its own, so a draft is never retried or counted as a failure.
+    func draft(wav: Data, seconds: Double, target: String, hint: String?) async -> String? {
+        let server = hearing
+        guard server.transcribes,
+              let heard = try? await server.transcribe(wav, language: nil, timeout: 4, role: "heard-draft") else { return nil }
+        return CloudHearing.transcript(heard.text, reported: heard.language, hint: hint, target: target, seconds: seconds)?.original
+    }
+
     /// 先用○○听: one stretch of the meeting heard by the service's audio model (Ming), its language,
     /// what was said and its translation in one call. nil for no speech or noise; throws when the
     /// call failed, so listening can tell a service that is down from a quiet meeting.

@@ -822,7 +822,8 @@ final class ListenEngine {
         if !text.isEmpty { lastWordsAt = Date(); onWords?() }
         if result.isFinal {
             text = HeardText.clean(text)
-            let fuller = HeardText.fuller(final: text, draft: sentenceCutHead ?? volatileText)
+            // A service's final hears the whole stretch again, after its drafts: it is the fuller one.
+            let fuller = cloudListening ? text : HeardText.fuller(final: text, draft: sentenceCutHead ?? volatileText)
             let splitAt = pendingSplit
             pendingSplit = nil
             sentenceCutHead = nil
@@ -914,6 +915,13 @@ final class ListenEngine {
             if text != volatileText { volatileChangedAt = Date() }
             // A sentence just ended: remember where, until words past it come to end the line there.
             if HeardText.endsSentence(text) { volatileSentence = (text, result.end) }
+            // A draft taken down without a line (`CloudStream`: the stretch was no speech after all)
+            // takes its translation with it.
+            if text.isEmpty, !volatileText.isEmpty {
+                volatileTranslation = ""
+                lastVolatileSent = ""
+                volatileEpoch += 1
+            }
             volatileText = text
             noteBoundaries(at: result.end)
             checkForeignLetters(text)
@@ -1267,7 +1275,19 @@ final class ListenEngine {
         lastVolatileSent = ""
         mismatch = false
         modelProblem = nil
-        let stream = CloudStream(format: format) { [weak self] wav, seconds in
+        // The line being said shows as a draft when the user's own speech server is on this Mac or
+        // the local network: a call there takes a fraction of a second and costs nothing. A service
+        // elsewhere would be billed for every one, and the audio model has two requests a second.
+        let drafts = serverHears && AIProvider.isNearby(translator.hearing.config().hearBase?.absoluteString ?? "")
+        var draft: CloudStream.Draft?
+        if drafts {
+            debugLog("cloud: drafts of the line being said, every \(CloudStream.draftEvery) s")
+            draft = { [weak self] (wav: Data, seconds: Double) -> String? in
+                guard let self, gen == self.generation, self.cloudListening else { return nil }
+                return await translator.draft(wav: wav, seconds: seconds, target: self.resolvedTarget, hint: self.cloudHint)
+            }
+        }
+        let stream = CloudStream(format: format, draft: draft) { [weak self] wav, seconds in
             guard let self, gen == self.generation else { return nil }
             do {
                 let heard: CloudHeard?
@@ -1619,7 +1639,8 @@ final class ListenEngine {
     /// line in progress is ended where a sentence ends, at the next small pause (a dip in the
     /// sound), at a clause, past a cap between words, or when no new words come for a moment.
     private func maybeCutSentence() {
-        guard isRunning, !cutting, let recognizer, !volatileText.isEmpty, volatileText != lastCut,
+        // A service's stretches end by the sound alone (`CloudSegmenter`), drafts or not.
+        guard isRunning, !cloudListening, !cutting, let recognizer, !volatileText.isEmpty, volatileText != lastCut,
               (pendingSplit == nil && !cutAsked) || Date().timeIntervalSince(cutAskedAt) > 2 else { return }
         let cjk = joiner(for: activeLang?.code ?? "") == ""
         let long = cjk ? volatileText.count >= 24 : volatileText.split(separator: " ").count >= 10

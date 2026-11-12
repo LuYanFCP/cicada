@@ -194,7 +194,21 @@ struct CloudSegmenter {
         /// Seconds since the first sample fed.
         let start: Double
         let samples: [Int16]
+        /// Which stretch this is (`serial` while it was open), to match it with drafts of it.
+        var serial = 0
         var seconds: Double { Double(samples.count) / 16000 }
+    }
+
+    /// The stretch being said, before it ends: what a draft of it is made from.
+    struct Open {
+        let serial: Int
+        let start: Double
+        let seconds: Double
+        /// Seconds of it loud enough to be speech, and of quiet at its end.
+        let spoken: Double
+        let quiet: Double
+        /// A fan or a hum so far, not a voice.
+        let steady: Bool
     }
 
     static let frame = 480 // 30 ms
@@ -211,6 +225,17 @@ struct CloudSegmenter {
     private var currentStart = 0.0
     private var quiet = 0
     private var loud = 0
+    /// Counts stretches as they end, kept or not: the open one's number.
+    private(set) var serial = 0
+
+    var open: Open? {
+        guard !current.isEmpty else { return nil }
+        return Open(serial: serial, start: currentStart, seconds: Double(current.count) / 16000,
+                    spoken: Double(loud * Self.frame) / 16000, quiet: Double(quiet * Self.frame) / 16000,
+                    steady: Self.isSteady(levels[...]))
+    }
+    /// The open stretch's audio so far.
+    var openSamples: [Int16] { current }
 
     mutating func feed(_ samples: [Int16], emit: (Piece) -> Void) {
         pending.append(contentsOf: samples)
@@ -285,7 +310,8 @@ struct CloudSegmenter {
         levels = []
         quiet = 0
         loud = 0
-        if speech { emit(Piece(start: (start * 1000).rounded() / 1000, samples: samples)) }
+        serial += 1
+        if speech { emit(Piece(start: (start * 1000).rounded() / 1000, samples: samples, serial: serial - 1)) }
         // A forced cut carries on with the remainder; after a pause the remainder is silence.
         if restLevels.contains(where: { $0 >= Self.threshold }) {
             currentStart = start + Double(end) / 16000
@@ -300,14 +326,39 @@ struct CloudSegmenter {
 /// The meeting heard by the service instead of on this Mac, as a `RecognitionStream`, so the rest of
 /// listening (the record, notes, voices, subtitles) works as it does with the on-device model. Each
 /// stretch is one call (~2.2 s whatever its length); calls overlap, and lines come back in order.
-/// Only finished lines: there is no partial text.
+///
+/// A service hears a stretch only once it has ended, so a line's first word would wait for its last
+/// (3 s on average, 8 s when nobody pauses). With `draft` (a speech server of the user's own, where
+/// a call costs a fraction of a second and nothing else) the stretch being said is also sent as it
+/// grows, once a second, and what comes back is shown as the line's draft until its final replaces
+/// it. Each draft hears the whole stretch so far again: the model has the full context every time,
+/// so a draft may change words an earlier one had, the way the on-device recognizer's do.
 final class CloudStream: RecognitionStream, @unchecked Sendable {
     typealias Hear = @MainActor @Sendable (_ wav: Data, _ seconds: Double) async -> CloudHeard?
+    /// The words of a stretch still being said; nil for nothing, noise or a call that failed.
+    typealias Draft = @MainActor @Sendable (_ wav: Data, _ seconds: Double) async -> String?
+
+    /// A draft once the stretch has this much more audio than the last one heard. With a call of
+    /// 0.2–0.4 s (Qwen3-ASR 1.7B on an M-series Mac) the first words show about 1.3 s after they
+    /// are said, and the server works a third of the time.
+    static let draftEvery = 1.0
+    /// A speaker who has gone quiet this long is about to end the stretch (`CloudSegmenter.pause`):
+    /// a draft now would only hold up its final, since the server takes one call at a time.
+    static let draftQuiet = 0.25
 
     let format: AVAudioFormat
     let results: AsyncThrowingStream<Recognition.Piece, Error>
     private let continuation: AsyncThrowingStream<Recognition.Piece, Error>.Continuation
     private let hear: Hear
+    private let draft: Draft?
+    /// The draft call in flight: one at a time, the next one hears more.
+    private var drafting: Task<Void, Never>?
+    /// The stretch the last draft heard, and how much of it.
+    private var drafted: (serial: Int, seconds: Double) = (-1, 0)
+    /// The stretch whose draft is on screen, until its final (or nothing) takes its place.
+    private var shown: Int?
+    /// Stretches sent and not delivered yet, by call index.
+    private var serials: [Int: Int] = [:]
     private let queue = DispatchQueue(label: "com.wquguru.cicada.cloud")
     private var segmenter = CloudSegmenter()
     private var issued = 0
@@ -317,13 +368,14 @@ final class CloudStream: RecognitionStream, @unchecked Sendable {
     private var ended = false
 
     /// `format`: the analyzer's, when it is 16 kHz mono 16-bit, so the audio held for it can be replayed.
-    init(format: AVAudioFormat? = nil, hear: @escaping Hear) {
+    init(format: AVAudioFormat? = nil, draft: Draft? = nil, hear: @escaping Hear) {
         if let format, format.sampleRate == 16000, format.channelCount == 1, format.commonFormat == .pcmFormatInt16 {
             self.format = format
         } else {
             self.format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
         }
         self.hear = hear
+        self.draft = draft
         (results, continuation) = AsyncThrowingStream.makeStream()
     }
 
@@ -333,19 +385,58 @@ final class CloudStream: RecognitionStream, @unchecked Sendable {
         queue.async { [self] in
             guard !ended else { return }
             segmenter.feed(samples) { send($0) }
+            settleDraft()
+            maybeDraft()
         }
+    }
+
+    /// On `queue`. The open stretch, heard so far, as the line's draft.
+    private func maybeDraft() {
+        // Not while a final is on its way: it is what the reader waits for, and its line comes first.
+        guard let draft, drafting == nil, calls.isEmpty, let open = segmenter.open,
+              open.spoken >= CloudSegmenter.minSpeech, !open.steady, open.quiet < Self.draftQuiet,
+              open.seconds - (drafted.serial == open.serial ? drafted.seconds : 0) >= Self.draftEvery else { return }
+        drafted = (open.serial, open.seconds)
+        let wav = CloudHearing.wav(segmenter.openSamples)
+        let asked = Date()
+        drafting = Task { [weak self] in
+            let text = await draft(wav, open.seconds)
+            self?.queue.async {
+                guard let self else { return }
+                self.drafting = nil
+                // The stretch ended while this was asked: its final says it better, and is on its way.
+                guard !self.ended, let text, !text.isEmpty, self.segmenter.serial == open.serial, self.calls.isEmpty else { return }
+                // Once a line: how long its first word waited to be seen.
+                if self.shown != open.serial, let now = self.segmenter.open {
+                    debugLog(String(format: "cloud: a line's first draft %.1f s after it began (the call took %.2f s)",
+                                    now.seconds, Date().timeIntervalSince(asked)))
+                }
+                self.shown = open.serial
+                self.continuation.yield(Recognition.Piece(text: text, isFinal: false, start: open.start,
+                                                          end: open.start + open.seconds, confidence: nil))
+            }
+        }
+    }
+
+    /// On `queue`. A draft on screen whose stretch ended without a line (too short, a hum, not
+    /// speech, or the service heard nothing in it) is taken down: nothing else would replace it.
+    private func settleDraft() {
+        guard let s = shown, s < segmenter.serial, !serials.values.contains(s) else { return }
+        shown = nil
+        continuation.yield(Recognition.Piece(text: "", isFinal: false, start: 0, end: 0, confidence: nil))
     }
 
     /// Stretches sent and not back yet: a file being imported is fed only a little ahead of them.
     var backlog: Int { queue.sync { calls.count } }
 
     func finalize(through seconds: Double) async throws {
-        queue.sync { segmenter.flush { send($0) } }
+        queue.sync { segmenter.flush { send($0) }; settleDraft() }
     }
 
     func finish() async {
         queue.sync {
             segmenter.flush { send($0) }
+            settleDraft()
             ended = true
             deliver()
         }
@@ -360,8 +451,8 @@ final class CloudStream: RecognitionStream, @unchecked Sendable {
     func cancel() async {
         let running = queue.sync { () -> [Task<Void, Never>] in
             ended = true
-            defer { calls = [:] }
-            return Array(calls.values)
+            defer { calls = [:]; drafting = nil }
+            return Array(calls.values) + [drafting].compactMap { $0 }
         }
         running.forEach { $0.cancel() }
         continuation.finish()
@@ -376,6 +467,7 @@ final class CloudStream: RecognitionStream, @unchecked Sendable {
         }
         issued += 1
         let index = issued
+        serials[index] = piece.serial
         let wav = CloudHearing.wav(piece.samples)
         let start = piece.start, end = piece.start + piece.seconds
         let hear = self.hear
@@ -397,9 +489,15 @@ final class CloudStream: RecognitionStream, @unchecked Sendable {
     /// On `queue`: lines in the order they were spoken; a stretch that was noise is skipped.
     private func deliver() {
         while let piece = done.removeValue(forKey: next) {
-            if let piece { continuation.yield(piece) }
+            let serial = serials.removeValue(forKey: next)
+            if let piece {
+                // The final takes the draft's place on screen.
+                if shown == serial { shown = nil }
+                continuation.yield(piece)
+            }
             next += 1
         }
+        settleDraft()
         if ended, next > issued, calls.isEmpty { continuation.finish() }
     }
 }
