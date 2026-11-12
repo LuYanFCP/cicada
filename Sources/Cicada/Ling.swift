@@ -244,6 +244,9 @@ final class LingClient: ObservableObject {
     var transcribes: Bool { usable && config().transcribes }
     /// The custom service refused `chat_template_kwargs` once: leave it out until settings change.
     private var noTemplateKwargs = false
+    /// The speech server refused `verbose_json` once (OpenAI's newer transcription models take
+    /// only `json`): plain JSON, without the language, until settings change.
+    private var noVerboseJSON = false
 
     init(keyNamespace: String? = nil, checksJSON: Bool = true, checksAudio: Bool = false, checksTranscription: Bool = false) {
         self.keyNamespace = keyNamespace
@@ -257,6 +260,7 @@ final class LingClient: ObservableObject {
     func reconfigure(check: Bool = true) {
         settingsGeneration += 1
         noTemplateKwargs = false
+        noVerboseJSON = false
         recheck?.cancel()
         catalog = []
         listed = nil
@@ -887,15 +891,32 @@ final class LingClient: ObservableObject {
         let boundary = "cicada-" + UUID().uuidString
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         // `response_format` spelled out: mlx-audio's server streams NDJSON unless asked for JSON.
-        var fields = [("model", model), ("temperature", "0"), ("response_format", "json")]
-        if let language { fields.append(("language", String(language.prefix { $0 != "-" }))) }
-        req.httpBody = Self.multipart(fields: fields, file: wav, boundary: boundary)
+        // `verbose_json` also names the language heard, which plain `json` leaves out: without it
+        // a French or German line reads as English.
+        func body(_ format: String) -> Data {
+            var fields = [("model", model), ("temperature", "0"), ("response_format", format)]
+            if let language { fields.append(("language", String(language.prefix { $0 != "-" }))) }
+            return Self.multipart(fields: fields, file: wav, boundary: boundary)
+        }
+        req.httpBody = body(noVerboseJSON ? "json" : "verbose_json")
         do {
-            let data = try await send(req, key: key, contentType: nil)
+            var data: Data
+            do {
+                data = try await send(req, key: key, contentType: nil)
+            } catch Failure.http(let code) where (code == 400 || code == 422) && !noVerboseJSON {
+                // Only when the same audio goes through as plain JSON: a 400 for something else
+                // (a model the server doesn't have) must stay that failure.
+                req.httpBody = body("json")
+                do { data = try await send(req, key: key, contentType: nil) } catch { throw Failure.http(code) }
+                debugLog("speech server: verbose_json refused (HTTP \(code)), plain json from now on")
+                if config().hearBase == base { noVerboseJSON = true }
+            }
             guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let text = root["text"] as? String else { throw Failure.parse }
             report(call, .translate, at: started, queued: queued, outcome: "ok", chars: text.count)
-            return (text.trimmingCharacters(in: .whitespacesAndNewlines), root["language"] as? String)
+            // Whisper servers name one language ("english"); mlx-audio lists them (`["English"]`).
+            let heard = root["language"] as? String ?? (root["language"] as? [String])?.first
+            return (text.trimmingCharacters(in: .whitespacesAndNewlines), heard)
         } catch let failure as Failure {
             report(call, .translate, at: started, queued: queued, outcome: Self.name(failure))
             // The server's limit is shared: the rest of the queue waits it out too.

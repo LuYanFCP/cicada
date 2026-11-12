@@ -313,7 +313,8 @@ final class LingStub: URLProtocol, @unchecked Sendable {
     }
 
     /// Qwen3-ASR through mlx-audio on this Mac: the check is one second of audio to
-    /// `/audio/transcriptions`, asking for JSON (mlx-audio streams NDJSON otherwise), with no key.
+    /// `/audio/transcriptions`, asking for JSON with the language (mlx-audio streams NDJSON
+    /// otherwise), with no key.
     @Test func speechServerIsCheckedWithOneTranscriptionAskingForJSON() async throws {
         LingStub.reset(200, #"{"text":""}"#)
         let speech = speechClient()
@@ -322,13 +323,44 @@ final class LingStub: URLProtocol, @unchecked Sendable {
         let first = try #require(LingStub.seen.first)
         #expect(first.url?.absoluteString == "http://localhost:8000/v1/audio/transcriptions" && first.authorization == nil)
         let body = String(decoding: try #require(LingStub.raw.first), as: UTF8.self)
-        #expect(body.contains("name=\"response_format\"\r\n\r\njson\r\n"))
+        #expect(body.contains("name=\"response_format\"\r\n\r\nverbose_json\r\n"))
         #expect(body.contains("mlx-community/Qwen3-ASR-1.7B-8bit"))
         #expect(speech.aiCheck.passed && speech.aiCheck.hear?.ok == true && speech.transcribes)
         // Meetings call it the same way and read the text back.
         LingStub.reset(200, #"{"text":" 大家好 "}"#)
         let heard = try await speech.transcribe(CloudHearing.wav(Array(repeating: 0, count: 1600)), language: nil)
-        #expect(heard.text == "大家好")
+        #expect(heard.text == "大家好" && heard.language == nil)
+    }
+
+    /// The language comes from the server (mlx-audio lists it, Whisper servers name it), so a
+    /// French line is not taken for English; a server that takes only plain JSON still works.
+    @Test func speechServerNamesTheLanguageAndFallsBackToPlainJSON() async throws {
+        let speech = speechClient()
+        let wav = CloudHearing.wav(Array(repeating: 0, count: 1600))
+        LingStub.reset(200, #"{"text":"Bonjour à tous.","language":["French"],"segments":[]}"#)
+        #expect(try await speech.transcribe(wav, language: nil).language == "French")
+        LingStub.reset(200, #"{"text":"Hello.","language":"english"}"#)
+        #expect(try await speech.transcribe(wav, language: nil).language == "english")
+        let line = CloudHearing.transcript("Bonjour à tous.", reported: "French", hint: "en", target: "zh-CN", seconds: 2)
+        #expect(line?.lang == "fr")
+
+        // gpt-4o-transcribe answers 400 to verbose_json: asked again as json, and json from then on.
+        LingStub.reset(200, "")
+        LingStub.respond = { _ in
+            let asked = String(decoding: LingStub.raw.last ?? Data(), as: UTF8.self)
+            return asked.contains("\r\n\r\nverbose_json\r\n") ? (400, "{}") : (200, #"{"text":"Hello."}"#)
+        }
+        #expect(try await speech.transcribe(wav, language: nil).text == "Hello.")
+        #expect(try await speech.transcribe(wav, language: nil).text == "Hello.")
+        let formats = LingStub.raw.map { String(decoding: $0, as: UTF8.self).contains("verbose_json") }
+        #expect(formats == [true, false, false])
+        // A 400 that plain JSON gets too is the server's answer, not a format it refused.
+        speech.reconfigure(check: false)
+        LingStub.reset(400, "{}")
+        await #expect(throws: LingClient.Failure.http(400)) { _ = try await speech.transcribe(wav, language: nil) }
+        LingStub.reset(200, #"{"text":"Hello."}"#)
+        _ = try await speech.transcribe(wav, language: nil)
+        #expect(String(decoding: LingStub.raw.last ?? Data(), as: UTF8.self).contains("verbose_json"))
     }
 
     @Test func aSpeechServerWithoutTheModelOrAnsweringNDJSONSaysWhy() async throws {
