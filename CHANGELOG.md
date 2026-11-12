@@ -5,7 +5,7 @@ writes it from the `feat:` and `fix:` commits since the last tag, grouped by pla
 scope), and the release workflow publishes it as the release notes. Since 1.1.2 every release ships
 every platform (one with nothing new says No changes); earlier ones shipped only those listed. Lines under `## Unreleased` become the release's summary. The Chinese changelog for users is `site/changelog.json`.
 
-## 1.9.0 — 2026-11-11
+## 1.9.0 — 2026-11-12
 
 ### Mac
 
@@ -31,6 +31,8 @@ every platform (one with nothing new says No changes); earlier ones shipped only
 - A click on the words of a transcript line plays the recording from there, and the play button comes back when it ends ([7c11a14](https://github.com/wquguru/cicada/commit/7c11a14dc8975d32ce76cb43ab70ea8c97262e7f))
 - Cicada no longer quits now and then when the menu bar panel opens ([9d3286e](https://github.com/wquguru/cicada/commit/9d3286eba8baba72973c14d7e7b807c50aea61eb))
 - Cicada no longer quits after an interpreted sentence when the meeting plays from the speakers ([1c3d014](https://github.com/wquguru/cicada/commit/1c3d0142e4c2ad874c35c38f24733980ac8ca5e7))
+- While a meeting is listened to, the talk key hears you from the moment you press it and no longer sends the meeting's own words ([872a570](https://github.com/wquguru/cicada/commit/872a570659d2dae6dae576dd8dd1f87c0dc831fd))
+- Interpreting no longer speaks a bare heading like "翻译结果：" into the meeting ([f53c136](https://github.com/wquguru/cicada/commit/f53c13637a08aa94af52c469f4d19b32b30f0c86))
 
 ### Windows
 
@@ -45,6 +47,7 @@ every platform (one with nothing new says No changes); earlier ones shipped only
 - Installing VB-Cable no longer leaves the computer silent ([a3aa981](https://github.com/wquguru/cicada/commit/a3aa981a4a7c6f450631091da220c60e3a45cc03))
 - The talk key now sends what you say while the other side talks on the speakers ([6ca73c8](https://github.com/wquguru/cicada/commit/6ca73c83e9677e0e5d5f1e8a0ade71323f8c1e34))
 - A custom AI service whose key fails is named by its address in the tray and notes window ([933d596](https://github.com/wquguru/cicada/commit/933d596be41d19aa83962f42ff1863ca5dd9be86))
+- Interpreting no longer speaks a bare heading like "翻译结果：" into the meeting ([598ea2c](https://github.com/wquguru/cicada/commit/598ea2c87cfca60b2d984946007775963344898b))
 
 ### Android
 
@@ -58,6 +61,7 @@ every platform (one with nothing new says No changes); earlier ones shipped only
 
 - Imported recordings and videos show who said each line ([c6ece7c](https://github.com/wquguru/cicada/commit/c6ece7cdc8dd554a68b5cc022193e9dc7bbc6900))
 - A custom AI service whose key fails is named by its address on the AI card and notification ([ba25b10](https://github.com/wquguru/cicada/commit/ba25b10bd5c981faf377e2760cdff8bee24607be))
+- Interpreting no longer speaks a bare heading like "翻译结果：" into the meeting ([2bb0834](https://github.com/wquguru/cicada/commit/2bb0834ffbdd029fd8ef129274f0fd64dad405a5))
 
 ### Linux
 
@@ -73,6 +77,7 @@ every platform (one with nothing new says No changes); earlier ones shipped only
 - In a dark desktop theme, the live notes window's status line and its button are readable again ([184739a](https://github.com/wquguru/cicada/commit/184739a1b176879a5a723d1d997e0423bb7269bd))
 - Imported records that tell speakers apart show who said each line ([83379f6](https://github.com/wquguru/cicada/commit/83379f6771e36470819a637b835c489a8cdf4259))
 - A custom AI service whose key fails is named by its address in the tray, notification and notes window ([9458abb](https://github.com/wquguru/cicada/commit/9458abb39fa4f31ee183a7f9a03d1cc171fe989f))
+- Interpreting no longer speaks a bare heading like "翻译结果：" into the meeting ([13e9591](https://github.com/wquguru/cicada/commit/13e95912813ad11dac2481538b610045ae7c30d2))
 
 ## 1.8.0 — 2026-11-09
 
