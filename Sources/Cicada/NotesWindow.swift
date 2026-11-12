@@ -749,11 +749,7 @@ struct NotesWindowView: View {
         .background(RoundedRectangle(cornerRadius: 12).fill(Palette.accentPale))
     }
 
-    /// Who the banners name: a custom service by its address, which says more than 这个服务.
-    private var serviceLabel: String {
-        let ling = model.ling
-        return ling.provider.id == .custom && !ling.serviceHost.isEmpty ? ling.serviceHost : ling.serviceName
-    }
+    private var serviceLabel: String { model.ling.serviceLabel }
 
     /// Lines the notes don't cover yet, once they are two minutes behind the meeting (between
     /// ordinary 45 s updates there is always a little that isn't in yet).

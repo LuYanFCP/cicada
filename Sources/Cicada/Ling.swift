@@ -304,6 +304,9 @@ final class LingClient: ObservableObject {
 
     /// The service's name for messages ("这个服务" for a custom address) and its host.
     var serviceName: String { provider.id == .custom ? L("这个服务") : provider.name }
+    /// Who a status line names: a custom service by its address, which says more than 这个服务
+    /// and reads right in "The … key doesn't work".
+    var serviceLabel: String { provider.id == .custom && !serviceHost.isEmpty ? serviceHost : serviceName }
     var serviceHost: String { config().base?.host ?? provider.base?.host ?? "" }
 
     /// The cheapest requests that prove each step: Ling's tiny model; OpenRouter's key info (plus
@@ -493,7 +496,7 @@ final class LingClient: ObservableObject {
         let c = aiCheck
         if let f = c.failure, f.reason != .busy {
             keyState = f.reason == .invalidKey || f.reason == .mgmtKey ? .invalid
-                : .unreachable(c.message(service: serviceName, host: serviceHost, model: config().textModel) ?? "")
+                : .unreachable(c.message(service: serviceLabel, host: serviceHost, model: config().textModel) ?? "")
         } else if c.passed {
             var seconds = 0.0
             for s in c.steps { if case .ok(let sec?) = s.state { seconds = sec } }
