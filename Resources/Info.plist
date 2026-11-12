@@ -56,6 +56,16 @@
 	<false/>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Cicada reads the sound your Mac is playing to make live subtitles.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>To save each meeting's notes and transcript into the folder you chose.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>To save each meeting's notes and transcript into the folder you chose.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>To save each meeting's notes and transcript into the folder you chose.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>To save each meeting's notes and transcript into the folder you chose.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>To save each meeting's notes and transcript into the folder you chose.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>

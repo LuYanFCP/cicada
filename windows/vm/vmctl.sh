@@ -5,7 +5,7 @@
 #   vmctl.sh ssh <powershell…>     # run PowerShell in the VM over SSH
 #   vmctl.sh put <local> <remote>  # copy into the VM
 #   vmctl.sh run <local.ps1>       # run a script in the VM's desktop session and print its output
-#   vmctl.sh g <verb> <args…>      # guest.ps1 in the VM (desk, launch, shot, click, key, front, windows, play)
+#   vmctl.sh g <verb> <args…>      # guest.ps1 in the VM (desk, launch, shot, click, move, wheel, key, front, windows, play)
 #   vmctl.sh stop                  # shut Windows down and wait for QEMU to exit (frees its 8 GB)
 set -euo pipefail
 VM="${VM:-$HOME/VMs/cicada-win11}"

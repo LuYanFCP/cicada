@@ -63,6 +63,7 @@ object Tests {
             "ignoresClicks" to ::ignoresClicks,
             "wavRoundTrip" to ::wavRoundTrip,
             "parsesNotes" to ::parsesNotes,
+            "termsKeepOnlyFormsTheRecognizerWrote" to ::termsKeepOnlyFormsTheRecognizerWrote,
             "keepsEarliestTimes" to ::keepsEarliestTimes,
             "notesPromptIsTheMacs" to ::notesPromptIsTheMacs,
             "keepsFrozenTopicsAndTakesTheRepliesTail" to ::keepsFrozenTopicsAndTakesTheRepliesTail,
@@ -91,7 +92,7 @@ object Tests {
             "notesPromptNamesTheVoices" to ::notesPromptNamesTheVoices,
             "aHalfSentenceJoinsOnlyTheSameVoice" to ::aHalfSentenceJoinsOnlyTheSameVoice,
             "slowVoiceprintsNeverHoldSubtitlesBack" to ::slowVoiceprintsNeverHoldSubtitlesBack,
-        ) + ProviderTests.tests + AICheckTests.tests + FixTests.tests + ShareTests.tests
+        ) + ProviderTests.tests + AICheckTests.tests + FixTests.tests + ShareTests.tests + FolderExportTests.tests
         var passed = 0; var failed = 0
         for ((name, test) in tests) {
             try { test(); passed++ } catch (e: Throwable) { failed++; println("FAIL $name: ${e.message ?: e.javaClass.simpleName}") }
@@ -526,6 +527,14 @@ object Tests {
     }
 
     // MARK: Notes
+
+    /// A heard form only a fix wrote ("platform" for 平台) isn't one: it would teach the translator
+    /// and the next fix the same mistake.
+    fun termsKeepOnlyFormsTheRecognizerWrote() {
+        val l = TranscriptLine("a", 0.0, "them", "我们 twoty 平台", null, "zh-CN", "en", fixes = mutableListOf(LineFix("平台", "platform")))
+        val terms = listOf(NoteTerm("X平台", "n", mutableListOf("Xplatform", "platform", "Twoty")))
+        equal(listOf("Twoty"), NotesEngine.heardAsSaid(terms, listOf(l)).first().heard.toList(), "heard as said")
+    }
 
     fun parsesNotes() {
         val reply = """
@@ -1129,6 +1138,7 @@ object Tests {
             engine.stop()
         } finally { LingClient.spacing = old }
         check(PressSpeech.filler("嗯嗯。") && PressSpeech.filler("Um, uh...") && !PressSpeech.filler("嗯，好的。") && !PressSpeech.filler("OK."), "fillers")
+        check(PressSpeech.filler("翻译结果：") && PressSpeech.filler("Translation:") && !PressSpeech.filler("我想补充三点：价格、时间和人手。"), "a bare heading is no sentence")
     }
 
     // MARK: 说话人识别 (linux/tests/test_core.py › Speakers)

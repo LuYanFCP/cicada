@@ -78,9 +78,22 @@ enum Correction {
            c.from.lowercased() != c.to.lowercased(), distance(c.from.lowercased(), c.to.lowercased()) <= 2 {
             return .apply
         }
-        // A new name (Chinese heard as a Latin name, or a respelled one): sound can't check it.
-        if latinTo, e.confidence >= askAt { return .ask }
+        // A new name (Chinese heard as a Latin name, or a respelled one): sound can't check it. A
+        // name has a capital or a digit; "X平台 → X platform" is a translation, and one 对 to it
+        // taught the word list 平台 → platform, which then rewrote every 平台 in the meeting.
+        if latinTo, e.confidence >= askAt, nameShaped(c.to) { return .ask }
         return .drop
+    }
+
+    /// Latin text that could be a name: a capital or a digit in it (Morpho, GPT4o), not "platform".
+    static func nameShaped(_ s: String) -> Bool {
+        s.contains { $0.isASCII && ($0.isUppercase || $0.isNumber) }
+    }
+
+    /// A Chinese word "fixed" into a plain English one (平台 → platform): a translation, not a
+    /// misheard name.
+    static func translation(heard: String, word: String) -> Bool {
+        han(heard) && word.contains(where: \.isASCIILetter) && word.allSatisfy(\.isASCII) && !nameShaped(word)
     }
 
     /// Toneless pinyin, one syllable per character, from the system's Mandarin transform.
@@ -138,13 +151,28 @@ enum Correction {
 
     /// The line as shown: each applied fix replaces its words where they still are. The ranges are
     /// the replaced words, for the dotted underline.
+    /// Where `s` stands as words of its own in `text`: a Latin edge of it never runs on into a
+    /// Latin word around it. `core` pads a fix to two characters, so the word list learned
+    /// "S平 → X平", which matched inside "iOS平台" and made it "iOX平台".
+    static func word(_ s: String, in text: String) -> Range<String.Index>? {
+        let latin: (Character?) -> Bool = { $0.map { $0.isASCII && ($0.isLetter || $0.isNumber) } ?? false }
+        var from = text.startIndex
+        while from < text.endIndex, let r = text.range(of: s, range: from..<text.endIndex) {
+            let before = r.lowerBound > text.startIndex ? text[text.index(before: r.lowerBound)] : nil
+            let after = r.upperBound < text.endIndex ? text[r.upperBound] : nil
+            if !(latin(s.first) && latin(before)), !(latin(s.last) && latin(after)) { return r }
+            from = text.index(after: r.lowerBound)
+        }
+        return nil
+    }
+
     static func apply(_ fixes: [LineFix], to src: String) -> (text: String, marks: [Range<String.Index>]) {
         var text = src
         var spans: [(String, Int)] = []   // replacement and its character offset, kept valid as text changes
         // The user's own last: written against the line as it was shown, other fixes in.
         let ordered = fixes.filter { $0.user != true } + fixes.filter { $0.user == true }
         for f in ordered where f.applied && !f.from.isEmpty {
-            guard let r = text.range(of: f.from) else { continue }
+            guard let r = word(f.from, in: text) ?? text.range(of: f.from) else { continue }
             let start = text.distance(from: text.startIndex, to: r.lowerBound)
             let delta = f.to.count - f.from.count
             spans = spans.map { $0.1 > start ? ($0.0, $0.1 + delta) : $0 }

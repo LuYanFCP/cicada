@@ -15,7 +15,8 @@ sys.path.insert(0, os.path.dirname(HERE))
 from test_providers import Base, Fake, reply  # noqa: E402
 
 from cicada.core import aicheck, jsonfmt, providers  # noqa: E402
-from cicada.core.ling import OK, TRANSLATE, LingError, Response, silence_wav  # noqa: E402
+from cicada.core.ling import INVALID, NOTES, OK, TRANSLATE, LingError, Response, silence_wav  # noqa: E402
+from cicada.core.support import Paths  # noqa: E402
 from cicada.core.settings import AppSettings  # noqa: E402
 
 
@@ -292,6 +293,180 @@ class HearAddress(Base):
         ling.check()
         self.assertEqual(("hear", aicheck.BAD_ADDRESS, None), ling.check_result.failure)
         self.assertFalse(any("input_audio" in b for _u, b in fake.sent))
+
+
+class AuthFake(Fake):
+    """Fake, also keeping the key each request carried (`auth`, in order)."""
+
+    def __init__(self, respond):
+        super().__init__(respond)
+        self.auth = []
+
+    def send(self, url, method, body, headers, timeout):
+        self.auth.append(headers.get("Authorization"))
+        return super().send(url, method, body, headers, timeout)
+
+
+MAIN, NOTES_AT = "https://main.example/v1/", "https://notes.example/v1/"
+
+
+class NotesApart(Base):
+    """Notes on their own model, or another server with its own key (LingTests.swift › Notes apart)."""
+
+    def notes_client(self, fake, own: bool, **kw):
+        kw.setdefault("aiCustomNotesBase", NOTES_AT if own else "")
+        s = dict(aiCustomBase=MAIN, aiModels={"custom": "mt", "custom.notes": "big"}, aiHearModels={"custom": "omni"},
+                 aiCustomNotesOwn=own, **kw)
+        return self.client(fake, "custom", key="sk-main-1111111111", **s)
+
+    def test_notes_go_to_their_model_and_server_translation_stays(self):
+        fake = AuthFake(lambda u, b: answer("{}"))
+        ling, _ = self.notes_client(fake, own=True)
+        ling.notes_key_file.save("sk-notes-222222222")
+        ling.chat("x", "Notes.", NOTES, json=True)
+        ling.chat("y", "Translate.", TRANSLATE)
+        self.assertEqual(["big", "mt"], [jsonfmt.parse_object(b)["model"] for _u, b in fake.sent])
+        self.assertEqual([NOTES_AT + "chat/completions", MAIN + "chat/completions"], [u for u, _b in fake.sent])
+        self.assertEqual(["Bearer sk-notes-222222222", "Bearer sk-main-1111111111"], fake.auth)
+        # Its own key file, named as on the Mac, 0600.
+        path = os.path.join(Paths.config(), "ai-key-custom-notes")
+        self.assertEqual(path, ling.notes_key_file.path)
+        self.assertEqual(0o600, os.stat(path).st_mode & 0o777)
+        # Hearing is never notes: it stays at the hear address with the translation key.
+        ling.chat("z", "Hear.", NOTES, model="omni", audio=silence_wav())
+        self.assertEqual(MAIN + "chat/completions", fake.sent[-1][0])
+        self.assertEqual("Bearer sk-main-1111111111", fake.auth[-1])
+
+    def test_notes_without_their_own_key_use_the_translation_key(self):
+        fake = AuthFake(lambda u, b: answer("{}"))
+        ling, _ = self.notes_client(fake, own=True)
+        self.assertFalse(ling.notes_has_own_key)
+        ling.chat("x", "Notes.", NOTES)
+        self.assertEqual("Bearer sk-main-1111111111", fake.auth[-1])
+        self.assertTrue(fake.sent[-1][0].startswith(NOTES_AT))
+        # The same service, another model: same address and key, even with a notes key on file.
+        same, _ = self.notes_client(fake, own=False)
+        same.notes_key_file.save("sk-notes-222222222")
+        self.assertFalse(same.notes_has_own_key)
+        same.chat("x", "Notes.", NOTES)
+        self.assertTrue(fake.sent[-1][0].startswith(MAIN))
+        self.assertEqual("Bearer sk-main-1111111111", fake.auth[-1])
+        self.assertEqual("big", jsonfmt.parse_object(fake.sent[-1][1])["model"])
+
+    def test_a_refused_notes_key_leaves_translation_working(self):
+        fake = AuthFake(lambda u, b: Response(401, "{}") if '"big"' in b else answer("好"))
+        ling, _ = self.notes_client(fake, own=True)
+        with self.assertRaises(LingError) as e:
+            ling.chat("x", "Notes.", NOTES)
+        self.assertEqual(LingError.INVALID_KEY, e.exception.kind)
+        self.assertNotEqual(INVALID, ling.key_state)
+        self.assertEqual("好", ling.chat("y", "Translate.", TRANSLATE))
+        # The real request told the notes, and only them: the next notes call doesn't go out.
+        r = ling.check_result
+        self.assertEqual(aicheck.INVALID_KEY, r.notes.reason)
+        self.assertIsNone(r.failure)
+        sent = len(fake.sent)
+        with self.assertRaises(LingError):
+            ling.chat("x", "Notes.", NOTES)
+        self.assertEqual(sent, len(fake.sent))
+        # A refused translation key still stops translation.
+        fake.respond = lambda u, b: Response(401, "{}")
+        with self.assertRaises(LingError):
+            ling.chat("y", "Translate.", TRANSLATE)
+        self.assertEqual(INVALID, ling.key_state)
+
+    def test_notes_fall_back_to_translation_until_set(self):
+        plain = providers.AIConfig(providers.CUSTOM, MAIN, "mt", "h")
+        self.assertFalse(plain.notes_apart)
+        self.assertEqual(plain, plain.for_notes)
+        model = providers.AIConfig(providers.CUSTOM, MAIN, "mt", "h", notes_model="big")
+        self.assertTrue(model.notes_apart)
+        self.assertEqual(("big", MAIN), (model.for_notes.text_model, model.for_notes.base))
+        # Only the custom service splits.
+        ling = providers.AIConfig(providers.LING, providers.LING.base, "x", "h", notes_model="big")
+        self.assertFalse(ling.notes_apart)
+        self.assertEqual("x", ling.for_notes.text_model)
+        # From the settings: the translation model or address chosen again is no split.
+        c = AppSettings(aiProvider="custom", aiCustomBase=MAIN, aiModels={"custom": "mt", "custom.notes": " mt "}).ai_config()
+        self.assertFalse(c.notes_apart)
+        c = AppSettings(aiProvider="custom", aiCustomBase=MAIN, aiModels={"custom": "mt"}, aiCustomNotesOwn=True,
+                        aiCustomNotesBase="main.example/v1").ai_config()
+        self.assertIsNone(c.notes_base)
+        self.assertTrue(c.notes_apart)  # 另一个服务 alone: its own key may differ
+        # 同一个服务 keeps the address typed, unused.
+        s = AppSettings(aiProvider="custom", aiCustomBase=MAIN, aiModels={"custom": "mt"}, aiCustomNotesOwn=False,
+                        aiCustomNotesBase=NOTES_AT)
+        self.assertFalse(s.ai_config().notes_apart)
+        self.assertEqual(NOTES_AT, s.aiCustomNotesBase)
+        s.aiCustomNotesOwn = True
+        self.assertEqual(NOTES_AT, s.ai_config().for_notes.base)
+        # http to the internet can't be used.
+        s.aiCustomNotesBase = "http://notes.example/v1"
+        c = s.ai_config()
+        self.assertTrue(c.notes_bad_address)
+        self.assertEqual(MAIN, c.for_notes.base)
+
+    def test_settings_keep_notes_across_a_restart(self):
+        s = AppSettings(aiProvider="custom", aiCustomNotesOwn=True, aiCustomNotesBase=NOTES_AT,
+                        aiModels={"custom": "mt", "custom.notes": "big"})
+        s.save()
+        back = AppSettings.load()
+        self.assertTrue(back.aiCustomNotesOwn)
+        self.assertEqual(NOTES_AT, back.aiCustomNotesBase)
+        self.assertEqual("big", back.aiModels["custom.notes"])
+
+    def test_a_429_at_the_notes_server_does_not_hold_translation(self):
+        ling, _ = self.notes_client(AuthFake(lambda u, b: answer()), own=True)
+        ling._rate_limited(10.0, None, base=NOTES_AT)
+        # Translation (no retries: it fails at once while its server cools down) goes on…
+        self.assertEqual("周五发布。", ling.chat("y", "Translate.", TRANSLATE))
+        # …while the notes' server waits.
+        with self.assertRaises(LingError) as e:
+            ling._acquire(TRANSLATE, fail_if_paused=True, base=NOTES_AT)
+        self.assertEqual(LingError.RATE_LIMITED, e.exception.kind)
+
+    def test_the_check_tests_notes_on_their_side(self):
+        listed = {"data": [{"id": "big"}, {"id": "bigger"}]}
+
+        def respond(url, body):
+            if url.endswith("/models"):
+                return Response(200, jsonfmt.write(listed)) if url.startswith(NOTES_AT) else Response(404, "")
+            if url.startswith(NOTES_AT):
+                return Response(401, "{}")
+            return answer("NONE" if "input_audio" in body else "周五发布。")
+        fake = AuthFake(respond)
+        ling, _ = self.notes_client(fake, own=True)
+        self.assertEqual(OK, ling.check())
+        r = ling.check_result
+        self.assertIsNone(r.failure)
+        self.assertTrue(r.passed)
+        self.assertEqual(aicheck.FAIL, r.notes.kind)
+        self.assertTrue(r.notes_failed)
+        self.assertIn("notes=fail(invalidKey)", r.summary())
+        # Translation's JSON probe isn't asked: notes are tested where they go.
+        main_json = [b for u, b in fake.sent if u.startswith(MAIN) and "json_object" in b]
+        self.assertEqual([], main_json)
+        self.assertIn("不认上面的 key", r.notes_line("notes.example", "big", shared_key=True))
+        self.assertIn("key 无效", r.notes_line("notes.example", "big", shared_key=False))
+        self.assertEqual(["big", "bigger"], ling.notes_catalog)
+        # Their own key, which works.
+        fake.respond = lambda u, b: (Response(404, "") if u.endswith("/models") else
+                                     answer('{"ok": true}' if "JSON object" in b else "周五发布。"))
+        ling.notes_key_file.save("sk-notes-222222222")
+        ling.key_changed()
+        self.assertEqual(OK, ling.check())
+        self.assertEqual(aicheck.OK, ling.check_result.notes.kind)
+        self.assertIsNone(ling.check_result.notes_line("notes.example", "big", True))
+        notes_req = [a for (u, _b), a in zip(fake.sent, fake.auth) if u.startswith(NOTES_AT) and "chat" in u]
+        self.assertEqual(["Bearer sk-notes-222222222"], notes_req[-1:])
+
+    def test_a_bad_notes_address_fails_only_notes(self):
+        fake = AuthFake(lambda u, b: Response(404, "") if u.endswith("/models") else answer())
+        ling, _ = self.notes_client(fake, own=True, aiCustomNotesBase="http://notes.example/v1")
+        self.assertEqual(OK, ling.check())
+        self.assertEqual(aicheck.BAD_ADDRESS, ling.check_result.notes.reason)
+        self.assertIn("局域网", ling.check_result.notes_line("x", "big", True))
+        self.assertFalse(any("notes.example" in u for u, _b in fake.sent))
 
 
 class StubLing:

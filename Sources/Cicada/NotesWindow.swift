@@ -95,9 +95,8 @@ final class NotesWindowController: NSObject, NSWindowDelegate {
     /// The onboarding window while it's open. The panel floats above it and can't be clicked
     /// through, so it must never sit on it: on a 1024×768 screen the sidebar covered 继续.
     private weak var avoiding: NSWindow?
-    /// The user's own frame, put back when the window closes, and where we put the panel instead.
-    private var ownFrame: NSRect?
-    private var placedFrame: NSRect?
+    /// Moved out of the way: the user's own frame, put back when the window closes, and where we put the panel instead.
+    private var moved: (own: NSRect, placed: NSRect)?
     /// Asked to show while there was no room beside the window: shown once it closes.
     private var waiting = false
 
@@ -111,13 +110,12 @@ final class NotesWindowController: NSObject, NSWindowDelegate {
             }
             return
         }
-        if let ownFrame, let p = panel {
+        if let moved, let p = panel {
             // Unless the user has moved it since; either way it's remembered again from here.
-            if p.frame == placedFrame { p.setFrame(ownFrame, display: true) }
+            if p.frame == moved.placed { p.setFrame(moved.own, display: true) }
             p.setFrameAutosaveName(Self.autosave)
         }
-        ownFrame = nil
-        placedFrame = nil
+        moved = nil
         if waiting {
             waiting = false
             show()
@@ -133,13 +131,11 @@ final class NotesWindowController: NSObject, NSWindowDelegate {
             debugLog("notes window waits: no room beside onboarding \(w.frame) in \(screen.visibleFrame)")
             return false
         }
-        if ownFrame == nil {
-            ownFrame = p.frame
-            // Not remembered: quit during onboarding and the next meeting still opens where the user left it.
-            p.setFrameAutosaveName("")
-        }
+        let own = moved?.own ?? p.frame
+        // Not remembered: quit during onboarding and the next meeting still opens where the user left it.
+        if moved == nil { p.setFrameAutosaveName("") }
         p.setFrame(r, display: true)
-        placedFrame = p.frame
+        moved = (own, p.frame)
         return true
     }
 
@@ -766,10 +762,7 @@ struct NotesWindowView: View {
     }
 
     /// Who the banners name: a custom service by its address, which says more than 这个服务.
-    private var serviceLabel: String {
-        let ling = textAI
-        return ling.provider.id == .custom && !ling.serviceHost.isEmpty ? ling.serviceHost : ling.serviceName
-    }
+    private var serviceLabel: String { textAI.serviceLabel }
 
     /// Lines the notes don't cover yet, once they are two minutes behind the meeting (between
     /// ordinary 45 s updates there is always a little that isn't in yet).
@@ -954,7 +947,7 @@ struct NotesWindowView: View {
                                jumpTo: jumpTo, speakers: speakers, startedAt: store.liveStart,
                                identifying: model.identifyingLanguage,
                                voices: speakers.isEmpty ? [:] : SpeakerLabels.voiceNumbers(lines), marked: editingVoice,
-                               places: RecordList.heardBoth(lines), settling: model.settling,
+                               places: RecordList.heardBoth(lines), settling: model.settling, voicePending: model.voicePending,
                                onAssign: { ids, voice in if let s = session { model.assignLines(session: s.id, ids, to: voice) } },
                                onRevert: { lineID, fix in if let s = session { model.fixes.revert(fix, lineID: lineID, in: s.id) } }) {
                 LivePartialRow(model: model, startedAt: store.liveStart)

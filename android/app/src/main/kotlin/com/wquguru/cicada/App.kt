@@ -51,6 +51,8 @@ class CicadaApp : Application() {
     lateinit var overlay: Overlay
     lateinit var voice: Voice
     lateinit var updates: AppUpdates
+    /// 存到文件夹 (设置 › 会后存一份).
+    lateinit var folderExport: FolderExporter
     /// 分享…: the share service on cicada.indaloop.app (Share.kt). Its version without "-dev".
     val share by lazy {
         ShareClient("android", (packageManager.getPackageInfo(packageName, 0).versionName ?: "0.0.0").substringBefore('-'))
@@ -99,6 +101,7 @@ class CicadaApp : Application() {
         ling.proxyHint = { AiCheckViews.proxyHint(this) }
         watchNetwork()
         store = SessionStore(loadNow = false)
+        folderExport = FolderExporter(this)
         background.execute { val t = System.currentTimeMillis(); store.load(); Log.d("store: loaded ${store.all().size} in ${System.currentTimeMillis() - t} ms") }
         notes = NotesEngine(ling, store)
         translator = Translator(ling)
@@ -128,6 +131,14 @@ class CicadaApp : Application() {
         listen.onChange(::changed)
         notes.onChange(::changed)
         store.onChange { changed() }
+        // 存到文件夹: written once a record is settled, rewritten when it changes, forgotten (not
+        // deleted) with it. "" is the records read at launch: try what was waiting.
+        store.onChange { id -> main.post {
+            if (id.isEmpty()) folderExport.retry()
+            else if (store.get(id) == null) folderExport.deleted(id) else folderExport.saved(id)
+        } }
+        notes.finalDone = { id -> main.post { folderExport.settled(id) } }
+        main.post { folderExport.retry() }  // the records may have been read before the listener was in
         ling.onChange(::changed)
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             // Meetings are private: the recent-apps preview shows a blank card, not the transcript
@@ -135,7 +146,11 @@ class CicadaApp : Application() {
             override fun onActivityPreCreated(a: android.app.Activity, b: android.os.Bundle?) {
                 if (Build.VERSION.SDK_INT >= 33 && a !is ProjectionActivity) a.setRecentsScreenshotEnabled(false)
             }
-            override fun onActivityResumed(a: android.app.Activity) { resumed++; updateOverlay() }
+            override fun onActivityResumed(a: android.app.Activity) {
+                // Coming back from elsewhere (a grant fixed, storage back): 存到文件夹 tries again.
+                if (resumed++ == 0) folderExport.retry()
+                updateOverlay()
+            }
             // Moving between Cicada's own screens pauses one before resuming the next: wait a beat.
             override fun onActivityPaused(a: android.app.Activity) { resumed--; main.postDelayed(::updateOverlay, 400) }
             override fun onActivityCreated(a: android.app.Activity, b: android.os.Bundle?) {}
@@ -366,6 +381,8 @@ class CicadaApp : Application() {
             // The whole meeting read once more for names.
             recId?.let { namer.guess(it, force = true) }
             if (imported != null && recId != null) store.update(recId) { it.importing = null }
+            // A meeting or an imported file is over: 存到文件夹 writes it once its notes are.
+            recId?.let { id -> main.post { folderExport.ended(id) } }
             rec?.finish { ok -> if (ok && recId != null && store.get(recId) != null) store.update(recId) { it.hasAudio = true } }
             main.post {
                 starting = 0
@@ -451,12 +468,35 @@ class CicadaApp : Application() {
         val s = settings
         val p = s.aiProvider
         if (kind == "text" && p == "ling") s.model = model.ifEmpty { LingClient.DEFAULT_MODEL }
-        else {
+        else if (kind == "notes") {
+            // The custom service's notes model; empty: the translation model.
+            if (model.isNotEmpty()) s.aiModels[Providers.NOTES_MODEL] = model else s.aiModels.remove(Providers.NOTES_MODEL)
+        } else {
             val table = when (kind) { "text" -> s.aiModels; "hear" -> s.aiHearModels; "voice" -> s.aiVoiceModels; else -> return }
             if (model.isNotEmpty()) table[p] = model else table.remove(p)
         }
         s.save()
         aiChanged()
+    }
+
+    /// 纪要 › 同一个服务 / 另一个服务 (the custom service): off keeps the typed address.
+    fun setNotesOwn(on: Boolean) {
+        settings.aiCustomNotesOwn = on
+        settings.save()
+        aiChanged()
+    }
+
+    fun setNotesBase(raw: String) {
+        settings.aiCustomNotesBase = raw.trim()
+        settings.save()
+        aiChanged()
+    }
+
+    /// Notes' own key (另一个服务), sealed like the others; null removes it (back to the key above).
+    fun setNotesKey(raw: String?): Boolean {
+        val ok = if (raw == null) { ling.removeNotesKey(); true } else ling.setNotesKey(raw)
+        if (ok) aiChanged()
+        return ok
     }
 
     /// The service, its address, models or key changed: forget the old check and check again.

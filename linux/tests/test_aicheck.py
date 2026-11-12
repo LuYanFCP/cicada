@@ -235,10 +235,11 @@ class Checks(Base):
         self.assertEqual(("text", "noModel", 404), ling.check_result.failure)
         self.assertEqual(["ok", "ok", "fail", "skipped"], kinds(ling.check_result))
         self.assertTrue(ling.usable)
-        # One the service answers but no longer lists.
+        # One the service answers but doesn't list (an alias, a name typed by hand): a real request
+        # just went through, so it exists whatever the list says (Ling.swift › check, 2026-11).
         ling, _ = self.client(service(), aiModels={"zenmux": "old/model"})
-        ling.check()
-        self.assertEqual(("text", "noModel", None), ling.check_result.failure)
+        self.assertEqual(OK, ling.check())
+        self.assertIsNone(ling.check_result.failure)
 
     def test_a_deaf_hear_model(self):
         ling, _ = self.client(service(hear=400), aiHearModels={"zenmux": "x/text-only"})

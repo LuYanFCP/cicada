@@ -325,3 +325,42 @@
 /* 改正听错的词: Ming translates with the audio, so fixing is a request of its own; the list is on this PC. */
 "每句话说完多发一次文字请求" = "One more text request per finished sentence";
 "最多 %lld 个，满了优先用最近的。只存在这台电脑上" = "Up to %lld, recent ones first. Stored only on this PC";
+
+/* 按住说话's 更改 (#22): keyboards without right Ctrl pick another talk key. */
+"按下想用的键…" = "Press a key…";
+"Esc 取消" = "Esc to cancel";
+"左 Ctrl" = "Left Ctrl";
+"右 Shift" = "Right Shift";
+"左 Shift" = "Left Shift";
+"菜单键" = "Menu key";
+"Windows 键会打开开始菜单，换一个吧" = "The Windows key opens Start. Try another key";
+"Alt 松开时会打开窗口的菜单，换一个吧" = "Alt opens window menus when released. Try another key";
+"打字时会用到这个键，换一个不常用的吧" = "You type with this key. Pick one you rarely use";
+"只有单独按住才算，Ctrl C 这类快捷键不会开始说话" = "Only counts when held alone: shortcuts like Ctrl C won't start talking";
+"只有单独按住才算，打字时的 Shift 不会开始说话" = "Only counts when held alone: Shift while typing won't start talking";
+"按住说话时不会切换大小写" = "Holding it to talk won't switch caps";
+/* 试听's result under the voice (#22: it used to fail silently). */
+"停止" = "Stop";
+"这台电脑没有%@的声音，没放出来。" = "This PC has no %@ voice, so nothing played.";
+"在 Windows 设置里添加这个语言的语音，或者换一个 AI 服务的声音。" = "Add a voice for this language in Windows Settings, or pick an AI service voice.";
+"打开语音设置" = "Open speech settings";
+"没放出声音：找不到扬声器。" = "Nothing played: no speakers found.";
+"看看耳机或扬声器有没有连上。" = "Check that headphones or speakers are connected.";
+"%@ 的声音没连上，刚才放的是 Windows 自带的。" = "Couldn't reach the %@ voice, so that was the Windows voice.";
+"开会时也会这样换过去，不会不出声。" = "Meetings fall back the same way, so you're never silent.";
+"没放出声音。" = "Nothing played.";
+"再试一次，还不行就换一个声音。" = "Try again, or pick another voice.";
+/* VB-Cable took the speaker (CableDefaults). Copy polished and translated with gemini-4-argon, reviewed. */
+"电脑声音照常从 %@ 播放" = "PC audio will keep playing through %@";
+"电脑没声了？" = "No sound from your PC?";
+"Windows 把播放设备改成了 CABLE Input" = "Windows changed the playback device to CABLE Input";
+"恢复声音" = "Restore sound";
+"听不到电脑声音了？" = "Can't hear your PC?";
+"Windows 把输出改成了 CABLE Input，点此恢复" = "Windows switched audio output to CABLE Input. Click to restore.";
+"自动恢复失败" = "Couldn't restore audio";
+"请去 Windows 声音设置，把输出设备改回你的耳机或扬声器" = "Go to Windows Sound settings and switch the output device back to your headphones or speakers.";
+/* 存到文件夹 on Windows: controlled folder access instead of macOS privacy settings, File Explorer instead of Finder. */
+"打开 Windows 安全中心" = "Open Windows Security";
+"在 Windows 安全中心里允许知了，或换个文件夹" = "Allow Cicada in Windows Security, or pick another folder";
+"换个文件夹，或在它的属性里允许写入" = "Pick another folder, or allow writing in its Properties";
+"在文件资源管理器中显示" = "Show in File Explorer";

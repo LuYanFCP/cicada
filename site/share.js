@@ -126,7 +126,7 @@
 
     var stack = $("sh-stack"), list = $("sh-people");
     speakers.slice(0, 4).forEach(function (s) { stack.appendChild(avatar(s)); });
-    $("sh-people-label").textContent = T.people.replace("{n}", speakers.length);
+    $("sh-people-label").textContent = (speakers.length === 1 ? T.person : T.people).replace("{n}", speakers.length);
     speakers.forEach(function (s) {
       var li = el("li", null, s.cls), track = el("span", null, "track"), bar = el("span", null, "fill");
       li.appendChild(avatar(s));
@@ -177,7 +177,7 @@
       if (g.summary) body.appendChild(el("span", g.summary, "s"));
       row.appendChild(body);
       if (canOpen) {
-        var count = el("span", g.lines.length ? T.lines.replace("{n}", g.lines.length) : "", "n");
+        var count = el("span", g.lines.length ? (g.lines.length === 1 ? T.line : T.lines).replace("{n}", g.lines.length) : "", "n");
         count.appendChild(chevron());
         row.appendChild(count);
       }

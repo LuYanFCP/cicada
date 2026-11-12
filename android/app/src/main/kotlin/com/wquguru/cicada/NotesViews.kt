@@ -167,9 +167,7 @@ object NotesViews {
         app.listen.listening && app.translator.googleOff && app.translator.sentencesUntranslated
 
     /// Where this meeting's notes stop: the time of the last line they cover.
-    /// Who the banner names: a custom service by its address, which says more than 这个服务.
-    private fun serviceLabel(app: CicadaApp): String =
-        app.ling.serviceHost.takeIf { app.ling.provider.id == "custom" && it.isNotEmpty() } ?: app.ling.serviceName
+    private fun serviceLabel(app: CicadaApp): String = app.ling.serviceLabel
 
     /// An import's progress: the bar and "26:40 / 42:15".
     fun progress(ui: Ui, file: FileSource): LinearLayout {

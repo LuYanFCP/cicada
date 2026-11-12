@@ -548,6 +548,9 @@ object PressSpeech {
 
     /** Nothing but fillers (嗯, 啊, um, hmm…), whatever the punctuation. */
     fun filler(text: String): Boolean {
+        // A heading with nothing after it ("翻译结果：", "Translation:"): the model's answer to noise, not a sentence.
+        val trimmed = text.trim()
+        if (trimmed.length in 1..12 && trimmed.last() in ":：") return true
         val words = text.lowercase().split(Regex("[^\\p{L}]+")).filter { it.isNotEmpty() }
         return words.isEmpty() || words.all { w -> w in fillers || (w.length > 1 && w.toSet().size == 1 && w.substring(0, 1) in fillers) }
     }

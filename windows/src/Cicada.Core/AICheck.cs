@@ -57,6 +57,13 @@ public sealed class AICheck
     public double? Balance { get; set; }
     /// A custom service: how long one real sentence took, and whether the model thought first.
     public Speed? Translate { get; set; }
+    /// A custom service whose notes go to another model or server: how that one answered (Running,
+    /// Ok with seconds, or Fail with why). Null while notes use the translation model (then the
+    /// steps say it all). A notes failure doesn't stop translation: Failure and Passed stay about
+    /// translation.
+    public State? Notes { get; set; }
+    /// Translation works but the notes' own model or server doesn't (a busy one fixes itself).
+    public bool NotesFailed => Notes is { Kind: Kind.Fail, Why: not Reason.Busy };
 
     /// A sentence that takes `SlowAfter` seconds often misses the 6 s a translation is given
     /// (Translator) and falls back to Google; a model that thinks first does every time.
@@ -81,7 +88,7 @@ public sealed class AICheck
 
     public AICheck Clone()
     {
-        var c = new AICheck { At = At, Passive = Passive, Proxy = Proxy, Balance = Balance, Translate = Translate };
+        var c = new AICheck { At = At, Passive = Passive, Proxy = Proxy, Balance = Balance, Translate = Translate, Notes = Notes };
         steps.CopyTo(c.steps, 0);
         return c;
     }
@@ -99,7 +106,7 @@ public sealed class AICheck
         }
     }
 
-    public bool IsRunning => steps.Any(s => s.Kind == Kind.Running);
+    public bool IsRunning => steps.Any(s => s.Kind == Kind.Running) || Notes?.Kind == Kind.Running;
     public bool IsBusy => steps.Any(s => s.Kind == Kind.Busy);
     /// Every step passed (busy counts; a step nothing has tested yet does not block).
     public bool Passed => At is not null && Failure is null && !IsRunning;
@@ -273,6 +280,24 @@ public sealed class AICheck
             : Strings.LF("翻一句要 %@ 秒，超过 6 秒会改用 Google。换一个更小的模型会快一些。", secs);
     }
 
+    /// The notes' own model or server's problem, in one sentence. `sharedKey`: notes use the
+    /// translation key, so a refused key wants one of their own.
+    public string? NotesLine(string host, string model, bool sharedKey)
+    {
+        if (Notes is not { Kind: Kind.Fail, Why: { } why } n) return null;
+        return why switch
+        {
+            Reason.InvalidKey or Reason.MgmtKey => sharedKey ? Strings.LF("%@ 不认上面的 key，给它单独填一个。", host) : Strings.LF("%@ 说这个 key 无效，可能没复制全，或已删除。", host),
+            Reason.Unreachable => Strings.LF("这台电脑访问不到 %@。", host),
+            Reason.BadAddress => Strings.L("地址要用 https；这台电脑和局域网里的服务可以用 http。"),
+            Reason.NoCredit => Strings.LF("%@ 账户余额不足。", host),
+            Reason.NoModel => Strings.LF("%@ 上找不到 %@ 这个模型。", host, model),
+            Reason.NoJSON => Strings.L("这个模型没按要求返回 JSON，写不了纪要。换一个通用模型。"),
+            Reason.Busy => null,
+            _ => Strings.LF("%@ 暂时出错（HTTP %lld），稍后再试。", host, n.Code ?? 0),
+        };
+    }
+
     /// The proxy line under "can't reach": what this computer's proxy looks like, and what to do.
     public string? ProxyLine(string service, string host)
     {
@@ -297,15 +322,17 @@ public sealed class AICheck
         get
         {
             static string Lower(object o) { var s = o.ToString()!; return char.ToLowerInvariant(s[0]) + s[1..]; }
-            var parts = Steps.Select(s => $"{Lower(s.Id)}=" + s.State.Kind switch
+            static string Step(State s) => s.Kind switch
             {
-                Kind.Ok => s.State.Seconds is { } sec ? $"ok({sec.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}s)" : "ok",
-                Kind.Fail => $"fail({(s.State.Why is { } w ? Lower(w) : "?")}{(s.State.Code is { } c ? $" {c}" : "")})",
+                Kind.Ok => s.Seconds is { } sec ? $"ok({sec.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}s)" : "ok",
+                Kind.Fail => $"fail({(s.Why is { } w ? Lower(w) : "?")}{(s.Code is { } c ? $" {c}" : "")})",
                 var k => Lower(k),
-            });
+            };
+            var parts = Steps.Select(s => $"{Lower(s.Id)}=" + Step(s.State));
             return string.Join(" ", parts) + (Proxy is { } p ? $" proxy={p}" : "")
                 + (Balance is { } b ? $" balance={b.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}" : "") + (Passive ? " passive" : "")
-                + (Translate is { } t ? $" translate={t.Seconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}s{(t.Thinks ? " thinks" : "")}" : "");
+                + (Translate is { } t ? $" translate={t.Seconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}s{(t.Thinks ? " thinks" : "")}" : "")
+                + (Notes is { } n ? " notes=" + Step(n) : "");
         }
     }
 

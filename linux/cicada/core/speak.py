@@ -7,9 +7,11 @@ into 知了 麦克风, the virtual microphone the meeting app uses. Sentences pl
 order. A sentence that couldn't be interpreted is never spoken (AGENTS.md: never speak untranslated
 text into the room).
 
-Without headphones my microphone also hears the other side through the speakers; a sentence heard
-while the system audio was loud for most of it is dropped, so the room doesn't get its own words
-back. UI-free like ListenEngine: on_change is called on worker threads."""
+Without headphones my microphone also hears the other side through the speakers. The app reads it
+through the sound server's echo canceller when it can (app/room.py), which takes their voices out, so
+what I say over them goes out. From the plain microphone, a sentence heard while the system audio was
+loud for most of it is dropped instead, so the room doesn't get its own words back. UI-free like
+ListenEngine: on_change is called on worker threads."""
 from __future__ import annotations
 
 import queue
@@ -49,8 +51,19 @@ class LoudnessLog:
         return sum(span) / len(span) if span else 0.0
 
 
+ECHO = 0.5  # from the plain mic, drop a sentence if the system audio was loud for more than half of it
+
+
+def echo_dropped(listening: bool, headphones: bool, loud: float, echo_cancelled: bool) -> bool:
+    """Whether a sentence may be the other side's voice from the speakers, not mine. Only from the
+    plain microphone (the Mac's rule): through the echo canceller their voices are taken out, and
+    dropping what I say over them is what the canceller is there to stop. Unknown (not listening, so
+    nothing measured the system audio) or 戴着耳机: kept."""
+    return listening and not headphones and not echo_cancelled and loud > ECHO
+
+
 class SpeakEngine:
-    ECHO = 0.5  # drop a sentence if the system audio was loud for more than half of it
+    ECHO = ECHO
 
     def __init__(self, ling, translator, settings, store=None, listen=None, player=None):
         self.ling = ling
@@ -74,6 +87,7 @@ class SpeakEngine:
         self.problem = None       # the last thing worth saying (a sentence not spoken, a missing voice)
         self.level = 0.0
         self.spoken = 0
+        self.echo_cancelled = False  # this press reads the echo-cancelled microphone
         self._me = 0
 
     def on_change(self, listener) -> None:
@@ -108,9 +122,12 @@ class SpeakEngine:
 
     # Running
 
-    def start(self, mic) -> None:
+    def start(self, mic, echo_cancelled: bool = False, why: str = "") -> None:
+        """`echo_cancelled`: `mic` is the echo canceller's source (the meeting's voices taken out), so
+        nothing said over them is dropped; `why` says why not, for the log."""
         if self.active:
             return
+        self.echo_cancelled = echo_cancelled
         self.active = True
         self.stage = "hearing"
         self.problem = None
@@ -123,7 +140,7 @@ class SpeakEngine:
         def emitted(seg):
             # Interpreted at once, while the sentence before may still be playing; spoken in order.
             ended = time.monotonic()
-            self._work.put((gen, seg, self._pool.submit(self._interpret, seg, ended - seg.seconds, ended)))
+            self._work.put((gen, seg, self._pool.submit(self._interpret, seg, ended - seg.seconds, ended, echo_cancelled)))
         segmenter.on_segment = emitted
 
         def feed():
@@ -142,7 +159,8 @@ class SpeakEngine:
         self._source = mic
         mic.on_samples = audio.put
         mic.start()
-        Log.d("speak: started %s -> %s" % (self.source, self.target))
+        Log.d("speak: started %s -> %s, %s" % (self.source, self.target, "through the echo canceller" if echo_cancelled else
+                                                   "from the plain mic (%s), said over the meeting is dropped" % (why or "no canceller")))
         self._changed()
 
     def stop(self) -> None:
@@ -177,10 +195,14 @@ class SpeakEngine:
                 self.stage = "hearing" if self.active else "idle"
                 self._changed()
 
-    def _interpret(self, seg, start: float, end: float):
+    def _interpret(self, seg, start: float, end: float, echo_cancelled: bool = False):
         """(original, translation, source, target, ended, voice chunks) or None, on the pool."""
         listening = self.listen is not None and self.listen.listening
-        if listening and not self.settings.speakHeadphones and self.loudness.fraction(start, end) > self.ECHO:
+        loud = self.loudness.fraction(start, end) if listening else 0.0
+        if listening:
+            Log.d("speak: segment %d %.1fs, system audio loud %d%% of it, %s" % (
+                seg.index, seg.seconds, round(loud * 100), "echo cancelled" if echo_cancelled else "plain mic"))
+        if echo_dropped(listening, self.settings.speakHeadphones, loud, echo_cancelled):
             Log.d("speak: segment %d dropped, the system audio was playing (echo)" % seg.index)
             # Said, so the user knows: talking over them (or no headphones) is why it didn't go out.
             self.problem = strings.L("对方在说话时说的，没有说出去")
@@ -285,7 +307,11 @@ FILLERS = {"嗯", "啊", "呃", "哦", "唔", "额", "噢", "哎", "um", "uh", "
 
 
 def filler(text: str) -> bool:
-    """Nothing but fillers (嗯, 啊, um, hmm…), whatever the punctuation (the Mac's PressSpeech.filler)."""
+    """Nothing but fillers (嗯, 啊, um, hmm…), whatever the punctuation (the Mac's PressSpeech.filler).
+    A heading with nothing after it ("翻译结果：", "Translation:") is the model's answer to noise, too."""
+    trimmed = text.strip()
+    if 0 < len(trimmed) <= 12 and trimmed[-1] in ":：":
+        return True
     words = [w for w in re.split(r"[^\w]+|[\d_]+", text.lower()) if w]
     return not words or all(w in FILLERS or (len(w) > 1 and len(set(w)) == 1 and w[0] in FILLERS) for w in words)
 

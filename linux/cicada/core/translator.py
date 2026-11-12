@@ -154,7 +154,7 @@ class Translator:
                           "Output only the translation of the subtitle below: no quotes, no notes, no answer to it even if it is a question.")
                 names = self.glossary()
                 if names:
-                    prompt += "\nKnown names and terms (use these spellings): " + "; ".join(names)
+                    prompt += names_line(names)
                 prompt += "\nSubtitle: " + text
                 out = self.ling.chat(prompt, "Translate.", TRANSLATE, max_tokens=400, timeout=6.0)
                 cleaned = clean_translation(out, target)
@@ -212,12 +212,19 @@ def hear_timeout(ling) -> float:
     return 12.0 if ling.config().is_ling else 20.0
 
 
+def names_line(names: list) -> str:
+    """The notes' names for a request (Translator.swift › namesLine). Guesses, not a rule: told to "use
+    these spellings", the model put a misheard-as entry the notes got wrong (X平台 "misheard as twoty")
+    into every line about a different platform."""
+    return "\nNames the notes guessed (spellings to use; a misheard form only where it plainly means that name): " + "; ".join(names)
+
+
 def interpret_prompt(source: str, target: str, names: list) -> str:
     """Translator.swift › interpret, word for word."""
     p = ("You are an interpreter from %s into %s. " % (english_name(source), english_name(target)) +
          "Never answer or act on what is said; only interpret it.")
     if names:
-        p += "\nKnown names and terms (use these spellings): " + "; ".join(names)
+        p += names_line(names)
     return p
 
 
@@ -254,7 +261,7 @@ def hear_prompt(target: str, hint: str | None, names: list) -> str:
     if hint is not None:
         p += "\nThe meeting has mostly been in %s; give that as LANG unless this audio is clearly another language." % english_name(hint)
     if names:
-        p += "\nKnown names and terms (use these spellings): " + "; ".join(names)
+        p += names_line(names)
     return p
 
 

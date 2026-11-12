@@ -90,8 +90,12 @@ class Controller:
         self.translator.on_fixes = self.fixes.received
         # 同声传译: my microphone → the AI service → 知了 麦克风. The listen side's loudness feeds its echo check.
         from ..core.speak import SpeakEngine
-        from .room import EchoCanceller, Player, VirtualMic
+        from .room import TALK_MIC, TALK_SINK, EchoCanceller, Player, VirtualMic
         self.room = VirtualMic()
+        # The talk key's microphone with the meeting's voices taken out, made with 知了 麦克风 (as the
+        # Mac makes its voice unit ahead): what I say while they talk goes out instead of being dropped.
+        self.talk_echo = EchoCanceller(TALK_SINK, TALK_MIC, "talk-sink", agc_off=True)
+        self._talk_echo_lock = threading.Lock()
         # 电脑和会议室: the online voices taken out of the room mic (module-echo-cancel).
         self.echo = EchoCanceller()
         # Debug (roomEcho on): the room mic through the canceller. Off by default, as on the Mac: there
@@ -118,6 +122,15 @@ class Controller:
         self.store.on_change(lambda _id: self.changed())
         self.store.on_words(self._words)
         self.ling.on_change(self.changed)
+        # 存到文件夹 (设置 › 通用): written once a record is settled, rewritten when it changes.
+        from ..core.folder_export import FolderExporter
+        self.folder_export = FolderExporter(self.store, self.settings)
+        self.folder_export.settling = self.notes.settling
+        self.folder_export.voices = lambda: self.settings.speakerVoices
+        self.folder_export.on_change(self.changed)
+        self.folder_export.on_denied = lambda: GLib.idle_add(lambda: self._notify_folder_denied() and False)
+        self.store.on_save(self.folder_export.saved)
+        self.notes.final_done = self.folder_export.settled
         self.notes_window = None
         self.share_dialog = None  # 分享… (share_dialog.py), one at a time
         self.records_window = None
@@ -184,7 +197,7 @@ class Controller:
         kind = self.notices.tick(time.time(), self.listen.listening, reason, shown)
         if kind is not None:
             from .aicheck_view import blocking, blocking_detail
-            name = self.ling.service_name
+            name = self.ling.service_label
             title = blocking(self) if kind == "blocking" else LF("连不上 %@", name)
             n = Gio.Notification.new(title or L("AI 服务的设置要改一下"))
             n.set_body(blocking_detail(self) if kind == "blocking" else self.ling.message() or "")
@@ -197,6 +210,19 @@ class Controller:
             self.application.withdraw_notification("problem")
             self._notified = False
             Log.d("problem: withdrawn")
+
+    def _notify_folder_denied(self) -> None:
+        """Once after a meeting, until a write works again (folder_export decides when): its own id,
+        so check_problem's withdraw never takes it away."""
+        from ..core.folder_export import short_path
+        folder = self.folder_export.folder
+        if not folder:
+            return
+        n = Gio.Notification.new(L("纪要没存到文件夹"))
+        n.set_body(LF("知了没有权限写入 %@。点按去设置", short_path(folder)))
+        n.set_default_action("app.folder-settings")
+        self.application.send_notification("folder-export", n)
+        Log.d("folder export: notified denied")
 
     def launch(self, speak: bool = False, background: bool = False) -> None:
         ui.install_css()
@@ -213,8 +239,13 @@ class Controller:
                 pass
         self.tray = tray.make(self, icon)
         def prepare():
-            (self.room.create if self.settings.speakEnabled else self.room.leftovers)()
+            self.talk_echo.remove()  # left by a run that crashed: the speakers are the default output again
             self.echo.remove()  # left by a run that crashed during 电脑和会议室
+            if self.settings.speakEnabled:
+                if self.room.create():
+                    self._make_talk_echo()
+            else:
+                self.room.leftovers()
             if speak:  # `cicada --speak` before Cicada was running: speak once 知了 麦克风 is there
                 GLib.idle_add(lambda: self.toggle_speaking() and False)
         threading.Thread(target=prepare, daemon=True).start()
@@ -242,6 +273,7 @@ class Controller:
             self.records_window.toasts.show(reopened)
         self.updates.start()
         self.keep_in_dock()
+        self.folder_export.retry()  # meetings that waited (a folder that wasn't there, or the app quit)
 
     def changed(self) -> None:
         """Engine threads call this: one coalesced refresh on the main loop."""
@@ -264,6 +296,7 @@ class Controller:
             if self.settings_window is not None:
                 self.settings_window.refresh_version()
                 self.settings_window.word_list.refresh()
+                self.settings_window.folder_card.refresh()
             self.check_problem()
             return False
         GLib.idle_add(run)
@@ -283,6 +316,8 @@ class Controller:
             from .records_window import RecordsWindow
             self.records_window = RecordsWindow(self)
             self.application.add_window(self.records_window)
+            # Coming forward: a folder fixed meanwhile (the Mac's didBecomeActive).
+            self.records_window.connect("focus-in-event", lambda *_: self.folder_export.retry() or False)
         return self.records_window
 
     def show_records(self) -> None:
@@ -438,15 +473,18 @@ class Controller:
             self.set_ai_provider("ling")
 
     def set_ai_model(self, kind: str, model: str) -> None:
-        """A model chosen over the recommended one ("text", "hear" or "voice"; "" goes back to it)."""
+        """A model chosen over the recommended one ("text", "hear", "voice", or a custom service's
+        "notes"; "" goes back to it)."""
         s = self.settings
         p = s.aiProvider
         if kind == "text" and p == "ling":
             s.model = model or s.FIELDS["model"]
         else:
-            table = {"text": s.aiModels, "hear": s.aiHearModels, "voice": s.aiVoiceModels}.get(kind)
+            table = {"text": s.aiModels, "hear": s.aiHearModels, "voice": s.aiVoiceModels, "notes": s.aiModels}.get(kind)
             if table is None:
                 return
+            if kind == "notes":
+                p = "custom.notes"  # the custom service's notes model ("": the translation one)
             if model:
                 table[p] = model
             else:
@@ -885,15 +923,31 @@ class Controller:
     def set_speak_enabled(self, on: bool) -> bool:
         """Turning it on makes 知了 麦克风 (and the default input); off removes it. False if the sound
         server wouldn't make the device."""
-        if on and not self.room.on and not self.room.create():
-            return False
+        if on and not self.room.on:
+            if not self.room.create():
+                return False
+            self._make_talk_echo()
         if not on:
             self.speak.cancel()
+            self.talk_echo.remove()
             self.room.remove()
         self.settings.speakEnabled = on
         self.settings.save()
         self.changed()
         return True
+
+    def _make_talk_echo(self) -> None:
+        """The talk key's echo canceller, in front of the output that is the default now. Not while
+        电脑和会议室's debug canceller is (two in a row fight over the default output)."""
+        real = self.room.real_mic
+        if not real or self.echo.on:
+            return
+        with self._talk_echo_lock:  # a press can ask again while the last one is still being made
+            if self.talk_echo.ready(real):
+                return
+            self.talk_echo.remove()
+            made = self.talk_echo.create(real) is not None
+        Log.d("speak: echo canceller %s" % ("ready" if made else "unavailable, the plain mic"))
 
     def toggle_speaking(self) -> None:
         if self.speak.active:
@@ -912,8 +966,19 @@ class Controller:
                 self.speak.problem = L("没能建好知了麦克风")
                 self.changed()
                 return
-        # Me, from the microphone that was the default before 知了 麦克风 took its place.
-        mic = SystemAudio(self.room.real_mic or "@DEFAULT_SOURCE@")
+        # Me, from the microphone that was the default before 知了 麦克风 took its place: through the
+        # echo canceller made for it while the meeting still plays through that, else the plain mic
+        # (said over the meeting is dropped then) and the canceller is made again for the next time.
+        real = self.room.real_mic
+        cancelled = bool(real) and self.talk_echo.ready(real)
+        why = ""
+        if not cancelled:
+            why = ("no real microphone known" if not real else "no canceller" if not self.talk_echo.on
+                   else "the canceller was made for another microphone" if self.talk_echo.mic != real
+                   else "the canceller isn't the default output")
+            if real:
+                threading.Thread(target=self._make_talk_echo, daemon=True).start()
+        mic = SystemAudio(self.talk_echo.source if cancelled else real or "@DEFAULT_SOURCE@")
 
         def ended(reason):
             if reason:
@@ -921,7 +986,7 @@ class Controller:
                 self.speak.problem = L("没有可用的麦克风")
                 GLib.idle_add(lambda: self.speak.stop() or False)
         mic.on_ended = ended
-        self.speak.start(mic)
+        self.speak.start(mic, cancelled, why)
         self.show_notes()
 
     def stop_listening(self, ended_at=None, auto: bool = False) -> None:
@@ -934,6 +999,8 @@ class Controller:
         def run():
             sid = self.listen.session_id
             self.listen.stop(ended_at)
+            if sid and self.store.get(sid) is not None:
+                self.folder_export.ended(sid)
             if self.echo.on:
                 self.echo.remove()  # the speakers are the default output again
             if sid and self.settings.speakerVoices:
@@ -1037,12 +1104,16 @@ class Controller:
 
         def run():
             self.speak.cancel()
+            self.talk_echo.remove()  # the speakers are the default output again
             if self.room.on:
                 self.room.remove()  # the real microphone is the default again
             if self.echo.on:
                 self.echo.remove()
             if self.listen.listening:
+                sid = self.listen.session_id
                 self.listen.stop()
+                if sid and self.store.get(sid) is not None:
+                    self.folder_export.ended(sid)  # kept as waiting: written at the next launch
             self.store.flush()
             GLib.idle_add(lambda: self.application.quit() and False)
         threading.Thread(target=run, daemon=True).start()
@@ -1069,6 +1140,8 @@ class App(Gtk.Application):
         # The update notification's click and its 更新说明 button; a problem's 打开设置.
         for name, action in (("install-update", lambda: self.controller.updates.install()),
                              ("ai-settings", lambda: self.controller.show_settings(ai=True)),
+                             # 纪要没存到文件夹: 设置 › 通用, where the row says what to do.
+                             ("folder-settings", lambda: self.controller.show_settings(general=True)),
                              ("update-notes", lambda: self.controller.updates.open_notes())):
             a = Gio.SimpleAction.new(name, None)
             a.connect("activate", lambda _a, _p, f=action: f())

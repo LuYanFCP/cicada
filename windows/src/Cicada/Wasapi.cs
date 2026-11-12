@@ -46,6 +46,58 @@ static class Endpoints
     public static Device? Cable() => All(Flow.Render).FirstOrDefault(d => d.Description == VirtualCable.InputName || d.Name.StartsWith(VirtualCable.InputName));
     public static Device? CableOutput() => All(Flow.Capture).FirstOrDefault(d => d.Description == VirtualCable.OutputName || d.Name.StartsWith(VirtualCable.OutputName));
 
+    /// Any end of VB-Cable, "CABLE In 16ch" too (the pack installs it beside CABLE Input, and
+    /// Windows can make it the default speaker as well).
+    public static bool IsCable(Device d) =>
+        d.Description is VirtualCable.InputName or VirtualCable.OutputName || d.Name.StartsWith(VirtualCable.InputName) || d.Name.StartsWith(VirtualCable.OutputName)
+        || d.Name.Contains("VB-Audio Virtual Cable", StringComparison.OrdinalIgnoreCase);
+
+    /// Every default (CableDefaults' "<flow>/<role>" keys): the playback and recording device for
+    /// games and system sounds, for media and for calls.
+    public static Dictionary<string, string> Defaults()
+    {
+        var map = new Dictionary<string, string>();
+        try
+        {
+            var e = (IMMDeviceEnumerator)new MMDeviceEnumerator();
+            foreach (var flow in new[] { Flow.Render, Flow.Capture })
+                for (var role = 0; role < 3; role++)
+                    if (e.GetDefaultAudioEndpoint((int)flow, role, out var d) == 0 && d.GetId(out var id) == 0) map[$"{(int)flow}/{role}"] = id;
+        }
+        catch (Exception ex) { Log.Debug($"endpoints: defaults failed {ex.GetType().Name}"); }
+        return map;
+    }
+
+    /// Ids of the cable's two ends, for CableDefaults.
+    public static HashSet<string> CableIds() => [.. All(Flow.Render).Concat(All(Flow.Capture)).Where(IsCable).Select(d => d.Id)];
+
+    /// What the user hears through is the cable: they hear nothing.
+    public static bool SpeakerIsCable() => Default(Flow.Render) is { } d && IsCable(d);
+
+    /// Makes `id` the default for one role, as the Sound control panel does. IPolicyConfig isn't
+    /// documented, but it is what Windows' own panel calls and has stayed put since Windows 7.
+    public static bool SetDefault(string id, int role)
+    {
+        try
+        {
+            var policy = (IPolicyConfig)new PolicyConfigClient();
+            var hr = policy.SetDefaultEndpoint(id, role);
+            Marshal.ReleaseComObject(policy);
+            return hr == 0;
+        }
+        catch (Exception ex) { Log.Debug($"endpoints: set default failed {ex.GetType().Name}"); return false; }
+    }
+
+    /// Back to a real speaker for every role (CableDefaults.Speaker): when nothing from before the
+    /// install was remembered.
+    public static bool RestoreSpeaker()
+    {
+        if (CableDefaults.Speaker(All(Flow.Render).Select(d => (d.Id, IsCable(d)))) is not { } id) { Log.Debug("cable: no other speaker"); return false; }
+        var ok = Enumerable.Range(0, 3).All(role => SetDefault(id, role));
+        Log.Debug($"cable: speaker restored {ok}");
+        return ok && !SpeakerIsCable();
+    }
+
     /// A microphone, never the cable's own output (that would be the room hearing itself).
     public static Device? Microphone()
     {
@@ -146,6 +198,26 @@ static class Endpoints
         [PreserveSig] int GetCount(out int count);
         [PreserveSig] int GetAt(int index, out PropertyKey key);
         [PreserveSig] int GetValue(ref PropertyKey key, out PropVariant value);
+    }
+
+    [ComImport, Guid("870AF99C-171D-4F9E-AF0D-E63DF40C2BC9")] class PolicyConfigClient { }
+
+    /// Only SetDefaultEndpoint is called; the slots before it keep the vtable in order.
+    [ComImport, Guid("F8679F50-850A-41CF-9C72-430F290290C8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IPolicyConfig
+    {
+        [PreserveSig] int GetMixFormat(IntPtr a, IntPtr b);
+        [PreserveSig] int GetDeviceFormat(IntPtr a, int b, IntPtr c);
+        [PreserveSig] int ResetDeviceFormat(IntPtr a);
+        [PreserveSig] int SetDeviceFormat(IntPtr a, IntPtr b, IntPtr c);
+        [PreserveSig] int GetProcessingPeriod(IntPtr a, int b, IntPtr c, IntPtr d);
+        [PreserveSig] int SetProcessingPeriod(IntPtr a, IntPtr b);
+        [PreserveSig] int GetShareMode(IntPtr a, IntPtr b);
+        [PreserveSig] int SetShareMode(IntPtr a, IntPtr b);
+        [PreserveSig] int GetPropertyValue(IntPtr a, IntPtr b, IntPtr c);
+        [PreserveSig] int SetPropertyValue(IntPtr a, IntPtr b, IntPtr c);
+        [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string id, int role);
+        [PreserveSig] int SetEndpointVisibility([MarshalAs(UnmanagedType.LPWStr)] string id, int visible);
     }
 
     [StructLayout(LayoutKind.Sequential)] struct PropertyKey { public Guid fmtid; public int pid; }
@@ -262,30 +334,41 @@ sealed class DeviceSpeaker : ISpeechSink
     readonly Func<Endpoints.Device?> device;
     readonly Queue<byte[]> queue = new();
     Thread? thread;
-    volatile bool ending;
+    volatile bool ending, stopped;
     TaskCompletionSource? done;
     int rate;
     public string? DeviceName { get; private set; }
+    /// The device was there but wouldn't play (or vanished): nothing, or not all, was heard.
+    public bool Failed { get; private set; }
+    public bool Stopped => stopped;
 
     public DeviceSpeaker(Func<Endpoints.Device?> device) { this.device = device; }
 
     public bool Ready => device() is not null;
 
+    /// 试听's 停止: what is queued is dropped and End returns; later chunks are ignored.
+    public void Stop()
+    {
+        stopped = true; ending = true;
+        lock (queue) queue.Clear();
+    }
+
     public void Begin(int rate)
     {
         this.rate = rate;
-        ending = false;
+        ending = stopped;
         lock (queue) queue.Clear();
         done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (stopped) { done.TrySetResult(); return; }
         var d = device();
         DeviceName = d?.Name;
-        if (d is null) { Log.Debug("speaker: no device"); done.TrySetResult(); return; }
+        if (d is null) { Log.Debug("speaker: no device"); Failed = true; done.TrySetResult(); return; }
         thread = new Thread(() => Run(d.Id)) { IsBackground = true, Name = "DeviceSpeaker" };
         thread.SetApartmentState(ApartmentState.MTA);
         thread.Start();
     }
 
-    public void Write(byte[] pcm) { lock (queue) queue.Enqueue(pcm); }
+    public void Write(byte[] pcm) { if (!stopped) lock (queue) queue.Enqueue(pcm); }
 
     public Task End() { ending = true; return done?.Task ?? Task.CompletedTask; }
 
@@ -306,7 +389,7 @@ sealed class DeviceSpeaker : ISpeechSink
             byte[] pending = [];
             int offset = 0;
             bool started = false;
-            while (true)
+            while (!stopped)
             {
                 client.GetCurrentPadding(out var padding);
                 var room = (int)(size - padding);
@@ -333,7 +416,7 @@ sealed class DeviceSpeaker : ISpeechSink
             }
             client.Stop();
         }
-        catch (Exception e) { Log.Debug($"speaker: failed 0x{e.HResult:X8}"); }
+        catch (Exception e) { Log.Debug($"speaker: failed 0x{e.HResult:X8}"); Failed = true; }
         finally
         {
             if (client is not null) Marshal.ReleaseComObject(client);

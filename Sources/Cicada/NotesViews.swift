@@ -537,6 +537,8 @@ struct TranscriptListView<Partial: View>: View, Equatable {
     var places = false
     /// Lines the meeting record's own recognizer is still settling: their words may change.
     var settling: Set<String> = []
+    /// Lines whose voice is still being heard (`AppModel.voicePending`).
+    var voicePending: Set<String> = []
     var onAssign: ((Set<String>, Int) -> Void)?
     /// 改回 on a fixed word: the line goes back to what was heard.
     var onRevert: ((String, LineFix) -> Void)?
@@ -556,6 +558,7 @@ struct TranscriptListView<Partial: View>: View, Equatable {
             && a.bilingual == b.bilingual && a.live == b.live && a.partialShown == b.partialShown
             && a.jumpTo == b.jumpTo && a.speakers == b.speakers && a.startedAt == b.startedAt && a.voices == b.voices && a.marked == b.marked
             && a.identifying == b.identifying && a.places == b.places && a.settling == b.settling
+            && a.voicePending == b.voicePending
     }
 
     private var searching: Bool { !terms.isEmpty }
@@ -590,7 +593,7 @@ struct TranscriptListView<Partial: View>: View, Equatable {
         var out: [Item] = []
         for (gi, g) in gs.enumerated() {
             if !g.title.isEmpty { out.append(.header(title: g.title, start: g.start, gap: gi > 0)) }
-            for (i, p) in TranscriptParagraphs.group(g.lines, speakers).enumerated() {
+            for (i, p) in TranscriptParagraphs.group(g.lines, speakers, pending: voicePending).enumerated() {
                 // With voices told apart, a name only where the speaker changes (and atop each topic).
                 // Every paragraph carries its name when voices are on: it is also where it's corrected.
                 out.append(.paragraph(p, label: speakers.isEmpty || !voices.isEmpty || i == 0 || starts.contains(p[0].id)))
@@ -859,16 +862,22 @@ enum TranscriptParagraphs {
         return cjk ? text.filter(\.isLetter).count >= full.cjk : text.split(whereSeparator: \.isWhitespace).count >= full.words
     }
 
-    static func group(_ lines: [TranscriptLine], _ speakers: [String: Int]) -> [[TranscriptLine]] {
+    static func group(_ lines: [TranscriptLine], _ speakers: [String: Int], pending: Set<String> = []) -> [[TranscriptLine]] {
         var out: [[TranscriptLine]] = []
         var key: String?
         // Before any number is on show (two voices with five lines each), a question and its answer
         // would read as one block: a known voice that differs from the paragraph's starts a new one.
-        // Short lines are left out, as for numbers: their voice is too often wrong.
+        // Short lines' voices are left out, as for numbers: they are too often wrong. A line with no
+        // voice was like none heard so far (or too short to start one): next to a known voice that is
+        // more often someone else ("Great." / "Let's lock that in" after the answer), so it counts as
+        // a voice of its own (`noVoice`), which the paragraphs' voices then hold. One still being
+        // heard (`pending`) stays put meanwhile rather than jump out and back.
         var voice: Int?
+        let noVoice = -1
         for l in lines {
             let k = (l.speaker == "me" ? "me" : speakers[l.id].map { "n\($0)" } ?? "?") + (l.via ?? "")
-            let v = speakers.isEmpty && l.speaker == "them" && SpeakerLabels.substantive(l.src) ? l.voice : nil
+            let heard = l.voice.map { SpeakerLabels.substantive(l.src) ? $0 : nil } ?? (pending.contains(l.id) ? nil : noVoice)
+            let v = speakers.isEmpty && l.speaker == "them" ? heard : nil
             if k == key, let p = out.last, let first = p.first, l.t - first.t <= span, !isFull(p),
                voice == nil || v == nil || v == voice {
                 out[out.count - 1].append(l)

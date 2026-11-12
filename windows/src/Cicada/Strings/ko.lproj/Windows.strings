@@ -325,3 +325,42 @@
 /* 改正听错的词: Ming translates with the audio, so fixing is a request of its own; the list is on this PC. */
 "每句话说完多发一次文字请求" = "문장마다 텍스트 요청이 한 번 더 갑니다";
 "最多 %lld 个，满了优先用最近的。只存在这台电脑上" = "최대 %lld개, 최근 것을 우선. 이 PC에만 저장";
+
+/* 按住说话's 更改 (#22): keyboards without right Ctrl pick another talk key. */
+"按下想用的键…" = "사용할 키를 누르세요…";
+"Esc 取消" = "Esc로 취소";
+"左 Ctrl" = "왼쪽 Ctrl";
+"右 Shift" = "오른쪽 Shift";
+"左 Shift" = "왼쪽 Shift";
+"菜单键" = "메뉴 키";
+"Windows 键会打开开始菜单，换一个吧" = "Windows 키는 시작 메뉴를 엽니다. 다른 키를 고르세요";
+"Alt 松开时会打开窗口的菜单，换一个吧" = "Alt는 뗄 때 창 메뉴를 엽니다. 다른 키를 고르세요";
+"打字时会用到这个键，换一个不常用的吧" = "입력할 때 쓰는 키입니다. 잘 안 쓰는 키를 고르세요";
+"只有单独按住才算，Ctrl C 这类快捷键不会开始说话" = "혼자 누를 때만 동작합니다. Ctrl C 같은 단축키로는 말하기가 시작되지 않습니다";
+"只有单独按住才算，打字时的 Shift 不会开始说话" = "혼자 누를 때만 동작합니다. 입력 중 Shift로는 말하기가 시작되지 않습니다";
+"按住说话时不会切换大小写" = "누르고 말하는 동안 대소문자가 바뀌지 않습니다";
+/* 试听's result under the voice (#22: it used to fail silently). */
+"停止" = "중지";
+"这台电脑没有%@的声音，没放出来。" = "이 PC에 %@ 음성이 없어 재생되지 않았습니다.";
+"在 Windows 设置里添加这个语言的语音，或者换一个 AI 服务的声音。" = "Windows 설정에서 이 언어의 음성을 추가하거나 AI 서비스 음성을 고르세요.";
+"打开语音设置" = "음성 설정 열기";
+"没放出声音：找不到扬声器。" = "재생되지 않았습니다: 스피커를 찾을 수 없습니다.";
+"看看耳机或扬声器有没有连上。" = "헤드폰이나 스피커가 연결되어 있는지 확인하세요.";
+"%@ 的声音没连上，刚才放的是 Windows 自带的。" = "%@ 음성에 연결되지 않아 Windows 음성으로 재생했습니다.";
+"开会时也会这样换过去，不会不出声。" = "회의 중에도 같은 방식으로 바뀌어 소리가 끊기지 않습니다.";
+"没放出声音。" = "재생되지 않았습니다.";
+"再试一次，还不行就换一个声音。" = "다시 시도하거나 다른 음성을 고르세요.";
+/* VB-Cable took the speaker (CableDefaults). Copy polished and translated with gemini-4-argon, reviewed. */
+"电脑声音照常从 %@ 播放" = "PC 소리는 평소처럼 %@에서 재생됩니다";
+"电脑没声了？" = "PC에서 소리가 안 나나요?";
+"Windows 把播放设备改成了 CABLE Input" = "Windows에서 재생 장치가 CABLE Input으로 변경됨";
+"恢复声音" = "소리 복구";
+"听不到电脑声音了？" = "PC 소리가 안 들리나요?";
+"Windows 把输出改成了 CABLE Input，点此恢复" = "Windows에서 출력이 CABLE Input으로 변경되었습니다. 클릭하여 복구하세요.";
+"自动恢复失败" = "자동 복구 실패";
+"请去 Windows 声音设置，把输出设备改回你的耳机或扬声器" = "Windows 소리 설정에서 출력 장치를 사용 중인 헤드폰이나 스피커로 다시 변경해 주세요.";
+/* 存到文件夹 on Windows: controlled folder access instead of macOS privacy settings, File Explorer instead of Finder. */
+"打开 Windows 安全中心" = "Windows 보안 열기";
+"在 Windows 安全中心里允许知了，或换个文件夹" = "Windows 보안에서 Cicada를 허용하거나 다른 폴더를 고르세요";
+"换个文件夹，或在它的属性里允许写入" = "다른 폴더를 고르거나 폴더 속성에서 쓰기를 허용하세요";
+"在文件资源管理器中显示" = "파일 탐색기에서 보기";

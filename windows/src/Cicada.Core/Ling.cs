@@ -61,10 +61,14 @@ public sealed class AIKey(IKeyProtector protector, string? file = null, Func<str
         }
     }
 
-    public bool Save(string key)
+    public bool Save(string key) => SaveAt(File_, key);
+
+    /// Another key file of this user's (a custom service's notes server, `custom-notes`).
+    public bool Save(string key, string service) => file is null && SaveAt(Paths.KeyFile(service), key);
+
+    bool SaveAt(string path, string key)
     {
         key = key.Trim();
-        var path = File_;
         lock (gate)
         {
             try
@@ -86,9 +90,12 @@ public sealed class AIKey(IKeyProtector protector, string? file = null, Func<str
     }
 
     /// Removes the key of the service in use only.
-    public void Remove()
+    public void Remove() => RemoveAt(File_);
+
+    public void Remove(string service) { if (file is null) RemoveAt(Paths.KeyFile(service)); }
+
+    void RemoveAt(string path)
     {
-        var path = File_;
         lock (gate)
         {
             try { File.Delete(path); } catch { }
@@ -202,6 +209,25 @@ public sealed class LingClient
     }
 
     public bool HasKey => CurrentKey() is not null;
+
+    /// The key file of a custom service's notes server (另一个服务), as on the Mac.
+    public const string NotesKeyName = "custom-notes";
+
+    /// The key notes are sent with: with 另一个服务, their own key file if there is one, else the
+    /// translation key ("不填就用上面的 key").
+    public string? NotesKey() => Config.NotesOwnService && key.Read(NotesKeyName) is { } own ? own : CurrentKey();
+
+    /// Notes have a key file of their own (另一个服务 only).
+    public bool NotesHasOwnKey => Config.NotesOwnService && key.Read(NotesKeyName) is not null;
+
+    /// Notes' own key (另一个服务); the caller checks again (Controller.AIChanged).
+    public bool SaveNotesKey(string raw) => raw.Trim().Length > 0 && key.Save(raw.Trim(), NotesKeyName);
+
+    /// Notes go back to the translation key.
+    public void RemoveNotesKey() => key.Remove(NotesKeyName);
+
+    /// Notes' own server's text models from its `/models` (empty while notes share translation's address).
+    public IReadOnlyList<string> NotesCatalog { get; private set; } = [];
     public bool Usable => HasKey && KeyState != KeyState.Invalid;
     /// Voices in the room from this service (else Windows' own voice speaks).
     public bool Speaks => Usable && Config.HasVoices;
@@ -221,13 +247,16 @@ public sealed class LingClient
         KeyState = CurrentKey() is null ? KeyState.None : KeyState.Unchecked;
         LastVoice = null;
         listed = listedHearing = null;
-        TextCatalog = HearCatalog = [];
+        TextCatalog = HearCatalog = NotesCatalog = [];
         Changed?.Invoke();
     }
 
     /// What messages call the service ("这个服务" for a custom address) and its host.
     public string ServiceName => Config.Provider.Id == "custom" ? Strings.L("这个服务") : Config.Name;
     public string ServiceHost => Host(Config.Base);
+    /// Who a status line names: a custom service by its address, which says more than 这个服务
+    /// and reads right in "The … key doesn't work".
+    public string ServiceLabel => Config.Provider.Id == "custom" && ServiceHost.Length > 0 ? ServiceHost : ServiceName;
     /// Where the hear model is asked (a custom service's own address for it, else the service's).
     public string HearHost => Host(Config.HearBase ?? Config.Base);
     static string Host(string? b) => b is not null && Uri.TryCreate(b, UriKind.Absolute, out var u) ? u.Host : "";
@@ -264,14 +293,14 @@ public sealed class LingClient
             if (SimulateCheck is { } sim) r = Simulated(sim);
             else if (c.Provider.Id == "custom" && c.Base is null) r.Fail(AICheck.StepId.Reach, AICheck.Reason.BadAddress, reached: false);
             else if (AICheck.Owner(k) is { Management: true }) r.Fail(AICheck.StepId.Key, AICheck.Reason.MgmtKey, reached: false);
-            else await Probe(r, c, k);
+            else await Probe(r, c, k, gen);
             await Finish(r, c, gen);
         }
         finally { Interlocked.Decrement(ref checking); }
         return (KeyState, (DateTime.UtcNow - started).TotalSeconds);
     }
 
-    async Task Probe(AICheck r, AIConfig c, string k)
+    async Task Probe(AICheck r, AIConfig c, string k, int gen)
     {
         double Since(DateTime t) => (DateTime.UtcNow - t).TotalSeconds;
         void Failed(LingException e, AICheck.StepId step)
@@ -299,7 +328,15 @@ public sealed class LingClient
                 r.Translate = new AICheck.Speed(Since(t), AIConfig.Thought(root));
             }
             r.Pass(AICheck.StepId.Text, Since(t));
-            if (c.Provider.Id == "custom")
+            if (c.NotesApart)
+            {
+                // Notes at their own model or server: their failure is theirs, translation goes on.
+                r.Notes = AICheck.State.Running;
+                lock (healthGate) { if (gen == generation) health = r.Clone(); }
+                Changed?.Invoke();
+                r.Notes = await CheckNotes(c);
+            }
+            else if (c.Provider.Id == "custom")
             {
                 const string ask = "Reply with the JSON object {\"ok\": true}.";
                 try { await Chat(ask, "Reply.", Priority.Speak, json: true, maxTokens: 20, timeout: 30, jsonFallback: false); }
@@ -334,8 +371,11 @@ public sealed class LingClient
             catch (Exception) { }
         }
         await FetchCatalog();
-        // A model the service no longer lists fails here, before a meeting finds out.
-        if (listed is { } ids && c.TextModel.Length > 0 && r[AICheck.StepId.Text].Kind != AICheck.Kind.Fail && !ids.Contains(c.TextModel))
+        // A model the service no longer lists fails here, before a meeting finds out. On a custom
+        // service, one a real sentence just went through exists whatever the list says (an alias,
+        // a name typed by hand).
+        var proven = c.Provider.Id == "custom" && r.Translate is not null;
+        if (listed is { } ids && c.TextModel.Length > 0 && !proven && r[AICheck.StepId.Text].Kind != AICheck.Kind.Fail && !ids.Contains(c.TextModel))
             r.Fail(AICheck.StepId.Text, AICheck.Reason.NoModel);
         // The list is the text address's: it says nothing about a hear model served elsewhere.
         if (listedHearing is { } hearing && !c.HearElsewhere && c.HearModel.Length > 0 && r[AICheck.StepId.Hear].Kind != AICheck.Kind.Fail && !hearing.Contains(c.HearModel))
@@ -389,9 +429,30 @@ public sealed class LingClient
     /// A real request (hearing, notes, translation) came back: keep the steps current without a
     /// check. One server error in a meeting isn't worth repainting the settings for, nor is the
     /// same good result again.
-    void Observe(LingException? failure, double seconds, bool audio)
+    void Observe(LingException? failure, double seconds, bool audio, bool notes = false)
     {
         if (!HasKey || Volatile.Read(ref checking) > 0 || SimulateCheck is not null) return;
+        if (notes)
+        {
+            // Notes at their own model or server: theirs alone, translation's steps (and KeyState) are untouched.
+            AICheck.State now;
+            if (failure is not null)
+            {
+                if (AICheck.Classify(failure.Failure, failure.Status, AICheck.StepId.Text) is not { } f || f.Why == AICheck.Reason.ServerError) return;
+                now = AICheck.State.Fail(f.Why, f.Code);
+            }
+            else now = AICheck.State.Ok(seconds);
+            lock (healthGate)
+            {
+                if (health.Notes?.Kind == AICheck.Kind.Ok && now.Kind == AICheck.Kind.Ok) return;
+                if (health.Notes is { } old && old with { Seconds = null } == now with { Seconds = null }) return;
+                health = health.Clone();
+                health.Notes = now;
+            }
+            Log.Debug($"ai: notes from a real request -> {health.Summary}");
+            Changed?.Invoke();
+            return;
+        }
         var step = audio ? AICheck.StepId.Hear : AICheck.StepId.Text;
         AICheck r;
         bool wasUnreachable;
@@ -443,9 +504,9 @@ public sealed class LingClient
     }
 
     /// One GET on the service's API (OpenRouter's key info and credits); null when it fails.
-    async Task<string?> GetText(string path, string k)
+    async Task<string?> GetText(string path, string k, string? at = null)
     {
-        if (Config.Base is not { } b) return null;
+        if ((at ?? Config.Base) is not { } b) return null;
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, new Uri(new Uri(b), path));
@@ -472,6 +533,63 @@ public sealed class LingClient
         Changed?.Invoke();
     }
 
+    /// Notes' own model or server (AIConfig.NotesApart): one JSON request the way a meeting's notes
+    /// ask, sent straight (no gate, no retries: a check), then, at another address, its model list
+    /// for the menu.
+    async Task<AICheck.State> CheckNotes(AIConfig config)
+    {
+        if (config.NotesBadAddress) return AICheck.State.Fail(AICheck.Reason.BadAddress);
+        var c = config.ForNotes;
+        if (NotesKey() is not { } k || c.Base is not { } b) return AICheck.State.Fail(AICheck.Reason.InvalidKey);
+        var url = new Uri(new Uri(b), "chat/completions");
+        var body = new JsonObject
+        {
+            ["model"] = c.TextModel,
+            ["messages"] = new JsonArray(
+                new JsonObject { ["role"] = "system", ["content"] = "Reply with the JSON object {\"ok\": true}." },
+                new JsonObject { ["role"] = "user", ["content"] = "Reply." }),
+            ["stream"] = false,
+        };
+        c.Shape(body, 20, templateKwargs: !noTemplateKwargs.ContainsKey(b));
+        body["response_format"] = new JsonObject { ["type"] = "json_object" };
+        var asked = DateTime.UtcNow;
+        AICheck.State result;
+        try
+        {
+            await PostChat(url, body, b, k, 60, default);
+            result = AICheck.State.Ok((DateTime.UtcNow - asked).TotalSeconds);
+        }
+        catch (LingException e) when (e.Failure == LingException.Kind.Http && e.Status is 400 or 422)
+        {
+            // JSON mode refused (some hosts of a model do): meetings then ask without it, so what
+            // counts is whether the model still answers with a JSON object.
+            body.Remove("response_format");
+            string? said = null;
+            try { said = Str((await PostChat(url, body, b, k, 60, default))["choices"]?[0]?["message"]?["content"]); } catch (LingException) { }
+            result = AnswersJSON(said) ? AICheck.State.Ok((DateTime.UtcNow - asked).TotalSeconds) : AICheck.State.Fail(AICheck.Reason.NoJSON, e.Status);
+        }
+        catch (LingException e)
+        {
+            var f = AICheck.Classify(e.Failure, e.Status, AICheck.StepId.Text) ?? (AICheck.StepId.Text, AICheck.Reason.ServerError, null);
+            result = AICheck.State.Fail(f.Why, f.Code);
+        }
+        catch (Exception) { result = AICheck.State.Fail(AICheck.Reason.Unreachable); }
+        if (c.Base != config.Base) await FetchNotesCatalog();
+        return result;
+    }
+
+    /// Notes' own address's text models, for its menu. Quietly empty when it has no `/models`.
+    public async Task FetchNotesCatalog()
+    {
+        var c = Config;
+        var b = c.ForNotes.Base;
+        if (!c.NotesApart || b is null || b == c.Base || NotesKey() is not { } k) return;
+        if (await GetText("models", k, b) is not { } body) return;
+        NotesCatalog = AIProvider.Catalog(body, [], hears: false);
+        Log.Debug($"ai notes: {NotesCatalog.Count} models");
+        Changed?.Invoke();
+    }
+
     /// One chat completion. `content` goes in the system message, `instruction` is the fixed user
     /// message, `audio` (a WAV) goes before it for the hear model. Notes and heard audio retry 429s
     /// with backoff (RetryWaits); the rest fail fast so the caller can fall back. `model` defaults to
@@ -480,14 +598,23 @@ public sealed class LingClient
     /// queue, so lines stay in order. Audio goes to the hear model's address (a custom service's own
     /// one for it). `reply` sees the whole reply before its text is read (the check's thinking test).
     /// A JSON request refused with 400 is asked again without JSON mode unless `jsonFallback` is
-    /// off (the check asks again itself).
+    /// off (the check asks again itself). Notes (`notes`, by default the Notes priority) go to a
+    /// custom service's notes model, address and key when they have their own (AIConfig.ForNotes);
+    /// a live line's corrections ride at Notes priority but are translation's, as on the Mac.
     public async Task<string> Chat(string content, string instruction, Priority priority, bool json = false,
         int maxTokens = 1024, double timeout = 30, string? model = null, byte[]? audio = null, bool patient = false,
-        CancellationToken cancel = default, Action<JsonNode>? reply = null, bool jsonFallback = true)
+        CancellationToken cancel = default, Action<JsonNode>? reply = null, bool jsonFallback = true, bool? notes = null)
     {
-        var k = CurrentKey() ?? throw new LingException(LingException.Kind.NoKey);
-        if (KeyState == KeyState.Invalid) throw new LingException(LingException.Kind.InvalidKey);
-        var c = Config;
+        var all = Config;
+        var notesSide = (notes ?? priority == Priority.Notes) && audio is null && all.NotesApart;
+        // 另一个服务 at an address that can't be used: never fall back to translation's server with
+        // the notes' key (the Mac does; the check already says the address is wrong).
+        if (notesSide && all.NotesBadAddress) throw new LingException(LingException.Kind.NoKey);
+        var c = notesSide ? all.ForNotes : all;
+        var k = (notesSide ? NotesKey() : CurrentKey()) ?? throw new LingException(LingException.Kind.NoKey);
+        // A refused notes key stops notes only; a refused translation key stops everything else.
+        if (notesSide ? Health.Notes?.Why is AICheck.Reason.InvalidKey or AICheck.Reason.MgmtKey : KeyState == KeyState.Invalid)
+            throw new LingException(LingException.Kind.InvalidKey);
         var b = audio is null ? c.Base : c.Provider.Id == "custom" ? c.HearBase : c.HearBase ?? c.Base;
         if (b is null) throw new LingException(LingException.Kind.NoKey);
         model ??= c.TextModel;
@@ -505,12 +632,13 @@ public sealed class LingClient
         var url = new Uri(new Uri(b), "chat/completions");
 
         var waits = RetryWaits(priority, audio is not null, patient);
+        var g = GateFor(b);
         long? ticket = null;
         for (int attempt = 1; ; attempt++)
         {
             var queued = DateTime.UtcNow;
             // One that wouldn't retry fails at once while the service is cooling down: its caller falls back.
-            ticket = await Acquire(priority, c.Provider.Spacing, cancel, ticket, failIfPaused: waits.Length == 0);
+            ticket = await Acquire(g, priority, c.Provider.Spacing, cancel, ticket, failIfPaused: waits.Length == 0);
             var started = DateTime.UtcNow;
             if ((started - queued).TotalSeconds > 1) Log.Debug($"ling: {priority} waited {(started - queued).TotalMilliseconds:F0} ms at the gate");
             try
@@ -539,14 +667,14 @@ public sealed class LingClient
                 var usage = root["usage"];
                 Log.Debug($"ai {c.Provider.Id}: {priority} ok {(int)(DateTime.UtcNow - started).TotalMilliseconds} ms tokens={usage?["prompt_tokens"]}/{usage?["completion_tokens"]}");
                 if (RateLimitedAt is not null) { RateLimitedAt = null; Changed?.Invoke(); }
-                Observe(null, (DateTime.UtcNow - started).TotalSeconds, audio is not null);
+                Observe(null, (DateTime.UtcNow - started).TotalSeconds, audio is not null, notesSide);
                 return trimmed;
             }
             catch (LingException e)
             {
-                Observe(e, 0, audio is not null);
+                Observe(e, 0, audio is not null, notesSide);
                 if (e.Failure != LingException.Kind.RateLimited) throw;
-                var wait = RateLimited(waits.Length > 0 ? waits[Math.Min(attempt, waits.Length) - 1] : 1, e.RetryAfter);
+                var wait = RateLimited(g, waits.Length > 0 ? waits[Math.Min(attempt, waits.Length) - 1] : 1, e.RetryAfter);
                 if (attempt > waits.Length || wait is null) { RateLimitedAt = DateTimeOffset.Now; Changed?.Invoke(); throw; }
                 Log.Debug($"ling: {priority} 429, retry in {wait:F1} s");
             }
@@ -572,13 +700,13 @@ public sealed class LingClient
     /// (Retry-After; Ling sends none), plus a little jitter. The queue waits at the gate instead of
     /// each request spending its retries on the same limit. Null when that is over MaxPause (the
     /// gate still holds for MaxPause).
-    double? RateLimited(double backoff, double? retryAfter)
+    double? RateLimited(StartGate g, double backoff, double? retryAfter)
     {
         var wait = Math.Max(backoff, retryAfter ?? 0) + Random.Shared.NextDouble() * 0.5;
         lock (gate)
         {
             var until = clock.UtcNow.AddSeconds(Math.Min(wait, MaxPause));
-            if (until > pausedUntil) pausedUntil = until;
+            if (until > g.PausedUntil) g.PausedUntil = until;
         }
         return wait <= MaxPause ? wait : null;
     }
@@ -615,7 +743,7 @@ public sealed class LingClient
             var ids = c.Voices.Select(v => v.Id).ToList();
             body["voice"] = voice is not null && ids.Contains(voice) ? voice : ids.FirstOrDefault() ?? c.CustomVoice ?? "Kore";
         }
-        await Acquire(Priority.Speak, c.Provider.Spacing, cancel);
+        await Acquire(GateFor(c.VoiceBase), Priority.Speak, c.Provider.Spacing, cancel);
         var started = DateTime.UtcNow;
         using var req = new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(c.VoiceBase!), "audio/speech"))
         {
@@ -801,37 +929,55 @@ public sealed class LingClient
     }
 
     // Start gate: request starts ≥ the service's spacing apart, the most urgent waiting one first,
-    // none while the service is cooling down after a 429.
+    // none while the server is cooling down after a 429. One per server (by host): notes or a hear
+    // model on another server don't wait behind translation, and a 429 there doesn't hold it back.
 
     /// Tests only: overrides the service's spacing.
     public static double? Spacing { get; set; }
     readonly GateClock clock;
+    /// Guards every StartGate and the shared ticket counter.
     readonly object gate = new();
-    DateTime lastStart = DateTime.MinValue;
-    DateTime pausedUntil = DateTime.MinValue;
-    readonly List<(Priority priority, long seq, TaskCompletionSource ready)> waiting = [];
+    readonly Dictionary<string, StartGate> gates = [];
     long seq;
-    bool pumping;
-    double spacing = 0.6;
+
+    sealed class StartGate
+    {
+        public DateTime LastStart = DateTime.MinValue;
+        public DateTime PausedUntil = DateTime.MinValue;
+        public readonly List<(Priority priority, long seq, TaskCompletionSource ready)> Waiting = [];
+        public bool Pumping;
+        public double Spacing = 0.6;
+    }
+
+    /// The gate of the server at `address` (its host; the service's when there is none).
+    StartGate GateFor(string? address)
+    {
+        var host = Host(address ?? Config.Base);
+        lock (gate)
+        {
+            if (!gates.TryGetValue(host, out var g)) gates[host] = g = new StartGate();
+            return g;
+        }
+    }
 
     /// Waits for this request's turn to start. `ticket` is a retry's first one, which keeps its
     /// place ahead of requests queued after it. Returns the ticket.
-    Task<long> Acquire(Priority priority, double serviceSpacing, CancellationToken cancel, long? ticket = null, bool failIfPaused = false)
+    Task<long> Acquire(StartGate g, Priority priority, double serviceSpacing, CancellationToken cancel, long? ticket = null, bool failIfPaused = false)
     {
         lock (gate)
         {
-            spacing = Spacing ?? serviceSpacing;
+            g.Spacing = Spacing ?? serviceSpacing;
             var now = clock.UtcNow;
-            if (failIfPaused && pausedUntil > now) throw new LingException(LingException.Kind.RateLimited);
+            if (failIfPaused && g.PausedUntil > now) throw new LingException(LingException.Kind.RateLimited);
             var me = ticket ?? ++seq;
-            if (waiting.Count == 0 && !pumping && Wait(now) <= Slack)
+            if (g.Waiting.Count == 0 && !g.Pumping && Wait(g, now) <= Slack)
             {
-                lastStart = now;
+                g.LastStart = now;
                 return Task.FromResult(me);
             }
             var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            waiting.Add((priority, me, ready));
-            if (!pumping) { pumping = true; _ = Pump(); }
+            g.Waiting.Add((priority, me, ready));
+            if (!g.Pumping) { g.Pumping = true; _ = Pump(g); }
             return ready.Task.WaitAsync(cancel).ContinueWith(t => { t.GetAwaiter().GetResult(); return me; }, TaskScheduler.Default);
         }
     }
@@ -840,23 +986,23 @@ public sealed class LingClient
     const double Slack = 0.001;
 
     /// Seconds until the next start may go (gate held).
-    double Wait(DateTime now) => Math.Max(spacing - (now - lastStart).TotalSeconds, (pausedUntil - now).TotalSeconds);
+    static double Wait(StartGate g, DateTime now) => Math.Max(g.Spacing - (now - g.LastStart).TotalSeconds, (g.PausedUntil - now).TotalSeconds);
 
-    async Task Pump()
+    async Task Pump(StartGate g)
     {
         while (true)
         {
             double wait;
             lock (gate)
             {
-                if (waiting.Count == 0) { pumping = false; return; }
+                if (g.Waiting.Count == 0) { g.Pumping = false; return; }
                 var now = clock.UtcNow;
-                wait = Wait(now);
+                wait = Wait(g, now);
                 if (wait <= Slack)
                 {
-                    var next = waiting.MinBy(w => ((int)w.priority, w.seq));
-                    waiting.Remove(next);
-                    lastStart = now;
+                    var next = g.Waiting.MinBy(w => ((int)w.priority, w.seq));
+                    g.Waiting.Remove(next);
+                    g.LastStart = now;
                     next.ready.TrySetResult();
                     continue;
                 }

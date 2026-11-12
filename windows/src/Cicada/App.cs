@@ -61,6 +61,8 @@ sealed class Controller
     public readonly UpdateChecker Updates;
     public readonly Vocabulary Vocabulary;
     public readonly LiveFixes Fixes;
+    /// 存到文件夹 (设置 › 隐私与启动): settled meetings written as Markdown into a folder.
+    public readonly FolderExporter FolderExport;
     /// 分享…: the share service, its device key and the links made (sealed files, never the record).
     public readonly ShareClient Sharing = new(new DpapiProtector(), "windows", Version);
     /// Dev (`silentlisten`): the language `heard` lines are in.
@@ -78,9 +80,14 @@ sealed class Controller
     public static string? Arrived;
     PushToTalk? talk;
     SpeakBar? speakBar;
+    /// The press's microphone: through echo cancellation, or the plain one when that won't open.
+    EchoMic? echoMic;
+    bool echoLogged;
     DeviceRecorder? mic;
     /// Dev builds: a WAV that stands in for the microphone (the VM has none).
     string? fakeMic;
+    /// Dev builds: the input the talk key reads instead of the microphone (`talkmic CABLE Output`).
+    string? talkMic;
     readonly Forms.NotifyIcon tray = new();
     System.Drawing.Icon? idleIcon, liveIcon, updateIcon;
     /// Something only the user can fix (AICheck.Blocking), said beyond the panel: the tray's orange
@@ -146,6 +153,18 @@ sealed class Controller
         Notes.Changed += Changed;
         Store.Changed += _ => Changed();
         Store.Words += id => Dispatch.BeginInvoke(() => HeardWords(id));
+        // 存到文件夹: written once a record is settled, rewritten when it changes. Its state is the
+        // dispatcher's, as the Mac's is the main actor's.
+        FolderExport = new FolderExporter(Store, Settings)
+        {
+            Post = a => Dispatch.BeginInvoke(a),
+            LiveId = () => Listen.Listening ? Listen.SessionId : null,
+            Settling = Notes.Settling,
+            NotifyDenied = NotifyFolderDenied,
+        };
+        FolderExport.Changed += () => { Changed(); Dispatch.BeginInvoke(() => settingsWindow?.ExportChanged()); };
+        Store.Saved += id => Dispatch.BeginInvoke(() => FolderExport.Saved(id));
+        Notes.FinalDone += id => Dispatch.BeginInvoke(() => FolderExport.Settled(id));
         Updates = new UpdateChecker(Settings.UpdateLastChecked, at => Dispatch.BeginInvoke(() => { Settings.UpdateLastChecked = at; Settings.Save(); })) { Current = Version };
         Updates.Changed += UpdatesChanged;
     }
@@ -165,12 +184,18 @@ sealed class Controller
         Store.Audio = new MediaFoundationAudio();
         Store.FinishLeftovers();
         hotkey = new Hotkey(() => Dispatch.BeginInvoke(() => _ = ToggleListening()));
-        talk = new PushToTalk();
+        PushToTalk.Current = TalkKey.Named(Settings.TalkKey);
+        talk = new PushToTalk(() => Settings.Speak);
         talk.Pressed += () => Dispatch.BeginInvoke(PressBegan);
         talk.Released += () => Dispatch.BeginInvoke(PressEnded);
+        talk.Interrupted += () => Dispatch.BeginInvoke(PressInterrupted);
         Log.Debug($"audio: speakers {Endpoints.Default(Endpoints.Flow.Render)?.Name ?? "none"}, mic {Endpoints.Microphone()?.Name ?? "none"}, cable {(Endpoints.Cable() is null ? "absent" : "present")}");
         DebugServer.Start(this);
         WatchNetwork();
+        // 存到文件夹: what is still waiting, now and whenever Cicada comes forward (a folder fixed
+        // in Windows 安全中心 meanwhile).
+        FolderExport.Retry();
+        application.Activated += (_, _) => FolderExport.Retry();
         // A dev build isn't what a release replaces: it checks only when pointed at a test feed.
         UpdateChecker.CleanDownloads();
         if (!Paths.Dev || Environment.GetEnvironmentVariable("CICADA_UPDATE_FEED") is { Length: > 0 }) { checksUpdates = true; Updates.Start(); }
@@ -190,9 +215,29 @@ sealed class Controller
         else
         {
             if (Ling.HasKey) _ = Ling.Check();
+            NotifyCableSpeaker();
             if (Arrived == "--updated") Toast(LF("知了已更新到 %@", Version), L("会议记录、设置和 Ling key 都在。"));
             else if (Arrived is not null) FromInstaller();
         }
+    }
+
+    /// VB-Cable holds the speaker (installed before Cicada gave it back, or outside Cicada): the user
+    /// hears nothing and may blame Cicada. Said once (CableDefaults.ShouldNotify); a click gives a
+    /// real speaker back.
+    public void NotifyCableSpeaker()
+    {
+        var onCable = Endpoints.SpeakerIsCable();
+        if (CableDefaults.ShouldNotify(onCable, Settings.CableSpeakerNotified))
+        {
+            Toast(L("听不到电脑声音了？"), L("Windows 把输出改成了 CABLE Input，点此恢复"), () =>
+            {
+                if (!Endpoints.RestoreSpeaker()) Toast(L("自动恢复失败"), L("请去 Windows 声音设置，把输出设备改回你的耳机或扬声器"), () => Open("ms-settings:sound"));
+            });
+            Log.Debug("cable: speaker notified");
+        }
+        if (Settings.CableSpeakerNotified == onCable) return;
+        Settings.CableSpeakerNotified = onCable;
+        Settings.Save();
     }
 
     /// The installer ran again with this version (or an older one) already here: bring the main window.
@@ -243,7 +288,8 @@ sealed class Controller
             if (e.Button == Forms.MouseButtons.Left) Dispatch.BeginInvoke(() => { if (Listen.Listening && Settings.View == "notes") ToggleNotes(); else ShowFlyout(); });
             else if (e.Button == Forms.MouseButtons.Right) Dispatch.BeginInvoke(ShowMenu);
         };
-        tray.BalloonTipClicked += (_, _) => Dispatch.BeginInvoke(() => { balloonClicked?.Invoke(); balloonClicked = null; });
+        // Cleared before the run: a click may show the next notification, with its own action.
+        tray.BalloonTipClicked += (_, _) => Dispatch.BeginInvoke(() => { var c = balloonClicked; balloonClicked = null; c?.Invoke(); });
         UpdateTray();
     }
 
@@ -355,6 +401,21 @@ sealed class Controller
         menu.Items.Add(Item(L("退出知了"), () => _ = Quit()));
         menu.Closed += (_, _) => menuHost.Hide();
         menu.IsOpen = true;
+    }
+
+    /// 存到文件夹 couldn't write after a meeting (not inside a folder controlled folder access
+    /// protects: Windows says that itself). Once until a write works again.
+    void NotifyFolderDenied()
+    {
+        if (FolderExport.Folder is not { } folder) return;
+        Toast(L("纪要没存到文件夹"), LF("知了没有权限写入 %@。点按去设置", FolderExportUi.ShortPath(folder)), ShowFolderSettings);
+    }
+
+    /// 设置 › 隐私与启动, where 会后存一份 says what is wrong.
+    public void ShowFolderSettings()
+    {
+        ShowSettings();
+        SettingsPage("privacy");
     }
 
     /// A Windows notification from the tray icon; a click on it runs `clicked`.
@@ -524,8 +585,8 @@ sealed class Controller
             }
             if (f?.Why == AICheck.Reason.Unreachable)
             {
-                string Body(AICheck h) => (h.Message(Ling.ServiceName, Ling.ServiceHost, Ling.Config.TextModel, Ling.HearName) ?? "")
-                    + (h.ProxyLine(Ling.ServiceName, Ling.ServiceHost) is { } proxy ? "\n" + proxy : "");
+                string Body(AICheck h) => (h.Message(Ling.ServiceLabel, Ling.ServiceHost, Ling.Config.TextModel, Ling.HearName) ?? "")
+                    + (h.ProxyLine(Ling.ServiceLabel, Ling.ServiceHost) is { } proxy ? "\n" + proxy : "");
                 await Task.Yield();
                 // 重新检查并开始: the check already under way (or one that finished reachable while the
                 // dialog was up), else a new one; reachable closes the dialog.
@@ -614,6 +675,7 @@ sealed class Controller
         await StopRoomSide();
         roomSources.Clear();
         await Listen.Stop(endedAt);
+        if (id is not null) FolderExport.Ended(id);
         Changed();
         NotifyUpdate(); // held while the meeting was on
         if (id is not null) _ = TellWhenNotesReady(id);
@@ -750,6 +812,7 @@ sealed class Controller
         ? new Rect(notesWindow!.Left, notesWindow.Top, notesWindow.ActualWidth, notesWindow.ActualHeight) : null;
 
     public void SetFakeMic(string? path) { fakeMic = path; Log.Debug($"speak: fake mic {(path is null ? "off" : "on")}"); }
+    public void SetTalkMic(string? name) { talkMic = name; Log.Debug($"speak: talk mic {name ?? "default"}"); }
 
     /// Dev: what the meeting hears. Records "CABLE Output" for `seconds` into `path` ("8 C:\x.wav").
     public async Task RecordCable(string arg)
@@ -770,33 +833,136 @@ sealed class Controller
         if (!Settings.Speak || Speak.State is SpeakEngine.Phase.Recording or SpeakEngine.Phase.Translating) return;
         if (!Ling.HasKey) { Speak.Report(Ling.Config.IsLing ? L("需要 Ling key 才能说") : LF("需要 %@ 的 key 才能说", Ling.Config.Name)); return; }
         if (Endpoints.Cable() is null) { Speak.Report(L("还没装虚拟麦克风，去设置里装一下")); return; }
-        if (fakeMic is null)
+        // With a fake mic the WAV is what is sent; a dev talk mic still opens, to run the real capture.
+        if (fakeMic is null || talkMic is not null)
         {
-            if (Endpoints.Microphone() is not { } m) { Speak.Report(L("没找到麦克风")); return; }
-            mic = new DeviceRecorder(m.Id);
-            mic.Start();
-            if (mic.Error is { } err) { mic = null; Speak.Report(err == "denied" ? L("Windows 不让知了用麦克风：设置 › 隐私和安全性 › 麦克风") : L("麦克风打不开")); return; }
+            if (TalkMic() is not { } m) { if (fakeMic is null) { Speak.Report(L("没找到麦克风")); return; } }
+            else if (OpenTalkMic(m) is { } err)
+            {
+                if (fakeMic is null) { Speak.Report(err == "denied" ? L("Windows 不让知了用麦克风：设置 › 隐私和安全性 › 麦克风") : L("麦克风打不开")); return; }
+            }
         }
         Speak.BeginRecording();
         // What you say isn't someone in the room.
         foreach (var r in roomSources) r.Muted = true;
     }
 
+    /// The press's microphone: through Windows' echo cancellation when it opens, so what I say while
+    /// the other side talks on the speakers is sent (EchoMic); the plain mic when it doesn't. Null,
+    /// or why the mic can't be had ("denied").
+    string? OpenTalkMic(Endpoints.Device m)
+    {
+        var speakers = Endpoints.Default(Endpoints.Flow.Render);
+        // The cable is where my own voice goes, never the meeting's speakers.
+        var reference = speakers is not null && speakers.Id != Endpoints.Cable()?.Id ? speakers.Id : null;
+        var aec = new EchoMic(m.Id, reference);
+        aec.Start();
+        if (aec.Error is null)
+        {
+            echoMic = aec;
+            echoLogged = aec.EchoCancelled;
+            Log.Debug($"speak: mic {(aec.EchoCancelled ? "with echo cancellation" : "plain, no echo cancellation")} ({aec.Detail})");
+            return null;
+        }
+        if (aec.Error == "denied") return "denied";
+        mic = new DeviceRecorder(m.Id);
+        mic.Start();
+        Log.Debug($"speak: mic plain, the communications stream failed {aec.Error}");
+        if (mic.Error is { } err) { mic = null; return err; }
+        return null;
+    }
+
+    /// The talk key's microphone. Dev: `talkmic <name>` picks any input (the VM's only one is CABLE Output).
+    Endpoints.Device? TalkMic() => talkMic is { } name
+        ? Endpoints.All(Endpoints.Flow.Capture).FirstOrDefault(d => d.Description == name || d.Name.StartsWith(name))
+        : Endpoints.Microphone();
+
+    /// Ends the press's recording: what it heard, and whether through echo cancellation.
+    (short[] pcm, bool echoCancelled) StopTalkMic()
+    {
+        // As logged when the press began (a stream still opening then counts as plain), and still so.
+        var cancelled = echoLogged && echoMic?.EchoCancelled == true;
+        echoLogged = false;
+        var pcm = echoMic?.Stop() ?? mic?.Stop() ?? [];
+        echoMic = null;
+        mic = null;
+        return (pcm, cancelled);
+    }
+
+    /// Another key went down while a modifier talk key was held (Ctrl C): a shortcut, not talking.
+    void PressInterrupted()
+    {
+        foreach (var r in roomSources) r.Muted = false;
+        if (Speak.State != SpeakEngine.Phase.Recording) return;
+        StopTalkMic();
+        Speak.Cancel();
+        Log.Debug("talk: interrupted by another key");
+    }
+
+    /// 更改 the talk key: the next key pressed anywhere comes to `chosen` (on the UI thread).
+    public void ChooseTalkKey(Action<int> chosen)
+    {
+        if (talk is null) return;
+        talk.Capture = vk => Dispatch.BeginInvoke(() => chosen(vk));
+    }
+
+    public void StopChoosingTalkKey() { if (talk is not null) talk.Capture = null; }
+
+    public void SetTalkKey(TalkKey.Key key)
+    {
+        PushToTalk.Current = key;
+        Settings.TalkKey = key.Name; Settings.Save();
+        Log.Debug($"talk: key {key.Name}");
+        Changed();
+    }
+
     void PressEnded()
     {
         foreach (var r in roomSources) r.Muted = false;
         if (Speak.State != SpeakEngine.Phase.Recording) return;
-        var pcm =fakeMic is { } f ? Wav.Read(f) : mic?.Stop() ?? [];
-        mic = null;
+        var (recorded, echoCancelled) = StopTalkMic();
+        var pcm = fakeMic is { } f ? Wav.Read(f) : recorded;
         // A tap, not a sentence.
         if (pcm.Length < Segmenter.Rate * 3 / 10) { Speak.Cancel(); return; }
         // Held but nothing said (a muted mic): Ming would make something up from the hiss.
         if (pcm.Max(x => Math.Abs((int)x)) < 300) { Speak.Report(L("没听到你说话，没有发出去")); return; }
-        _ = Speak.Speak(Wav.Bytes(pcm), new DeviceSpeaker(Endpoints.Cable));
+        _ = Speak.Speak(Wav.Bytes(pcm), new DeviceSpeaker(Endpoints.Cable), echoCancelled);
     }
 
-    /// 试听: a voice speaks its sample line on the speakers (not into the meeting).
-    public Task Preview(string language) => Speak.Voice(VoiceCatalog.Sample(language), language, new DeviceSpeaker(() => Endpoints.Default(Endpoints.Flow.Render)));
+    public enum PreviewResult { Played, Stopped, NoSpeaker, NoVoice, FellBack, Failed }
+    DeviceSpeaker? previewing;
+    public bool Previewing => previewing is not null;
+    public void StopPreview() => previewing?.Stop();
+
+    /// 试听: a voice speaks its sample line on the speakers (not into the meeting). It used to fail
+    /// without a word (#22); now the result says why, for the line under the voice.
+    public async Task<PreviewResult> Preview(string language)
+    {
+        previewing?.Stop();
+        var speaker = new DeviceSpeaker(() => Endpoints.Default(Endpoints.Flow.Render));
+        PreviewResult result;
+        if (!speaker.Ready) result = PreviewResult.NoSpeaker;
+        else
+        {
+            previewing = speaker;
+            Changed();
+            try
+            {
+                var chosen = VoiceCatalog.Chosen(Settings, language, Ling.Config, Ling.Speaks, WindowsVoice.Has(language));
+                var voiced = await Speak.Voice(VoiceCatalog.Sample(language), language, speaker);
+                result = speaker.Stopped ? PreviewResult.Stopped
+                    : !voiced ? (WindowsVoice.Has(language) ? PreviewResult.Failed : PreviewResult.NoVoice)
+                    : speaker.Failed ? PreviewResult.NoSpeaker
+                    : chosen != VoiceCatalog.SystemId && Speak.LastVoice == "system" ? PreviewResult.FellBack
+                    : PreviewResult.Played;
+            }
+            catch (Exception e) { Log.Debug($"preview: failed {e.GetType().Name}"); result = PreviewResult.Failed; }
+            finally { if (previewing == speaker) previewing = null; }
+        }
+        Log.Debug($"preview: {language} {result}");
+        Changed();
+        return result;
+    }
 
     // MARK: Windows
 
@@ -900,6 +1066,8 @@ sealed class Controller
     }
 
     public void SettingsPage(string id) => settingsWindow?.Show(id);
+    /// The open settings window, for the debug pipe's preview and talkkey.
+    public SettingsWindow? OpenSettings => settingsWindow;
     /// Debug: 改这句… on a record's line; 词表 › 粘贴导入 with `text` pasted in.
     public void DebugEditLine(string id, string line) { ShowRecords(id); mainWindow?.DebugEdit(id, line); }
     public void DebugPaste(string text) { ShowSettings(); SettingsPage("words"); settingsWindow?.DebugImport(text); }
@@ -920,6 +1088,11 @@ sealed class Controller
     {
         var p = Settings.AiProvider;
         if (kind == "text" && p == "ling") Settings.Model = model.Length > 0 ? model : LingClient.DefaultModel;
+        // A custom service's notes model: "" is the translation model's.
+        else if (kind == "notes")
+        {
+            if (model.Length > 0) Settings.AiModels["custom.notes"] = model; else Settings.AiModels.Remove("custom.notes");
+        }
         else
         {
             var table = kind switch { "text" => Settings.AiModels, "hear" => Settings.AiHearModels, "voice" => Settings.AiVoiceModels, _ => null };
@@ -972,7 +1145,7 @@ sealed class Controller
     {
         var h = Ling.Health;
         if (!Ling.HasKey || !h.NeedsUser) return null;
-        var name = Ling.ServiceName;
+        var name = Ling.ServiceLabel;
         if (h.Failure is not { } f) return h.BalanceLine(name) is { } low ? (low, L("用完后就听不了对方")) : null;
         var stopped = L("听对方暂时用不了");
         return f.Why switch
@@ -1041,10 +1214,11 @@ sealed class Controller
         return new JsonObject
         {
             ["provider"] = c.Provider.Id, ["base"] = c.Base, ["hearBase"] = c.HearBase, ["text"] = c.TextModel, ["hear"] = c.HearModel, ["voice"] = c.VoiceModel,
+            ["notesBase"] = c.NotesApart ? c.ForNotes.Base : null, ["notesModel"] = c.NotesApart ? c.ForNotes.TextModel : null, ["notesOwnKey"] = Ling.NotesHasOwnKey,
             ["state"] = Ling.KeyState.ToString(), ["hears"] = Ling.Hears, ["seconds"] = Ling.Seconds is { } s ? Math.Round(s, 1) : null,
             ["check"] = Ling.Health.Summary,
-            ["problem"] = Ling.Health.Message(Ling.ServiceName, Ling.ServiceHost, Ling.Config.TextModel, Ling.HearName),
-            ["proxy"] = Ling.Health.ProxyLine(Ling.ServiceName, Ling.ServiceHost),
+            ["problem"] = Ling.Health.Message(Ling.ServiceLabel, Ling.ServiceHost, Ling.Config.TextModel, Ling.HearName),
+            ["proxy"] = Ling.Health.ProxyLine(Ling.ServiceLabel, Ling.ServiceHost),
             ["tray"] = AIProblem()?.Title,
             ["dot"] = Problem is not null ? "problem" : Listen.Listening ? "live" : Updates.Available is not null ? "update" : null,
             ["blocking"] = Problem,
@@ -1160,6 +1334,21 @@ sealed class Controller
     }
 
     /// For the debug pipe: what a test needs to see (never meeting text).
+    /// 存到文件夹 for the debug pipe (paths and file names, never meeting text).
+    public JsonObject ExportState()
+    {
+        var ex = FolderExport;
+        return new JsonObject
+        {
+            ["on"] = ex.On, ["folder"] = ex.Folder, ["short"] = ex.Folder is { } f ? FolderExportUi.ShortPath(f) : null,
+            ["checking"] = ex.Checking, ["problem"] = ex.Trouble?.Kind.ToString(), ["message"] = ex.Trouble?.Message,
+            ["protected"] = ex.Folder is { } pf && FolderExportFormat.Protected(pf), ["vault"] = ex.Folder is { } vf ? FolderExportFormat.Vault(vf) : null,
+            ["files"] = new JsonObject(ex.State.Files.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)kv.Value))),
+            ["pending"] = new JsonArray(ex.State.Pending.Select(id => (JsonNode?)id).ToArray()),
+            ["unwritten"] = ex.Unwritten.Count, ["lastFile"] = ex.State.LastFile, ["lastAt"] = ex.State.LastAt?.ToString("o"),
+        };
+    }
+
     public JsonObject State() => new()
     {
         ["listening"] = Listen.Listening,
@@ -1200,6 +1389,7 @@ sealed class Controller
         ["roomMusic"] = Listen.Echo?.Gate.PlayingMusic,
         ["room"] = Listen.Room,
         ["recordAudio"] = Settings.RecordAudio,
+        ["export"] = ExportState(),
         ["hasAudio"] = Listen.SessionId is { } aid && Store.Get(aid) is { } a ? a.HasAudio : null,
         ["player"] = mainWindow?.PlayerState(),
     };
@@ -1213,7 +1403,7 @@ sealed class Controller
 ///   updatefeed <url or file> | checkupdate
 ///   calls <program=name,…>|none|real | realcalls | endtimes <silence> <countdown> <grace>|off | endkeep
 ///   provider ling|openrouter|zenmux|custom | ai-model hear|text|voice <id> (设置 › AI 服务; no id: the recommended)
-///   open <id> [transcript] | play <seconds>|toggle|speed | recordaudio on|off (保存会议录音 and 回放)
+///   open <id> [transcript] | play <seconds>|toggle|speed|follow|row <i> | recordaudio on|off (保存会议录音 and 回放)
 ///   aacencode <wav>|<out.aac> | aacrewrap <in.aac>|<out.m4a>[|<seconds>]
 ///   ai-check | ai-check-sim <reason|lowBalance|off> (unreachable, invalidKey, noCredit, noModel, deaf, busy…)
 ///   ai-custom-only on|off (语音和文字只发给你的服务; acts with the custom service only)
@@ -1308,6 +1498,15 @@ static class DebugServer
                 _ = app.Ling.Check();
                 break;
             case "ai-custom-only": app.Settings.AiCustomOnly = arg == "on"; app.Settings.Save(); app.AIChanged(); break;
+            // 纪要 on a custom service: "ai-notes same|own [address]" (the notes model: ai-model notes <id>).
+            case "ai-notes":
+            {
+                var p = arg.Split(' ', 2);
+                app.Settings.AiCustomNotesOwn = p[0] == "own";
+                if (p.Length > 1) app.Settings.AiCustomNotesBase = p[1].Trim();
+                app.Settings.Save(); app.AIChanged();
+                break;
+            }
             case "ai-model":
             {
                 var kv = arg.Split(' ', 2);
@@ -1315,11 +1514,48 @@ static class DebugServer
                 break;
             }
             case "speakers": app.Settings.SpeakerVoices = arg == "on"; app.Settings.Save(); app.SettingsChanged(); break;
+            // speaker: the defaults and whether the cable holds the speaker; "cable" hands it the speaker
+            // (what Windows may do on install), "install" does that and then the installer's give-back,
+            // "restore" is 恢复声音, "notify" the startup notification again.
+            case "speaker":
+                if (arg is "cable" or "install")
+                {
+                    var before = Endpoints.Defaults();
+                    var to = Endpoints.Cable()!.Id;
+                    for (var role = 0; role < 3; role++) Endpoints.SetDefault(to, role);
+                    if (arg == "install") _ = CableInstaller.GiveBackDefaults(before); // about 4 s; ask "speaker" after
+                }
+                else if (arg == "restore") Endpoints.RestoreSpeaker();
+                else if (arg == "notify") { app.Settings.CableSpeakerNotified = false; app.NotifyCableSpeaker(); }
+                return new JsonObject { ["onCable"] = Endpoints.SpeakerIsCable(), ["speaker"] = Endpoints.Default(Endpoints.Flow.Render)?.Name, ["notified"] = app.Settings.CableSpeakerNotified,
+                    ["defaults"] = string.Join(" ", Endpoints.Defaults().OrderBy(d => d.Key).Select(d => $"{d.Key}={(Endpoints.CableIds().Contains(d.Value) ? "cable" : "real")}")) };
             case "fakemic": app.SetFakeMic(arg == "off" ? null : arg); break;
+            // talkmic <name>: the talk key reads this input (with fakemic the WAV is still what is sent).
+            case "talkmic": app.SetTalkMic(arg is "" or "off" ? null : arg); break;
             case "record": _ = app.RecordCable(arg); break;
-            // 回放: "open <id> [transcript]", "play <seconds>|toggle|speed", "recordaudio on|off".
+            // 回放: "open <id> [transcript]", "play <seconds>|toggle|speed|follow|row <i>" (follow: 回到正在播放; row: a line
+            // clicked), "recordaudio on|off".
+            case "rename": { var p = arg.Split(' ', 2); app.Store.Rename(p[0], p.Length > 1 ? p[1] : ""); break; }  // rename <id> <title> ("" back to automatic)
             case "open": { var p = arg.Split(' '); app.OpenRecord(p[0], p.Length > 1 ? p[1] : "notes"); break; }
             case "play": app.Play(arg); break;
+            // 存到文件夹: export [state] | on | off | folder <path> | choose | all | retry
+            case "export":
+            {
+                var p = arg.Split(' ', 2);
+                switch (p[0])
+                {
+                    case "on": if (app.FolderExport.Folder is { } f) app.FolderExport.Choose(f); else app.FolderExport.Choose(FolderExportFormat.DefaultFolder()); break;
+                    case "off": app.FolderExport.TurnOff(); break;
+                    case "folder" when p.Length > 1: app.FolderExport.Choose(p[1].Trim().Trim('"')); break;
+                    case "choose": // modal: shown after the reply, or the pipe would wait for it
+                        app.ShowFolderSettings();
+                        app.Dispatcher().BeginInvoke(() => { if (FolderExportUi.Choose(app.OpenSettings, app.FolderExport.Folder) is { } picked) app.FolderExport.Choose(picked); });
+                        break;
+                    case "all": app.FolderExport.WriteAll(); break;
+                    case "retry": app.FolderExport.Retry(); break;
+                }
+                return app.ExportState();
+            }
             case "recordaudio": app.Settings.RecordAudio = arg == "on"; app.Settings.Save(); app.SettingsChanged(); break;
             // 保存会议录音 on its own: "aacencode <wav>|<out.aac>", "aacrewrap <in.aac>|<out.m4a>[|<seconds>]".
             case "aacencode":
@@ -1337,7 +1573,16 @@ static class DebugServer
                     var p = arg.Split('|');
                     return new JsonObject { ["ok"] = app.Store.Audio?.Rewrap(p[0], p[1], p.Length > 2 ? double.Parse(p[2], System.Globalization.CultureInfo.InvariantCulture) : null) ?? false };
                 }
-            case "preview": _ = app.Preview(arg.Length > 0 ? arg : app.Speak.Target); break;
+            // preview: 试听 in the open settings (its result line shows there), else on its own.
+            case "preview":
+                if (arg.Length == 0 && app.OpenSettings is { } sw) _ = sw.RunPreview();
+                else _ = app.Preview(arg.Length > 0 ? arg : app.Speak.Target);
+                break;
+            // talkkey <name>: set it; talkkey choose: settings' 更改 (the next key pressed).
+            case "talkkey":
+                if (arg == "choose") app.OpenSettings?.StartChoosingKey();
+                else if (TalkKey.All.FirstOrDefault(k => k.Name == arg) is { } tk) app.SetTalkKey(tk);
+                return new JsonObject { ["talkKey"] = PushToTalk.Current.Name };
             case "calls":
                 app.FakeCalls = arg switch { "real" => null, "" or "none" => [], _ => arg.Split(',').Select(p => p.Split('=', 2)).ToDictionary(p => p[0], p => p[^1]) };
                 break;

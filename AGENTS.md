@@ -55,6 +55,6 @@ scripts/deploy-site.sh           # deploy the site and server/ (cicada.indaloop.
 - Match the existing naming and comment density; comments say why.
 - Commits are English Conventional Commits (`feat:` `fix:` `docs:` `build:` `refactor:` `test:` `chore:`). `feat:` and `fix:` subjects are the release notes (`scripts/changelog.py`), one line each linked to the commit: say what the user gets in one plain sentence, one change per commit. The scope picks the platform: `(windows)` `(android)` `(linux)` `(site)`, anything else is Mac.
 - Release notes have no Chinese but the brand: name UI in English (Listen to › Room).
-- Every user-visible change also gets a Chinese item in `site/changelog.json`, the website's changelog; keep `README.md` (Chinese, default) and `README.{en,ja,ko}.md` in step.
+- Every user-visible change also gets a Chinese item in `site/changelog.json`, the website's changelog; keep `README.md` (English) and `README.{zh-CN,ja,ko}.md` in step.
 - One semver version for every platform, in `VERSION`; every build reads it. Patch for fixes only, minor for features, major only when users of any platform must grant permissions again. Every release ships all four platforms.
 - This file stays under 6 KB with these sections; `scripts/check-agents.py` enforces it. Implementation detail belongs in code comments, not here.

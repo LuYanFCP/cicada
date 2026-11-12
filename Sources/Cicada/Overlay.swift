@@ -36,16 +36,42 @@ final class OverlayController {
         view.micOn = on
         view.needsDisplay = true
     }
-    private(set) var expanded = true
-    private(set) var manualHidden = false
-    private(set) var dimmed = false
-    private var peeking = false
+    /// Where the pointer is while the bar is open.
+    enum Pointer: Equatable {
+        case away
+        /// Passing over: faded so the app underneath stays usable.
+        case passing
+        /// Rested on it: the bar takes clicks (drag, resize, the mic button) until the pointer leaves.
+        case editing
+    }
+
+    enum Visibility: Equatable {
+        case hidden
+        case open(Pointer)
+        /// Tucked away to a dot after a quiet spell (自动).
+        case tucked
+        /// Opened from the dot by hovering it: tucks again once the pointer leaves.
+        case peeking
+        /// Put away with the toggle shortcut until it is pressed again.
+        case manuallyHidden
+    }
+
+    private(set) var visibility = Visibility.hidden
+    var isShown: Bool { visibility != .hidden }
+    var expanded: Bool {
+        switch visibility {
+        case .open, .peeking, .manuallyHidden: true
+        case .hidden, .tucked: false
+        }
+    }
+    var manualHidden: Bool { visibility == .manuallyHidden }
+    var dimmed: Bool { visibility == .open(.passing) }
+    private var peeking: Bool { visibility == .peeking }
     private var lastContentAt = Date()
     private var lastMouse = NSPoint.zero
     private var stillFor = 0.0
     private static let pollInterval = 0.05
 
-    private(set) var isShown = false
     private var width: CGFloat = 900
     private var fontSize: CGFloat = 28
     private var origin = NSPoint.zero
@@ -153,8 +179,6 @@ final class OverlayController {
 
     func show() {
         restore()
-        isShown = true
-        manualHidden = false
         // Auto mode starts tucked away until someone speaks.
         setExpanded(!mode().auto, animated: false)
         layout()
@@ -169,7 +193,7 @@ final class OverlayController {
     }
 
     func hide() {
-        isShown = false
+        visibility = .hidden
         hoverTimer?.invalidate()
         hoverTimer = nil
         setHover(false)
@@ -184,17 +208,16 @@ final class OverlayController {
     }
 
     private func setExpanded(_ on: Bool, animated: Bool) {
-        expanded = on
         if !on {
             onCollapsed?()
-            dimmed = false
             stillFor = 0
             setHover(false)
         }
+        visibility = on ? .open(.away) : .tucked
         guard animated else {
             view.collapsed = !on
             view.needsDisplay = true
-            panel.alphaValue = manualHidden ? 0 : 1
+            panel.alphaValue = 1
             return
         }
         if on {
@@ -211,7 +234,7 @@ final class OverlayController {
                 panel.animator().alphaValue = 0
             }, completionHandler: { [weak self] in
                 MainActor.assumeIsolated {
-                    guard let self, !self.expanded else { return }
+                    guard let self, self.visibility == .tucked else { return }
                     self.view.collapsed = true
                     self.view.needsDisplay = true
                     NSAnimationContext.runAnimationGroup { ctx in
@@ -227,12 +250,11 @@ final class OverlayController {
     func toggleManual() {
         guard isShown else { return }
         if manualHidden || !expanded {
-            manualHidden = false
             lastContentAt = Date()
             setExpanded(true, animated: true)
         } else {
-            manualHidden = true
             setHover(false)
+            visibility = .manuallyHidden
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.2
                 panel.animator().alphaValue = 0
@@ -336,8 +358,8 @@ final class OverlayController {
     }
 
     private func setDimmed(_ on: Bool) {
-        guard dimmed != on else { return }
-        dimmed = on
+        guard dimmed != on, case .open = visibility else { return }
+        visibility = .open(on ? .passing : .away)
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = on ? 0.12 : 0.25
             panel.animator().alphaValue = on ? 0.15 : 1
@@ -345,8 +367,7 @@ final class OverlayController {
     }
 
     private func pollHover() {
-        guard isShown, !manualHidden else { return }
-        if view.dragMode != nil { return }
+        guard isShown, !manualHidden, view.dragMode == nil else { return }
         let mouse = NSEvent.mouseLocation
         let moved = hypot(mouse.x - lastMouse.x, mouse.y - lastMouse.y) > 2
         lastMouse = mouse
@@ -355,14 +376,14 @@ final class OverlayController {
         // Tucked away: hovering the dot peeks at the last line.
         if !expanded {
             if pillFrame.contains(mouse) {
-                peeking = true
                 setExpanded(true, animated: true)
+                visibility = .peeking
             }
             return
         }
 
         let overBar = barFrame.insetBy(dx: -4, dy: -4).contains(mouse)
-        if view.hover {
+        if visibility == .open(.editing) {
             // Editing: stay until the pointer leaves.
             if !overBar { setHover(false); stillFor = 0 }
         } else if overBar && !peeking {
@@ -380,21 +401,21 @@ final class OverlayController {
 
         if peeking {
             if !overBar && !pillFrame.contains(mouse) {
-                peeking = false
-                if mode().auto { setExpanded(false, animated: true) }
+                if mode().auto { setExpanded(false, animated: true) } else { visibility = .open(.away) }
             }
             return
         }
 
         // Quiet long enough: tuck away.
         let m = mode()
-        if m.auto, !view.hover, !dimmed, view.speaking == nil,
+        if m.auto, visibility == .open(.away), view.speaking == nil,
            Date().timeIntervalSince(lastContentAt) > m.hideAfter {
             setExpanded(false, animated: true)
         }
     }
 
     private func setHover(_ on: Bool) {
+        if case .open = visibility { visibility = .open(on ? .editing : .away) }
         view.hover = on
         panel.ignoresMouseEvents = !on
         view.needsDisplay = true

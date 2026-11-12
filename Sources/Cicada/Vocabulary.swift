@@ -62,10 +62,12 @@ final class Vocabulary: ObservableObject {
     }
 
     /// The user said yes to a fix (or added it): the word, and the form it was heard as. A pair
-    /// that isn't a word for a word (`learnable`) adds the word only, or nothing.
+    /// that isn't a word for a word (`learnable`) adds the word only, or nothing. A yes in a meeting
+    /// never teaches a translation (平台 → platform): it would rewrite that word everywhere after.
     func confirm(heard: String, word: String, source: String = "live") {
         if !heard.isEmpty {
-            guard let l = Self.learnable(heard: heard, word: word) else { return }
+            guard let l = Self.learnable(heard: heard, word: word),
+                  source == "user" || !Correction.translation(heard: l.heard, word: l.word) else { return }
             return add(heard: l.heard, word: l.word, source: source)
         }
         add(heard: "", word: word, source: source)

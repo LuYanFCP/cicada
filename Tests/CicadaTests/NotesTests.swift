@@ -12,6 +12,15 @@ import Testing
         (0..<n).map { TranscriptLine(id: "l\($0)", t: Double($0 * 10), speaker: "them", src: "line \($0)", dst: nil, srcLang: "zh-CN", dstLang: "en") }
     }
 
+    /// A heard form only a fix wrote ("platform" for 平台) isn't one: it would teach the translator
+    /// and the next fix the same mistake.
+    @Test func termsKeepOnlyFormsTheRecognizerWrote() {
+        var l = TranscriptLine(id: "a", t: 0, speaker: "them", src: "我们 twoty 平台", dst: nil, srcLang: "zh-CN", dstLang: "en")
+        l.fixes = [LineFix(from: "平台", to: "platform")]
+        let terms = [NoteTerm(name: "X平台", note: "n", heard: ["Xplatform", "platform", "Twoty"])]
+        #expect(NotesEngine.heardAsSaid(terms, lines: [l]).first?.heard == ["Twoty"])
+    }
+
     /// A rewritten topic cites only its newest lines; its points keep when they were first said,
     /// and the topic starts no later than they do (a 35-minute replay showed 17:20 for points at 12:50).
     @Test func fishboneBranchTimeComesFromItsLines() {

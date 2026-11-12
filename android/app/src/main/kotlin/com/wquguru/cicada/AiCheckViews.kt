@@ -76,7 +76,7 @@ object AiCheckViews {
     private fun problem(a: Activity, ui: Ui, into: LinearLayout, busy: Boolean, recheck: Boolean, changeKey: () -> Unit) {
         val ling = a.cicada.ling
         ling.checkMessage()?.let { into.addView(ui.text(it, 13f, if (busy) warn else Palette.link)) }
-        ling.aiCheck.proxyLine(ling.serviceName, ling.serviceHost)?.let {
+        ling.aiCheck.proxyLine(ling.serviceLabel, ling.serviceHost)?.let {
             into.addView(ui.text(it, 13f, Palette.body).apply {
                 background = ui.rounded(Palette.ground, 10)
                 setPadding(ui.dp(10), ui.dp(8), ui.dp(10), ui.dp(8))
@@ -163,7 +163,7 @@ object AiCheckViews {
         val ling = app.ling
         val c = ling.aiCheck
         if (!ling.hasKey || !c.needsUser || c.running) return null
-        val name = ling.serviceName
+        val name = ling.serviceLabel
         val cfg = ling.config()
         val f = c.failure ?: return c.balanceLine(name)?.let { it to L("用完后就听不了了") }
         if (f.reason == Reason.Unreachable) return LF("连不上 %@", name) to L("修好之前听不了")
@@ -238,7 +238,7 @@ object AiCheckViews {
         lateinit var d: android.app.Dialog
         val body = ui.stack(10)
         ling.checkMessage()?.let { body.addView(ui.text(it, 15f, Palette.secondary).apply { gravity = Gravity.CENTER }) }
-        ling.aiCheck.proxyLine(ling.serviceName, ling.serviceHost)?.let {
+        ling.aiCheck.proxyLine(ling.serviceLabel, ling.serviceHost)?.let {
             body.addView(ui.text(it, 14f, Palette.body).apply { background = ui.rounded(Palette.ground, 12); setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10)) })
         }
         body.addView(ui.textButton(L("怎么设置代理")) { open(a, helpUrl()) }.apply {

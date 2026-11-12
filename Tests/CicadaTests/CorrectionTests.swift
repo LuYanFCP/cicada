@@ -45,6 +45,26 @@ import Testing
         #expect(verdict("莫纳", "Morpho", 0.7) == .drop)
     }
 
+    /// A learned "S平 → X平" never reaches into "iOS平台"; on its own it still applies.
+    @Test func learnedWordsStayWhole() {
+        #expect(Correction.word("S平", in: "iOS平台很好") == nil)
+        #expect(Correction.word("A工", in: "DATA工具") == nil)
+        #expect(Correction.word("S平", in: "在S平台上") != nil)
+        #expect(Correction.word("S平", in: "iOS平台和S平台") != nil)
+        #expect(Correction.word("莫拉", in: "解释这个莫拉的") != nil)
+        #expect(Correction.apply([LineFix(from: "S平", to: "X平")], to: "iOS平台和S平台").text == "iOS平台和X平台")
+    }
+
+    /// A translation isn't a misheard name: one 对 to "X平台 → X platform" taught 平台 → platform.
+    @Test func translationsAreNotAsked() {
+        #expect(verdict("X平台", "X platform", 0.9) == .drop)
+        #expect(verdict("平台", "platform", 0.95) == .drop)
+        #expect(verdict("respons", "responsible", 0.85) == .drop)
+        #expect(verdict("GPT四", "GPT4", 0.85) == .ask)
+        #expect(Correction.translation(heard: "平台", word: "platform"))
+        #expect(!Correction.translation(heard: "莫拉", word: "Morpho"))
+    }
+
     @Test func confirmedHeardFormIsApplied() {
         #expect(verdict("莫拉", "Morpho", 0.5, known: [("莫拉", "Morpho")]) == .apply)
         #expect(verdict("解释这个莫拉的", "解释这个Morpho的", 0.5, known: [("莫拉", "Morpho")]) == .apply)

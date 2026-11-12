@@ -25,6 +25,23 @@ extension View {
         }
     }
 
+    /// The user scrolled by hand: a trackpad, a wheel or the scroller, not our own `scrollTo` (macOS 15
+    /// and later; 14 never reports it, so a playing transcript just keeps following). A mouse wheel
+    /// animates like `scrollTo` does, so an animation counts unless we started one just before.
+    @ViewBuilder func onUserScroll(ownSince: @escaping () -> Date, _ action: @escaping () -> Void) -> some View {
+        if #available(macOS 15, *) {
+            onScrollPhaseChange { _, phase in
+                switch phase {
+                case .tracking, .interacting, .decelerating: action()
+                case .animating where Date().timeIntervalSince(ownSince()) > 0.3: action()
+                default: break
+                }
+            }
+        } else {
+            self
+        }
+    }
+
     /// The content scrolled (macOS 15 and later).
     @ViewBuilder func onScrolled(_ action: @escaping () -> Void) -> some View {
         if #available(macOS 15, *) {

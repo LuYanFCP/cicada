@@ -31,6 +31,8 @@ What cb7762c was measured with. `scripts/room-round.sh <label> [mac|music|none] 
 | Then speakers again | `room-round.sh s56b mac 56` | `english_room` 0 (the measurement starts over) |
 | Table alone | `room-round.sh alone none` | 6/6 |
 
-Lines over the online side are lost on speakers by design (the gate). With macOS echo cancellation (`ECHO=on`) echo was 0 too but gaps fell to 0–25 %: why it is off.
+Lines over the online side are lost on speakers by design (the gate). With macOS echo cancellation (`ECHO=on`) echo was 0 too but gaps fell to 0–25 %: why its processing is off for the room.
+
+2026-11-10, `ECHO=bypass` (the default: the unit with processing off, gated like the plain mic, so the talk key can turn processing on): s25 / s56 ×4 / s100 `english_room` 0, gaps 88–100 % but one 38 %; headphones `echo=false`, over 100/100/100 %. The plain mic (`ECHO=off`) the same hour: gaps 12–100 %, `english_room` 2 in two of four rounds, and 0 % on every sentence while 同声传译's unit was made (it starves the plain mic).
 
 Also: `lsctl roomMicSilent:on` then `mic:on` shows 麦克风没声音 after about 10 s (log `room mic: silent since it started`, then `still silent`); `roomEchoSim:<on|off|real>` fixes the measurement for UI work.

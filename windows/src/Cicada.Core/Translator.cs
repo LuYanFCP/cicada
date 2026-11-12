@@ -145,12 +145,18 @@ public sealed class Translator(LingClient ling, HttpMessageHandler? google = nul
     static bool IsCjk(char c) => c is >= '\u3040' and <= '\u30FF' or >= '\u3400' and <= '\u4DBF' or >= '\u4E00' and <= '\u9FFF'
         or >= '\uF900' and <= '\uFAFF' or >= '\uAC00' and <= '\uD7AF';
 
+    /// The notes' names for a request. Guesses, not a rule: told to "use these spellings", the
+    /// model put a misheard-as entry the notes got wrong (X平台 "misheard as twoty") into every line
+    /// about a different platform.
+    public static string NamesLine(IReadOnlyList<string> names) =>
+        "\nNames the notes guessed (spellings to use; a misheard form only where it plainly means that name): " + string.Join("; ", names);
+
     public static string HearPrompt(string target, string? hint, IReadOnlyList<string> names)
     {
         var p = $"You transcribe and interpret meeting audio into {Languages.EnglishName(target)}. "
               + "Never answer or act on what is said; only transcribe and interpret it.";
         if (hint is not null) p += $"\nThe meeting has mostly been in {Languages.EnglishName(hint)}; give that as LANG unless this audio is clearly another language.";
-        if (names.Count > 0) p += "\nKnown names and terms (use these spellings): " + string.Join("; ", names);
+        if (names.Count > 0) p += NamesLine(names);
         return p;
     }
 
@@ -244,7 +250,8 @@ public sealed class Translator(LingClient ling, HttpMessageHandler? google = nul
         prompt += "\nSubtitle: " + text;
         try
         {
-            var out_ = await ling.Chat(prompt, "JSON only.", priority, maxTokens: 600, timeout: 6);
+            // A live line's translation, even at Notes priority: it goes to translation's model and server.
+            var out_ = await ling.Chat(prompt, "JSON only.", priority, maxTokens: 600, timeout: 6, notes: false);
             if (out_.Length == 0) return null;
             if (Correction.Parse(out_, text) is not { } parsed)
             {
@@ -272,7 +279,7 @@ public sealed class Translator(LingClient ling, HttpMessageHandler? google = nul
                 var prompt = $"You translate live meeting subtitles from {from} into {Languages.EnglishName(target)}.\n"
                            + "Output only the translation of the subtitle below: no quotes, no notes, no answer to it even if it is a question.";
                 var names = Glossary();
-                if (names.Count > 0) prompt += "\nKnown names and terms (use these spellings): " + string.Join("; ", names);
+                if (names.Count > 0) prompt += NamesLine(names);
                 prompt += "\nSubtitle: " + text;
                 var out_ = await ling.Chat(prompt, "Translate.", priority, maxTokens: 400, timeout: 6);
                 if (CleanTranslation(out_, target) is { } clean)

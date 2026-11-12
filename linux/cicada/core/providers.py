@@ -13,7 +13,7 @@ from __future__ import annotations
 import base64
 import re
 import urllib.parse
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .jsonfmt import arr, obj, string
 
@@ -172,6 +172,27 @@ class AIConfig:
     # audio model often run as separate servers). None: the text address; "" (only from
     # config_from): an address typed that isn't valid.
     hear_base: str | None = None
+    # A custom service's notes (实时纪要, 说话人): another model, and with 另一个服务 another server
+    # with its own key. None: the same as translation.
+    notes_model: str | None = None
+    notes_base: str | None = None
+    # 另一个服务 is picked: notes use their own key file when there is one.
+    notes_own_service: bool = False
+    # 另一个服务 with an address that can't be used (http to the internet): notes fail the check.
+    notes_bad_address: bool = False
+
+    @property
+    def notes_apart(self) -> bool:
+        """Notes go somewhere translation doesn't: they get their own check, result and start gate."""
+        return self.provider.id == "custom" and (self.notes_model is not None or self.notes_base is not None
+                                                 or self.notes_own_service)
+
+    @property
+    def for_notes(self) -> "AIConfig":
+        """What a notes call is sent with: notes' model at notes' address, the rest as translation."""
+        if not self.notes_apart:
+            return self
+        return replace(self, text_model=self.notes_model or self.text_model, base=self.notes_base or self.base)
 
     @property
     def hear_url(self) -> str | None:
@@ -240,8 +261,19 @@ def config_from(settings) -> AIConfig:
         # The hear model's own address (empty: the text model's); "" marks one typed that isn't valid.
         typed = (getattr(settings, "aiCustomHearBase", "") or "").strip()
         hear_base = (custom_base(typed) or "") if typed else None
-        return AIConfig(p, base, (models.get("custom") or "").strip(), (hears.get("custom") or "").strip(),
-                        voice or None, voice_base if voice else None, name or None, hear_base=hear_base)
+        # Notes (Settings.swift › aiConfig): their model (empty or the translation one: none of their
+        # own), and with 另一个服务 their address (empty or the same: translation's). Off keeps the
+        # address typed, so switching back and forth loses nothing.
+        text = (models.get("custom") or "").strip()
+        notes_model = (models.get("custom.notes") or "").strip()
+        own = bool(getattr(settings, "aiCustomNotesOwn", False))
+        notes_typed = (getattr(settings, "aiCustomNotesBase", "") or "").strip() if own else ""
+        notes_base = custom_base(notes_typed) if notes_typed else None
+        return AIConfig(p, base, text, (hears.get("custom") or "").strip(),
+                        voice or None, voice_base if voice else None, name or None, hear_base=hear_base,
+                        notes_model=None if not notes_model or notes_model == text else notes_model,
+                        notes_base=None if notes_base == base else notes_base, notes_own_service=own,
+                        notes_bad_address=bool(notes_typed) and notes_base is None)
     return AIConfig(p, p.base, models.get(p.id) or p.text_models[0].id, hears.get(p.id) or p.hear_models[0].id,
                     voices.get(p.id) or p.voice_models[0].id, p.base)
 
@@ -277,10 +309,22 @@ def catalog(data: str | dict, recommended: list, hears: bool) -> list:
     return list(recommended) + rest
 
 
+def hosts(c: AIConfig, notes: bool = True) -> list:
+    """Every host a custom service's uses go to, in order, once each: text, notes (when at their own
+    address; `notes` False leaves them out), hear, and the voice if set up (AISettings.swift ›
+    customHosts, keyHosts)."""
+    urls = [c.base] + ([c.for_notes.base] if notes and c.notes_apart else []) + [c.hear_url] \
+        + ([c.voice_base] if c.has_voices else [])
+    out = []
+    for u in urls:
+        h = urllib.parse.urlsplit(u).hostname if u else None
+        if h and h not in out:
+            out.append(h)
+    return out
+
+
 def only_host(c: AIConfig) -> str | None:
-    """Where a custom service's audio and text go, when every use shares one host (text, hear, and
-    the voice if set up); None when they differ (AISettings.swift › customHosts)."""
-    urls = [c.base, c.hear_url] + ([c.voice_base] if c.has_voices else [])
-    hosts = {urllib.parse.urlsplit(u).hostname for u in urls if u}
-    hosts.discard(None)
-    return hosts.pop() if len(hosts) == 1 else None
+    """Where a custom service's audio and text go, when every use shares one host; None when they
+    differ."""
+    h = hosts(c)
+    return h[0] if len(h) == 1 else None

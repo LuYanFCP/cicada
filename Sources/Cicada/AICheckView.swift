@@ -19,7 +19,7 @@ struct AICheckSteps: View {
     var changeKey: () -> Void
 
     private var check: AICheck { ling.aiCheck }
-    private var service: String { ling.serviceName }
+    private var service: String { ling.serviceLabel }
     private var host: String { ling.serviceHost }
 
     var body: some View {
@@ -165,7 +165,7 @@ struct AIServiceStrip: View {
         }
         let c = ling.aiCheck
         guard ling.hasKey, c.needsUser else { return nil }
-        let name = ling.serviceName
+        let name = ling.serviceLabel
         let stopped = L("字幕照常；纪要和整句翻译先停下")
         guard let f = c.failure else {
             return c.balanceLine(service: name).map { ($0, L("用完后纪要会停下")) }
@@ -179,7 +179,7 @@ struct AIServiceStrip: View {
     /// also the menu bar's dot, beyond the panel.
     static func blocking(_ ling: LingClient, textModel: String) -> String? {
         guard ling.hasKey, let f = ling.aiCheck.failure else { return nil }
-        let name = ling.serviceName
+        let name = ling.serviceLabel
         switch f.reason {
         case .invalidKey, .mgmtKey: return L("\(name) 的 key 用不了")
         case .noCredit: return L("\(name) 账户余额不足。")

@@ -24,6 +24,11 @@ class AppSettings(
     /// 语音和文字只发给你的服务: with the custom service, Google Translate is never asked. Kept when
     /// another service is picked, but only acts on the custom one (`customOnly`).
     var aiCustomOnly: Boolean = false,
+    /// The custom service's notes: 另一个服务 (its own address, empty: the same one, and its own key
+    /// in the `custom-notes` key file). Off keeps the address, so switching back and forth loses
+    /// nothing. The notes model is `aiModels["custom.notes"]` (empty: the translation model).
+    var aiCustomNotesOwn: Boolean = false,
+    var aiCustomNotesBase: String = "",
     /// "notes" (live notes, default) or "subtitles" (the subtitle bar), for the floating window.
     var view: String = "notes",
     /// 共享屏幕时让对方看到: let the floating window show up in screenshots and screen recording.
@@ -50,6 +55,11 @@ class AppSettings(
     var fixMisheard: Boolean = true,
     /// 没见过的名字和专称先问我: a new name is asked about once instead of left as heard.
     var askNames: Boolean = true,
+    /// 存到文件夹: settled meetings are also written as Markdown into `exportFolder`, a SAF tree URI
+    /// (empty until one is chosen), whose short name "parent › folder" is `exportName`. Not secrets.
+    var exportOn: Boolean = false,
+    var exportFolder: String = "",
+    var exportName: String = "",
     /// When GitHub Releases last answered an update check (epoch ms; UpdateChecker).
     var updateLastChecked: Long? = null,
     /// The newest version a notification was posted for, so each one is announced once.
@@ -77,10 +87,12 @@ class AppSettings(
         "aiVoiceModels" to aiVoiceModels.toSortedMap(), "aiCustomBase" to aiCustomBase,
         "aiCustomVoiceBase" to aiCustomVoiceBase, "aiCustomVoice" to aiCustomVoice,
         "aiCustomHearBase" to aiCustomHearBase, "aiCustomOnly" to aiCustomOnly,
+        "aiCustomNotesOwn" to aiCustomNotesOwn, "aiCustomNotesBase" to aiCustomNotesBase,
         "showInCapture" to showInCapture, "onboarded" to onboarded, "uiLanguage" to uiLanguage,
         "source" to source, "overlay" to overlay, "silenceEnd" to silenceEnd, "silenceMinutes" to silenceMinutes,
         "speakerVoices" to speakerVoices, "recordAudio" to recordAudio, "speakBack" to speakBack,
         "fixMisheard" to fixMisheard, "askNames" to askNames,
+        "exportOn" to exportOn, "exportFolder" to exportFolder, "exportName" to exportName,
         "updateLastChecked" to updateLastChecked, "updateNotified" to updateNotified,
     )
 
@@ -110,6 +122,7 @@ class AppSettings(
                             aiVoiceModels = strings(o["aiVoiceModels"]), aiCustomBase = o["aiCustomBase"].str() ?: "",
                             aiCustomVoiceBase = o["aiCustomVoiceBase"].str() ?: "", aiCustomVoice = o["aiCustomVoice"].str() ?: "",
                             aiCustomHearBase = o["aiCustomHearBase"].str() ?: "", aiCustomOnly = o["aiCustomOnly"].bool() ?: false,
+                            aiCustomNotesOwn = o["aiCustomNotesOwn"].bool() ?: false, aiCustomNotesBase = o["aiCustomNotesBase"].str() ?: "",
                             showInCapture = o["showInCapture"].bool() ?: false, onboarded = o["onboarded"].bool() ?: false,
                             uiLanguage = o["uiLanguage"].str() ?: d.uiLanguage, source = o["source"].str() ?: d.source,
                             overlay = o["overlay"].bool() ?: true,
@@ -118,6 +131,8 @@ class AppSettings(
                             speakerVoices = o["speakerVoices"].bool() ?: true, recordAudio = o["recordAudio"].bool() ?: true,
                             speakBack = o["speakBack"].bool() ?: true,
                             fixMisheard = o["fixMisheard"].bool() ?: true, askNames = o["askNames"].bool() ?: true,
+                            exportOn = o["exportOn"].bool() ?: false, exportFolder = o["exportFolder"].str() ?: "",
+                            exportName = o["exportName"].str() ?: "",
                             updateLastChecked = (o["updateLastChecked"] as? Number)?.toLong(), updateNotified = o["updateNotified"].str(),
                         )
                     }

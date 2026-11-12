@@ -301,9 +301,11 @@ final class SpeakerTagger {
 
     func merge(_ from: Int, into: Int) { queue.async { [self] in clusterer.merge(from, into: into) } }
 
-    func tag(lineID: String, samples: [Float]) {
+    /// `done` once the line has its voice, or is known to have none.
+    func tag(lineID: String, samples: [Float], done: @escaping @MainActor () -> Void = {}) {
         voice(of: samples) { [weak self] voice in
             if let voice { self?.onVoice?(lineID, voice) }
+            done()
         }
     }
 

@@ -21,10 +21,14 @@ enum RoomMicPlan {
         var virtual = false
     }
 
-    /// The system default, unless it is the virtual mic (同声传译 makes it the default) or a
-    /// Bluetooth headset's (AirPods hear the wearer, not the table, and drop to call quality while
-    /// their mic is open); then the Mac's own microphone.
-    static func pick(defaultUID: String?, inputs: [Input]) -> String? {
+    /// The one chosen beside 打开麦克风 while it is plugged in (a headset too: then the wearer is
+    /// all the user wants). Else the system default, unless it is the virtual mic (同声传译 makes it
+    /// the default) or a Bluetooth headset's (AirPods hear the wearer, not the table, and drop to call
+    /// quality while their mic is open); then the Mac's own microphone.
+    static func pick(defaultUID: String?, inputs: [Input], preferredUID: String? = nil) -> String? {
+        if let preferred = inputs.first(where: { $0.uid == preferredUID }), !preferred.virtual {
+            return preferred.uid
+        }
         if let d = inputs.first(where: { $0.uid == defaultUID }), !d.virtual, !d.bluetooth { return d.uid }
         return inputs.first(where: \.builtIn)?.uid
             ?? inputs.first(where: { !$0.virtual && !$0.bluetooth })?.uid
@@ -93,20 +97,29 @@ extension AudioDevices {
     }
 
     /// The microphone `RoomMicPlan` picks among the Mac's inputs right now.
-    static var roomMic: OutputDevice? { roomMic(excluding: []) }
+    static var roomMic: OutputDevice? { roomMic() }
 
-    /// `excluding`: inputs to treat as gone (the debug command's pretend unplug).
-    static func roomMic(excluding: Set<String>) -> OutputDevice? {
-        let all = inputs().filter { !excluding.contains($0.uid) }
-        let plan = all.map { d -> RoomMicPlan.Input in
+    /// `excluding`: inputs to treat as gone (the debug command's pretend unplug). `preferredUID`: the
+    /// one chosen beside 打开麦克风 (`AppSettings.roomMicUID`).
+    static func roomMic(excluding: Set<String> = [], preferredUID: String? = nil) -> OutputDevice? {
+        let all = roomMicInputs(excluding: excluding)
+        let uid = RoomMicPlan.pick(defaultUID: defaultInput?.uid, inputs: all.map(\.plan), preferredUID: preferredUID)
+        return all.first { $0.device.uid == uid }?.device
+    }
+
+    /// The menu beside 打开麦克风: the inputs that can hear the room, the virtual ones left out.
+    static func roomMicChoices(excluding: Set<String> = []) -> [(device: OutputDevice, bluetooth: Bool)] {
+        roomMicInputs(excluding: excluding).filter { !$0.plan.virtual }.map { ($0.device, $0.plan.bluetooth) }
+    }
+
+    private static func roomMicInputs(excluding: Set<String>) -> [(device: OutputDevice, plan: RoomMicPlan.Input)] {
+        inputs().filter { !excluding.contains($0.uid) }.map { d in
             let t = transport(d.id)
-            return .init(uid: d.uid, builtIn: t == kAudioDeviceTransportTypeBuiltIn,
-                         bluetooth: t == kAudioDeviceTransportTypeBluetooth || t == kAudioDeviceTransportTypeBluetoothLE,
-                         // The aggregate macOS makes for echo cancellation is no microphone of its own.
-                         virtual: d.isVirtualMic || d.uid.hasPrefix("CADefaultDeviceAggregate"))
+            return (d, .init(uid: d.uid, builtIn: t == kAudioDeviceTransportTypeBuiltIn,
+                             bluetooth: t == kAudioDeviceTransportTypeBluetooth || t == kAudioDeviceTransportTypeBluetoothLE,
+                             // The aggregate macOS makes for echo cancellation is no microphone of its own.
+                             virtual: d.isVirtualMic || d.uid.hasPrefix("CADefaultDeviceAggregate")))
         }
-        let uid = RoomMicPlan.pick(defaultUID: defaultInput?.uid, inputs: plan)
-        return all.first { $0.uid == uid }
     }
 }
 
@@ -312,8 +325,7 @@ final class RoomMic: AudioSource {
 
     func start() throws {
         startedAt = Date()
-        silentSince = nil
-        silenceChecked = false
+        silence = .waiting
         AudioDevices.pinInput(engine, to: device)
         let input = engine.inputNode
         // The hardware format: after pinning, the client format can still be the system mic's,
@@ -381,23 +393,29 @@ final class RoomMic: AudioSource {
     nonisolated(unsafe) static var simulateSilence = false
     /// Called on the main queue when the mic stayed silent after being opened again.
     var onSilent: (() -> Void)?
-    private var silentSince: Date?
-    private var silentRestarts = 0
-    private var silenceChecked = false
+    /// Per opening of the mic, on the audio thread: whether it has been silent since it started.
+    private enum SilenceWatch { case waiting, silentSince(Date), settled }
+    private var silence = SilenceWatch.waiting
+    /// Opened again once already for silence (main queue): the next time it is reported instead.
+    private var reopenedForSilence = false
 
     /// On the audio thread, per block: a mic silent since it started is opened again once, and
     /// reported (`onSilent`) when it is still silent after that.
     private func watchSilence(sound: Bool) {
-        guard !silenceChecked else { return }
-        if sound { silenceChecked = true; return }
-        let since = silentSince ?? Date()
-        silentSince = since
+        let since: Date
+        switch silence {
+        case .settled: return
+        case .waiting: since = Date()
+        case .silentSince(let d): since = d
+        }
+        if sound { silence = .settled; return }
+        silence = .silentSince(since)
         guard Date().timeIntervalSince(since) >= Self.silentAfter else { return }
-        silenceChecked = true
+        silence = .settled
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.stopped else { return }
-            if self.silentRestarts == 0 {
-                self.silentRestarts += 1
+            if !self.reopenedForSilence {
+                self.reopenedForSilence = true
                 self.startedAt = .distantPast
                 self.restart("silent since it started")
             } else {

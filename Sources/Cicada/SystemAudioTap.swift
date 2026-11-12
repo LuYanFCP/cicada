@@ -28,6 +28,25 @@ enum SystemAudioPermission {
     }
 }
 
+/// What the guide knows of 系统音频录制. Refused, turning it on later in System Settings only takes
+/// once Cicada is reopened (macOS says so too), so the guide offers that.
+enum SystemAudioAccess: Equatable {
+    case unknown, granted, refused
+
+    /// `tapRan`: listening to the system audio (not the room), which only runs once allowed; pausing
+    /// doesn't take that away. `status`: what TCC says, nil when it can't be read.
+    func next(status: SystemAudioPermission.Status?, tapRan: Bool) -> Self {
+        let now: Self = tapRan ? .granted : self
+        switch status {
+        case nil: return now
+        case .granted: return .granted
+        case .denied: return .refused
+        // Not yet asked as far as TCC can tell: a tap that ran says otherwise.
+        case .unknown: return now == .granted ? .granted : .unknown
+        }
+    }
+}
+
 final class SystemAudioTap {
     /// Called on the real-time audio thread. Must not block.
     var onAudio: ((AVAudioPCMBuffer) -> Void)?

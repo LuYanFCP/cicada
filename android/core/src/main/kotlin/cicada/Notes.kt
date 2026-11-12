@@ -21,6 +21,8 @@ class NotesEngine(private val ling: LingClient, private val store: SessionStore)
     private var sessionId: String? = null
     private var inFlight = false
     private var pendingFinal: String? = null
+    /// The meeting whose final pass is running.
+    private var finalId: String? = null
     private var lastAttempt = 0L
     private val listeners = mutableListOf<() -> Unit>()
 
@@ -28,6 +30,14 @@ class NotesEngine(private val ling: LingClient, private val store: SessionStore)
     @Volatile var status = State.Idle; private set
     /// The session the notes belong to (stays set after the meeting ends).
     @Volatile var shownId: String? = null; private set
+    /// A final pass is over, whether it wrote notes or not (存到文件夹 waits for it). On the
+    /// notes' worker thread.
+    @Volatile var finalDone: ((String) -> Unit)? = null
+
+    /// The final pass for this meeting is running, waiting its turn, or still to start: the
+    /// meeting has ended but finish() hasn't run yet (it starts on listening's pool).
+    fun settling(id: String): Boolean = synchronized(gate) { sessionId == id || finalId == id || pendingFinal == id } || generating == id
+
     /// The language notes are written in (English name), from 纪要语言.
     @Volatile var language: () -> String = { "Simplified Chinese" }
 
@@ -102,10 +112,12 @@ class NotesEngine(private val ling: LingClient, private val store: SessionStore)
         val prior: List<NoteTerm>
         synchronized(gate) {
             if (inFlight) { if (final) pendingFinal = id; return }
-            session = store.get(id) ?: return
-            if (session.lines.isEmpty()) return
-            if (!ling.hasKey) { status = State.NoKey; changed(); return }
+            fun over() { if (final) finalDone?.invoke(id) }
+            session = store.get(id) ?: run { over(); return }
+            if (session.lines.isEmpty()) { over(); return }
+            if (!ling.hasKey) { status = State.NoKey; changed(); over(); return }
             inFlight = true
+            if (final) finalId = id
             lastAttempt = System.currentTimeMillis()
             status = State.Updating
             base = if (final) MeetingNotes() else if (id == shownId) notes else session.notes ?: MeetingNotes()
@@ -140,6 +152,7 @@ class NotesEngine(private val ling: LingClient, private val store: SessionStore)
             }
             if (!final) next.topics = merge(base.topics, frozen, next.topics).toMutableList()
             next.terms = NoteTerm.keepingOrder(prior, next.terms).toMutableList()
+            next.terms = heardAsSaid(next.terms, lines).toMutableList()
             carryTimes(base, next)
             next.title = next.title ?: base.title ?: session.notes?.title
             next.covered = lines.size
@@ -161,8 +174,9 @@ class NotesEngine(private val ling: LingClient, private val store: SessionStore)
             status = State.Failed
             Log.d("notes: update failed ${e.javaClass.simpleName}")
         } finally {
-            val queued = synchronized(gate) { inFlight = false; pendingFinal.also { pendingFinal = null } }
+            val queued = synchronized(gate) { inFlight = false; if (final) finalId = null; pendingFinal.also { pendingFinal = null } }
             changed()
+            if (final) finalDone?.invoke(id)
             if (queued != null) update(queued, final = true)
         }
     }
@@ -282,6 +296,13 @@ class NotesEngine(private val ling: LingClient, private val store: SessionStore)
             return out
         }
 
+        /// Terms keep only the heard forms the recognizer really wrote (`src`). The notes read lines
+        /// with fixes in, so a wrong fix came back as a heard form ("X平台 heard as platform"), went to
+        /// the translator and the next fix's request as a known mishearing, and was proposed again.
+        fun heardAsSaid(terms: List<NoteTerm>, lines: List<TranscriptLine>): List<NoteTerm> = terms.map { t ->
+            NoteTerm(t.name, t.note, t.heard.filter { h -> lines.any { it.src.contains(h, ignoreCase = true) } }.toMutableList())
+        }
+
         /// A runaway topic summary cut back to its first sentence (or to the limit, with "…").
         fun shortened(summary: String): String {
             if (summary.length <= TOPIC_SUMMARY_LIMIT) return summary
@@ -372,7 +393,7 @@ class NotesEngine(private val ling: LingClient, private val store: SessionStore)
                 "- At most 5 conclusions and only real to-dos (often none).\n" +
                 "- Add a fishbone only to a topic that discusses causes, reasons or factors (3-5 branches); otherwise null.\n" +
                 "- Every topic, point, branch, conclusion and to-do needs evidence: the ids of the lines that say it. Never state anything the transcript does not say.\n" +
-                "- terms: at most 10 in total, replacing less useful ones rather than adding: first names the transcript misspells (heard), then the people, places and jargon a reader would not know. Leave out what everyone knows (a famous company, index or politician) unless it was misheard. name is the correct spelling in the transcript's language (no translation in brackets); heard lists only the wrong forms the transcript used; note is a few words.\n" +
+                "- terms: at most 10 in total, replacing less useful ones rather than adding: first names the transcript misspells (heard), then the people, places and jargon a reader would not know. Leave out what everyone knows (a famous company, index or politician) unless it was misheard. name is the correct spelling in the transcript's language (no translation in brackets); heard lists only the wrong forms the transcript used, and only of that same thing: a name said again and again in one spelling that context doesn't tie to a known one (\"我们 twoty\", \"our platform\") is a thing of its own, its own term with that spelling, not a mishearing of a similar name; note is a few words.\n" +
                 "- Write the meeting title and every summary, title, point, branch, conclusion and to-do in $language, even when the transcript is in another language. Only term names keep the transcript's spelling.\n" +
                 "- Write about what was said, never about the transcript or recognition quality.\n" +
                 "- Use empty arrays when there is nothing. No markdown, no text outside the JSON."

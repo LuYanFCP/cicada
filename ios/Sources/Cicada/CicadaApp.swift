@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 @main
@@ -12,6 +13,9 @@ struct CicadaApp: App {
                 .environmentObject(model.notes)
                 .environmentObject(model.room)
                 .onOpenURL { model.open($0) }
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                    model.room.appBecameActive()
+                }
                 .modifier(DevWindow(model: model))
         }
     }
@@ -34,6 +38,9 @@ enum Pref {
     /// 会中改正听错的词, and 没见过的名字和专称先问我.
     static let fixMisheard = "fixMisheard"
     static let askNames = "askNames"
+    /// 声音来源 (iOS only): "room", people at the table, or "speaker", video this phone plays aloud.
+    static let hear = "iosHear"
+    static var speakerMode: Bool { UserDefaults.standard.string(forKey: hear) == "speaker" }
 
     /// 对方说 on iOS: one language the user picks (detecting it comes later); the Mac's "auto" reads as English.
     static var sourceLang: Lang {
@@ -79,8 +86,14 @@ final class AppModel: ObservableObject {
         let r = RoomListen(store: store, translator: translator, notes: notes)
         r.onStateChange = { [weak self] in self?.listeningChanged() }
         r.onLine = { [weak self] line in self?.showOnLockScreen(line) }
+        // The floating window follows the 字幕 page: what is being said, else the newest line.
+        roomWatch = r.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.showInPiP() }
+        }
         return r
     }()
+    let pip = PiPSubtitles()
+    private var roomWatch: AnyCancellable?
     let liveActivity = LiveActivityController()
     /// 词表 and 改正听错的词, the Mac's own engines.
     let vocabulary = Vocabulary(url: Vocabulary.defaultURL)
@@ -143,7 +156,21 @@ final class AppModel: ObservableObject {
         searchPath = []
         tab = .records
         fixes.meetingStarted()
-        room.start(source: Pref.sourceLang.locale, target: Pref.targetCode, voices: UserDefaults.standard.bool(forKey: Pref.voices))
+        room.start(source: Pref.sourceLang.locale, target: Pref.targetCode, voices: UserDefaults.standard.bool(forKey: Pref.voices),
+                   speaker: Pref.speakerMode)
+    }
+
+    private func showInPiP() {
+        guard room.isRunning, room.speakerMode else { return }
+        let last = room.lines.last
+        let shown = last.flatMap { l in store.session(room.sessionID)?.lines.first { $0.id == l.id }?.shown } ?? last?.src
+        if room.paused || !room.status.isEmpty {
+            pip.show(src: "", dst: "", note: room.paused ? L("已暂停，结束后接着听") : room.status)
+        } else if !room.draft.isEmpty {
+            pip.show(src: room.draft, dst: room.draftTranslation, note: L("正在听外放…"))
+        } else {
+            pip.show(src: shown ?? "", dst: last?.dst ?? "", note: shown == nil ? L("正在听外放…") : "")
+        }
     }
 
     func stopListening() { room.stop() }
@@ -157,6 +184,7 @@ final class AppModel: ObservableObject {
 
     private func listeningChanged() {
         objectWillChange.send()
+        pip.setEnabled(room.isRunning && room.speakerMode)
         if room.isRunning, let start = room.startedAt {
             liveActivity.start(startedAt: start, pair: Pref.pairText(room.languagePair.source, room.languagePair.target))
         } else if !room.isRunning {

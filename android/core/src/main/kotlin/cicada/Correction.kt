@@ -82,10 +82,20 @@ object Correction {
         if (!latinFrom && !latinTo && han(cf) && han(ct) && soundsAlike(cf, ct)) return Verdict.Apply
         if (latinFrom && latinTo && cf.all { it.code < 128 } && ct.all { it.code < 128 } && e.confidence >= SPELLING_AT &&
             distance(cf.lowercase(), ct.lowercase()) <= 2) return Verdict.Apply
-        // A new name (Chinese heard as a Latin name, or a respelled one): sound can't check it.
-        if (latinTo && e.confidence >= ASK_AT) return Verdict.Ask
+        // A new name (Chinese heard as a Latin name, or a respelled one): sound can't check it. A
+        // name has a capital or a digit; "X平台 → X platform" is a translation, and one 对 to it
+        // taught the word list 平台 → platform, which then rewrote every 平台 in the meeting.
+        if (latinTo && e.confidence >= ASK_AT && nameShaped(ct)) return Verdict.Ask
         return Verdict.Drop
     }
+
+    /// Latin text that could be a name: a capital or a digit in it (Morpho, GPT4o), not "platform".
+    fun nameShaped(s: String): Boolean = s.any { it.code < 128 && (it.isUpperCase() || it.isDigit()) }
+
+    /// A Chinese word "fixed" into a plain English one (平台 → platform): a translation, not a
+    /// misheard name.
+    fun translation(heard: String, word: String): Boolean =
+        han(heard) && word.any { it.code < 128 && it.isLetter() } && word.all { it.code < 128 } && !nameShaped(word)
 
     fun pinyin(s: String): List<String> = s.map { pinyinOf(it).trim().lowercase() }
 
@@ -217,6 +227,24 @@ object Correction {
     /// the replaced words (start, end in UTF-16 units), for the dotted underline.
     class Applied(val text: String, val marks: List<IntRange>)
 
+    /// Where `s` stands as words of its own in `text` (its start, or null): a Latin edge of it never
+    /// runs on into a Latin word around it. `core` pads a fix to two characters, so the word list
+    /// learned "S平 → X平", which matched inside "iOS平台" and made it "iOX平台".
+    fun word(s: String, text: String): Int? {
+        if (s.isEmpty()) return null
+        var from = 0
+        while (from < text.length) {
+            val at = text.indexOf(s, from)
+            if (at < 0) return null
+            val end = at + s.length
+            val before = at > 0 && word(text[at - 1])
+            val after = end < text.length && word(text[end])
+            if (!(word(s.first()) && before) && !(word(s.last()) && after)) return at
+            from = at + 1
+        }
+        return null
+    }
+
     fun apply(fixes: List<LineFix>, src: String): Applied {
         var text = src
         val spans = mutableListOf<Pair<String, Int>>()   // replacement and its offset, kept valid as text changes
@@ -224,7 +252,7 @@ object Correction {
         val ordered = fixes.filter { it.user != true } + fixes.filter { it.user == true }
         for (f in ordered) {
             if (!f.applied || f.from.isEmpty()) continue
-            val start = text.indexOf(f.from)
+            val start = word(f.from, text) ?: text.indexOf(f.from)
             if (start < 0) continue
             val delta = f.to.length - f.from.length
             for (k in spans.indices) if (spans[k].second > start) spans[k] = spans[k].first to spans[k].second + delta

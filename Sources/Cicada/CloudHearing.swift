@@ -20,7 +20,7 @@ enum CloudHearing {
         if let hint {
             p += "\nThe meeting has mostly been in \(TranslationService.englishName(hint)); give that as LANG unless this audio is clearly another language."
         }
-        if !names.isEmpty { p += "\nKnown names and terms (use these spellings): " + names.joined(separator: "; ") }
+        if !names.isEmpty { p += TranslationService.namesLine(names) }
         return p
     }
 

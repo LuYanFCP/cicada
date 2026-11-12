@@ -68,13 +68,13 @@ static class AICheckView
         var ling = app.Ling;
         // A hear model at its own address: the one it couldn't reach is that one.
         var host = check.Failure?.Step == AICheck.StepId.Hear ? ling.HearHost : ling.ServiceHost;
-        if (check.Message(ling.ServiceName, host, ling.Config.TextModel, ling.HearName) is { } why)
+        if (check.Message(ling.ServiceLabel, host, ling.Config.TextModel, ling.HearName) is { } why)
         {
             var t = Ui.Text(why, 13, check.Failure is null ? Palette.WarnIcon : Palette.Danger);
             t.Margin = new Thickness(0, 4, 0, 0);
             into.Children.Add(t);
         }
-        if (check.ProxyLine(ling.ServiceName, ling.ServiceHost) is { } proxy)
+        if (check.ProxyLine(ling.ServiceLabel, ling.ServiceHost) is { } proxy)
             into.Children.Add(new Border { Background = Palette.Mica, CornerRadius = new CornerRadius(8), Padding = new Thickness(10, 7, 10, 7), Margin = new Thickness(0, 6, 0, 0), Child = Ui.Text(proxy, 13, Palette.Body) });
         var acts = Actions(app, check, changeKey, recheckInStep);
         if (acts.Count == 0) return;

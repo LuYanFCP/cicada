@@ -4,7 +4,43 @@ import Foundation
 
 /// Input side of `AudioDevices`: the devices that can record, and the system default input.
 extension AudioDevices {
-    static func inputs() -> [OutputDevice] { devices(scope: kAudioObjectPropertyScopeInput) }
+    /// The microphones, without what macOS adds while an echo-cancelling unit runs here.
+    static func inputs() -> [OutputDevice] {
+        devices(scope: kAudioObjectPropertyScopeInput).filter {
+            !$0.uid.hasPrefix("VPAUAggregateAudioDevice") && !isEchoReference($0.id)
+        }
+    }
+
+    /// While this process holds an echo-cancelling unit (同声传译, 记录我的发言), macOS gives the speakers
+    /// an input of their own (what they play, for the canceller to subtract) and lists a private
+    /// aggregate: neither hears the room, and the speakers would sit in the menu as a microphone.
+    /// That input is on the output the canceller plays to and has no terminal type; a real
+    /// microphone's says it is one.
+    static func isEchoReference(_ device: AudioObjectID) -> Bool {
+        // A headset is one device for its mic and its earpiece: its mic stays, whatever it reports.
+        let t = transport(device)
+        guard device == SystemAudioTap.defaultOutputDevice(),
+              t != kAudioDeviceTransportTypeBluetooth, t != kAudioDeviceTransportTypeBluetoothLE else { return false }
+        func streams(_ scope: AudioObjectPropertyScope) -> [AudioStreamID] {
+            var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams, mScope: scope,
+                                                  mElement: kAudioObjectPropertyElementMain)
+            var size: UInt32 = 0
+            guard AudioObjectGetPropertyDataSize(device, &addr, 0, nil, &size) == noErr, size > 0 else { return [] }
+            var ids = [AudioStreamID](repeating: 0, count: Int(size) / MemoryLayout<AudioStreamID>.size)
+            guard AudioObjectGetPropertyData(device, &addr, 0, nil, &size, &ids) == noErr else { return [] }
+            return ids
+        }
+        let inputs = streams(kAudioObjectPropertyScopeInput)
+        guard !inputs.isEmpty, !streams(kAudioObjectPropertyScopeOutput).isEmpty else { return false }
+        return inputs.allSatisfy { id in
+            var type: UInt32 = 0
+            var size = UInt32(MemoryLayout<UInt32>.size)
+            var addr = AudioObjectPropertyAddress(mSelector: kAudioStreamPropertyTerminalType,
+                                                  mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &type)
+            return type == kAudioStreamTerminalTypeUnknown
+        }
+    }
 
     static var defaultInput: OutputDevice? {
         var id = AudioObjectID(0)

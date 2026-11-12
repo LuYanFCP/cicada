@@ -16,6 +16,8 @@ public sealed class SessionStore
     /// The moment recognised words land in a record: a new line (theirs or mine) or a half sentence
     /// that grew. What 结束会议 counts as someone speaking (MeetingEndWatch.Heard).
     public event Action<string>? Words;
+    /// A record was written to disk (存到文件夹 follows its changes); on the saving thread.
+    public event Action<string>? Saved;
     /// The app's audio encoder (Media Foundation); null where there is none (the Mac CLI, tests
     /// that don't set one): meetings are then kept without a recording.
     public IAudioFiles? Audio { get; set; }
@@ -244,6 +246,7 @@ public sealed class SessionStore
                 var tmp = FileOf(id) + ".tmp";
                 File.WriteAllText(tmp, json, new UTF8Encoding(false));
                 File.Move(tmp, FileOf(id), overwrite: true);
+                Saved?.Invoke(id);
             }
             catch (Exception e) { Log.Debug($"store: save failed {e.GetType().Name}"); }
         }

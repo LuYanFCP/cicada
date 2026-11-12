@@ -14,6 +14,17 @@
     <!-- The daily update check: waits for a network, and keeps its schedule across a restart. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 存到文件夹: whether anything opens a saved Markdown file or its folder (else the link is left out). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="text/markdown" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="vnd.android.document/directory" />
+        </intent>
+    </queries>
 
     <application
         android:name=".CicadaApp"

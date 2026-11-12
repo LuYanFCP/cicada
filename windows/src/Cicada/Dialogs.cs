@@ -45,6 +45,36 @@ static class Dialogs
         return Show(owner, title, content, ok, danger: false, box);
     }
 
+    /// One of a few options, each a bordered row (the Mac's FolderChoice): its index, or null when
+    /// cancelled. The first is chosen to start with.
+    public static int? Pick(Window? owner, string title, IReadOnlyList<(string Title, string? Detail)> options, string ok)
+    {
+        int pick = 0;
+        var list = new StackPanel();
+        var rows = new List<Border>();
+        void Restyle()
+        {
+            for (int i = 0; i < rows.Count; i++)
+            {
+                rows[i].BorderBrush = i == pick ? Palette.Ink : Palette.Line;
+                rows[i].BorderThickness = new Thickness(i == pick ? 1.5 : 1);
+            }
+        }
+        for (int i = 0; i < options.Count; i++)
+        {
+            var index = i;
+            var text = options[i].Detail is { } d ? Ui.Stack(2, Ui.Text(options[i].Title, 13, Palette.Ink), Ui.Helper(d)) : Ui.Stack(2, Ui.Text(options[i].Title, 13, Palette.Ink));
+            var row = new Border { CornerRadius = new CornerRadius(9), Padding = new Thickness(12, 10, 12, 10), Margin = new Thickness(0, 0, 0, 8), Background = Palette.Surface, Cursor = Cursors.Hand, Child = text };
+            // Down, and handled: the dialog drags itself on a press, which would swallow the release.
+            row.MouseLeftButtonDown += (_, e) => { pick = index; Restyle(); e.Handled = true; };
+            System.Windows.Automation.AutomationProperties.SetName(row, options[i].Title);
+            rows.Add(row);
+            list.Children.Add(row);
+        }
+        Restyle();
+        return Show(owner, title, list, ok, danger: false, null) is null ? null : pick;
+    }
+
     static string? Show(Window? owner, string title, FrameworkElement content, string ok, bool danger, TextBox? field, bool single = false, Button? secondary = null, Func<Task<bool>>? work = null)
     {
         string? result = null;

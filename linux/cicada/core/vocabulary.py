@@ -10,7 +10,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from . import jsonfmt
+from . import correction, jsonfmt
 from .models import iso_read, iso_write, now
 from .support import Log, Paths
 
@@ -143,10 +143,11 @@ class Vocabulary:
 
     def confirm(self, heard: str, word: str, source: str = "live") -> None:
         """The user said yes to a fix (or added it): the word, and the form it was heard as. A pair
-        that isn't a word for a word (`learnable`) adds nothing."""
+        that isn't a word for a word (`learnable`) adds nothing. A yes in a meeting never teaches a
+        translation (平台 → platform): it would rewrite that word everywhere after."""
         if heard:
             pair = learnable(heard, word)
-            if pair is None:
+            if pair is None or (source != "user" and correction.translation(*pair)):
                 return
             heard, word = pair
         with self._gate:
