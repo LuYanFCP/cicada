@@ -45,6 +45,10 @@ import Testing
         #expect(PressSpeech.filler("嗯。"))
         #expect(PressSpeech.filler("嗯嗯"))
         #expect(PressSpeech.filler("Um, uh..."))
+        #expect(PressSpeech.filler("翻译结果："))
+        #expect(PressSpeech.filler("Translation:"))
+        #expect(!PressSpeech.filler("价格方面我需要先和财务确认一下。"))
+        #expect(!PressSpeech.filler("我想补充三点：价格、时间和人手。"))
         #expect(!PressSpeech.filler("嗯，好的。"))
         #expect(!PressSpeech.filler("OK."))
     }

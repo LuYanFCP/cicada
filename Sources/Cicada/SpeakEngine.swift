@@ -1087,6 +1087,10 @@ enum PressSpeech {
     static func filler(_ text: String) -> Bool {
         let words = text.lowercased().split { !$0.isLetter }.map(String.init)
         guard !words.isEmpty else { return true }
+        // A heading with nothing after it ("翻译结果：", "Translation:"): Ming's answer to the meeting's
+        // noise in a hands-free stretch nobody spoke in, not a sentence.
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let last = trimmed.last, ":：".contains(last), trimmed.count <= 12 { return true }
         return words.allSatisfy { w in fillers.contains(w) || (w.count > 1 && Set(w).count == 1 && fillers.contains(String(w.first!))) }
     }
     static let fillers: Set<String> = ["嗯", "啊", "呃", "哦", "唔", "额", "噢", "哎", "um", "uh", "hmm", "hm", "mm", "mhm", "ah", "oh", "er", "えー", "あの", "음", "어"]
