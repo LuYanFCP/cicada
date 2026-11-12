@@ -511,8 +511,11 @@ final class AppModel: ObservableObject {
         let fetch = listen.downloading.map { ModelFetch(name: $0.lang.name, since: $0.since, background: $0.background) }
         if fetch != modelFetch { modelFetch = fetch }
         if !listen.isRunning { cloudDeclined = false }
+        // The card that says a service "listens for now" (whole lines, late, 换回本机) is for the
+        // stand-in while a model downloads. A server or the engine the user chose for 语音识别 is
+        // not that: there is nothing to go back to, and the button only bounced back to it.
         let cloudNow = CloudState(service: listen.cloudService, offered: listen.offersCloud && !cloudDeclined,
-                                  listening: listen.cloudListening, back: listen.cloudBack?.name)
+                                  listening: listen.cloudListening && !listen.serverHears, back: listen.cloudBack?.name)
         if cloudNow != cloud { cloud = cloudNow }
         if listen.identifyingLanguage != identifyingLanguage { identifyingLanguage = listen.identifyingLanguage }
         checkProblem()
