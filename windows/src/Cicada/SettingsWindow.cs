@@ -79,12 +79,13 @@ sealed partial class SettingsWindow : Window
             Card(Icons.Keyboard, L("开始或结束"), app.HotkeyRegistered ? L("在任何程序里都能按") : L("这个快捷键被别的程序占用了"), Keys(Hotkey.Label))));
         Section(page, "speak", L("同声传译"), SpeakCards().ToArray());
         Section(page, "end", L("结束会议"), EndCards());
-        Section(page, "privacy", L("隐私与启动"), Group(
+        Section(page, "privacy", L("隐私与启动"), [Group(
             Card(Icons.Eye, L("共享屏幕时让对方看到"), L("关着时，截图和屏幕共享里看不到纪要和字幕"), Ui.Switch(app.Settings.ShowInCapture, app.SetShowInCapture, L("共享屏幕时让对方看到"))),
             Card(Icons.List, L("说话人识别"), L("按声音标出说话人 1、2…，只在这台电脑上处理"), Ui.Switch(app.Settings.SpeakerVoices, v => { app.Settings.SpeakerVoices = v; Save(); }, L("说话人识别"))),
             Card(Icons.Wave, L("保存会议录音"), L("只存在这台电脑上"), Ui.Switch(app.Settings.RecordAudio, v => { app.Settings.RecordAudio = v; Save(); }, L("保存会议录音"))),
             Card(Icons.Power, L("开机时启动知了"), null, Ui.Switch(AutoStart.Enabled, v => AutoStart.Enabled = v, L("开机时启动知了"))),
-            Card(Icons.Folder, L("会议记录存放位置"), $"{Paths.Sessions} · {L("和 Mac 版格式相同")}", Ui.Button(L("打开文件夹"), () => OpenFolder(Paths.Sessions), height: 32))));
+            Card(Icons.Folder, L("会议记录存放位置"), $"{Paths.Sessions} · {L("和 Mac 版格式相同")}", Ui.Button(L("打开文件夹"), () => OpenFolder(Paths.Sessions), height: 32))),
+            .. ExportCards()]);
         // 卸载 as in Settings › Apps, with the same confirmation; only an installed copy offers it.
         FrameworkElement[] about =
         [

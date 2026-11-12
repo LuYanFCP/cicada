@@ -359,3 +359,8 @@
 "Windows 把输出改成了 CABLE Input，点此恢复" = "Windows switched audio output to CABLE Input. Click to restore.";
 "自动恢复失败" = "Couldn't restore audio";
 "请去 Windows 声音设置，把输出设备改回你的耳机或扬声器" = "Go to Windows Sound settings and switch the output device back to your headphones or speakers.";
+/* 存到文件夹 on Windows: controlled folder access instead of macOS privacy settings, File Explorer instead of Finder. */
+"打开 Windows 安全中心" = "Open Windows Security";
+"在 Windows 安全中心里允许知了，或换个文件夹" = "Allow Cicada in Windows Security, or pick another folder";
+"换个文件夹，或在它的属性里允许写入" = "Pick another folder, or allow writing in its Properties";
+"在文件资源管理器中显示" = "Show in File Explorer";

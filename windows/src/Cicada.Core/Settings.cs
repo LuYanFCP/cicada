@@ -54,6 +54,10 @@ public sealed class AppSettings
     [JsonPropertyName("subtitleSize")] public int SubtitleSize { get; set; } = 24;
     /// 保存会议录音 (the Mac's key): keep what was heard as system.m4a in the meeting's folder.
     [JsonPropertyName("recordAudio")] public bool RecordAudio { get; set; } = true;
+    /// 存到文件夹 (the Mac's keys): settled meetings are also written as Markdown into exportFolder
+    /// (a path; empty until one is chosen). FolderExport.cs.
+    [JsonPropertyName("exportOn")] public bool ExportOn { get; set; }
+    [JsonPropertyName("exportFolder")] public string ExportFolder { get; set; } = "";
     /// 说话人识别: tell the other side's voices apart (on by default, as on the Mac).
     [JsonPropertyName("speakerVoices")] public bool SpeakerVoices { get; set; } = true;
     /// 会中改正听错的词 (the Mac's key): finished sentences carry the word list to the AI service,

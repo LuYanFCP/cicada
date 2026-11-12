@@ -7,6 +7,7 @@ Cicada 的 Windows 版：把电脑播放的声音变成双语字幕和实时纪�
 - 改正听错的词：和 Mac 版同样的规则和提示词（读音相近才直接改，拼音用 `src/Cicada.Core/Data/pinyin.tsv`，由 Apple 的 ICU/CLDR 汉字转拼音一次生成；新名字先问；词表 `vocabulary.json` 和 Mac 同格式）。Ming 一次给出原文和译文，没有单独的文字翻译请求可搭，所以开着时每句话会多发一次文字请求。没有声音也能试：`cicadactl silentlisten zh-CN`，再 `heard <一句话>`。
 - 纪要、记录格式、提示词、多语言文案都和 Mac 版一致；文案的英日韩翻译直接用 `Resources/*.lproj/Localizable.strings`，Windows 独有的在 `src/Cicada/Strings/`。
 - 新版本：启动时和每 4 小时查一次 GitHub Releases（`UpdateChecker`），只认带 Windows 安装包的发布；有新版本时托盘图标出现红点、每个版本发一次通知（正在听时等会议结束），托盘面板和设置 › 关于也会提示。点“安装”由知了自己下载这台电脑对应架构的 `Cicada-<版本>-Windows-x64.exe` / `-ARM64.exe`（1.1.0 只认 `Cicada-Setup.exe` 这两个旧名字，发布时一并附上）、对照 `checksums.txt` 校验后安装并重新打开，不经过浏览器，所以 SmartScreen 不拦。开发版只在设了 `CICADA_UPDATE_FEED` 或用 `updatefeed` 调试命令时才查。
+- 存到文件夹：设置 › 隐私与启动 › 会后存一份。会议整理好后存成一个 Markdown 文件（文件名和开头的 frontmatter 和 Mac 版一样，`Tests/fixtures/folder-export` 是约定），默认放在最近打开的 Obsidian 库里的 `Cicada` 文件夹，没有就是 文档\Cicada；记了哪些写在记录旁边的 `FolderExport.json`。写入先写同一文件夹里的临时文件再改名。写不进去时（Defender 的受控文件夹访问，或文件夹本身的权限）设置里和会议记录里各有一行；文件夹在文档、桌面等受保护的位置时多一个“打开 Windows 安全中心”，这时 Windows 自己会发通知，知了不再发，其他位置会后发一次。调试：`cicadactl export folder <路径>`、`export all`、`export`（状态）。
 - 分享：会议记录里的“分享…”把纪要（或纪要和双语全文）变成 cicada.indaloop.app 上的链接，分享文档和 Mac 版逐字节相同；上传前服务器检查有没有密钥等敏感内容。设备密钥是 Ed25519（.NET 没有自带，`Cicada.Core/Ed25519.cs` 按 RFC 8032 实现，用 RFC 的测试向量验证），它和每个链接的管理令牌、密码都用 DPAPI 封存在 `share-device.json` 和 `Shares\` 里，不进会议记录、导出和日志。
 
 ## 目录

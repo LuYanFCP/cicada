@@ -359,3 +359,8 @@
 "Windows 把输出改成了 CABLE Input，点此恢复" = "Windows が音声出力を CABLE Input に変更しました。クリックして元に戻します。";
 "自动恢复失败" = "自動復元に失敗しました";
 "请去 Windows 声音设置，把输出设备改回你的耳机或扬声器" = "Windows の「サウンド設定」を開き、出力デバイスをお使いのヘッドホンやスピーカーに戻してください。";
+/* 存到文件夹 on Windows: controlled folder access instead of macOS privacy settings, File Explorer instead of Finder. */
+"打开 Windows 安全中心" = "Windows セキュリティを開く";
+"在 Windows 安全中心里允许知了，或换个文件夹" = "Windows セキュリティで Cicada を許可するか、別のフォルダを選んでください";
+"换个文件夹，或在它的属性里允许写入" = "別のフォルダを選ぶか、フォルダのプロパティで書き込みを許可してください";
+"在文件资源管理器中显示" = "エクスプローラーで表示";

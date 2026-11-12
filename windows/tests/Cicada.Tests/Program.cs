@@ -3649,6 +3649,137 @@ static class Tests
         Equal(2, server.Seen.Count(x => x == "POST /api/v1/devices"), "the device file is reused");
     }
 
+    // MARK: 存到文件夹 (Tests/fixtures/folder-export is the contract, as in the Mac's FolderExportTests)
+
+    static string FolderFixture(string name) => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "folder-export", name));
+    static Session FolderSession() => Json.Read<Session>(FolderFixture("session.json"))!;
+    static JsonNode FolderCases() => JsonNode.Parse(FolderFixture("cases.json"))!;
+    static TimeZoneInfo FolderZone() => TimeZoneInfo.FindSystemTimeZoneById((string)FolderCases()["timeZone"]!);
+    static IEnumerable<(string, string)> Pairs(string key) => FolderCases()[key]!.AsArray().Select(p => ((string)p![0]!, (string)p[1]!));
+
+    public static void FolderExportFrontmatterBytes()
+    {
+        var got = FolderExportFormat.Frontmatter(FolderSession(), FolderZone());
+        Equal(FolderFixture("frontmatter.md"), got, "frontmatter bytes");
+        Check(!got.Contains('\r'), "\\n line ends on Windows too");
+    }
+
+    public static void FolderExportFileName()
+    {
+        var stem = FolderExportFormat.Stem(FolderSession(), FolderZone());
+        Equal((string)FolderCases()["fileName"]!, FolderExportFormat.FileName(stem, _ => false), "file name");
+    }
+
+    public static void FolderExportNames()
+    {
+        foreach (var (name, want) in Pairs("names")) Equal(want, FolderExportFormat.SafeName(name), $"safe name of «{name}»");
+        foreach (var (title, want) in Pairs("stems"))
+        {
+            var s = FolderSession();
+            s.Title = title;
+            Equal(want, FolderExportFormat.Stem(s, FolderZone()), $"stem of «{title}»");
+        }
+        foreach (var (text, want) in Pairs("escapes")) Equal(want, FolderExportFormat.Quote(text), $"quote of «{text}»");
+        foreach (var c in FolderCases()["collisions"]!.AsArray())
+        {
+            var taken = c!["taken"]!.AsArray().Select(t => (string)t!).ToList();
+            Equal((string)c["want"]!, FolderExportFormat.FileName((string)c["stem"]!, taken.Contains), $"collision with {taken.Count} taken");
+        }
+    }
+
+    /// The name: the user's title, else the notes', else the imported file's, never the display title.
+    public static void FolderExportNamePrecedence()
+    {
+        var s = FolderSession();
+        s.Renamed = false;
+        s.Title = SessionStore.DefaultTitle(s.StartedAt);
+        Equal("产品路线评审", FolderExportFormat.Name(s), "the notes' title");
+        s.Notes = null;
+        Equal("", FolderExportFormat.Name(s), "nothing");
+        s.SourceFile = "Weekly sync.m4a";
+        Equal("Weekly sync", FolderExportFormat.Name(s), "the file's name");
+        Check(FolderExportFormat.Frontmatter(s).Contains("source: \"file\"\nnotes: \"none\""), "an imported file without notes");
+        s.Renamed = null;
+        s.Title = "会议 11月6日 14:00";
+        Equal("Weekly sync", FolderExportFormat.Name(s), "an older record's default title isn't a name");
+    }
+
+    public static void FolderExportPaths()
+    {
+        var json = """{"vaults":{"a":{"path":"C:\\v\\old","ts":1},"b":{"path":"C:\\v\\new","ts":5,"open":true},"c":{"path":"D:\\gone","ts":9}}}""";
+        var vaults = FolderExportFormat.ObsidianVaults(json, p => p != @"D:\gone");
+        Equal(@"C:\v\new|C:\v\old", string.Join("|", vaults), "newest first, only ones that exist");
+        Equal(0, FolderExportFormat.ObsidianVaults("not json").Count, "unreadable");
+        Equal(@"C:\v\new", FolderExportFormat.Vault(@"c:\V\New\Cicada", vaults), "inside a vault, ignoring case");
+        Equal(null, FolderExportFormat.Vault(@"C:\v\newer\Cicada", vaults), "a neighbour isn't inside");
+        Equal("Documents › Cicada", FolderExportFormat.ShortPath(@"C:\Users\a\Documents\Cicada\"), "parent › folder");
+        Equal("D: › Cicada", FolderExportFormat.ShortPath(@"D:\Cicada"), "a drive's top folder");
+        Equal("文档 › Cicada", FolderExportFormat.ShortPath(@"C:\Users\a\Documents\Cicada", p => p.EndsWith("Documents") ? "文档" : null), "Explorer's names");
+        Equal(@"D:\", FolderExportFormat.Parent(@"D:\Cicada"), "the drive is the parent");
+        string[] roots = [@"C:\Users\a\OneDrive\Documents", @"C:\Users\a\Desktop"];
+        Check(FolderExportFormat.Protected(@"C:\Users\a\OneDrive\Documents\Cicada", roots), "Documents is protected");
+        Check(!FolderExportFormat.Protected(@"C:\Users\a\Notes\Cicada", roots), "elsewhere isn't");
+    }
+
+    public static async Task FolderExportWrites()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cicada-export-" + Guid.NewGuid().ToString("N"));
+        var folder = Path.Combine(dir, "Cicada");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new SessionStore();
+            var s = store.Begin(new DateTimeOffset(2026, 11, 6, 14, 0, 0, TimeSpan.Zero));
+            store.Append(s.Id, new TranscriptLine { Id = "l1", Src = "Hello", SrcLang = "en", Dst = "你好", DstLang = "zh", T = 3 });
+            store.End(s.Id, s.StartedAt.AddMinutes(30));
+            store.Rename(s.Id, "周会");
+            var settings = new AppSettings();
+            var index = Path.Combine(dir, "FolderExport.json");
+            var ex = new FolderExporter(store, settings, index) { Delay = TimeSpan.FromMilliseconds(20) };
+            var stem = FolderExportFormat.Stem(store.Get(s.Id)!);
+            // A file Cicada didn't write is never overwritten.
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, stem + ".md"), "mine");
+            ex.Choose(folder);
+            await ex.Idle();
+            Equal(null, ex.Trouble, "the folder can be written");
+            Check(ex.Unwritten.Any(x => x.Id == s.Id), "an earlier meeting waits for 也存一份");
+            ex.WriteAll();
+            await ex.Idle();
+            Equal(stem + " 2.md", Path.GetFileName(ex.FileFor(s.Id)), "the taken name gets 2");
+            Equal("mine", File.ReadAllText(Path.Combine(folder, stem + ".md")), "the user's file stays");
+            var text = File.ReadAllText(ex.FileFor(s.Id)!);
+            Check(text.StartsWith("---\ncicada: 1\n") && text.Contains("title: \"周会\""), "frontmatter, then the body");
+            Check(!Directory.GetFiles(folder, ".cicada*").Any(), "no temporary or check file left");
+            Check(Json.Read<FolderExporter.Index>(File.ReadAllText(index))!.Files.ContainsKey(s.Id), "the index keeps it");
+            // A new name moves the file.
+            store.Rename(s.Id, "周会改");
+            store.Flush();
+            ex.Saved(s.Id);
+            await Task.Delay(200);
+            await ex.Idle();
+            var moved = ex.FileFor(s.Id)!;
+            Check(Path.GetFileName(moved).EndsWith("周会改.md"), "renamed: " + Path.GetFileName(moved));
+            Check(!File.Exists(Path.Combine(folder, stem + " 2.md")), "the old file went");
+            // Unchanged content isn't written again.
+            var at = File.GetLastWriteTimeUtc(moved);
+            ex.Saved(s.Id);
+            await Task.Delay(200);
+            await ex.Idle();
+            Equal(at, File.GetLastWriteTimeUtc(moved), "unchanged");
+            // Deleting the record leaves its file.
+            ex.Deleted(s.Id);
+            Check(File.Exists(moved), "the file stays");
+            store.Delete(s.Id);
+            // A folder whose parent is gone isn't made.
+            ex.Choose(Path.Combine(dir, "gone", "Cicada"));
+            await ex.Idle();
+            Equal(FolderExporter.Kind.Missing, ex.Trouble?.Kind, "missing");
+            Check(!Directory.Exists(Path.Combine(dir, "gone")), "nothing made");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
     // MARK: the talk key (#22: keyboards without right Ctrl)
 
     public static void TalkKeyChoices()

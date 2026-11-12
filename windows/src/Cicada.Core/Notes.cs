@@ -81,6 +81,13 @@ public sealed class NotesEngine
     /// page says so and the button waits, as a long meeting's notes take half a minute and more.
     public string? GeneratingId { get; private set; }
 
+    /// The meeting whose final pass is running now (from 结束 or 生成纪要).
+    string? finalId;
+    /// A final pass is over, whether it wrote notes or not (存到文件夹 waits for it).
+    public event Action<string>? FinalDone;
+    /// The final pass for this meeting is running or waiting its turn.
+    public bool Settling(string id) { lock (gate) return finalId == id || pendingFinal == id; }
+
     /// Notes for a finished meeting that has none.
     public async Task Generate(string id)
     {
@@ -124,9 +131,10 @@ public sealed class NotesEngine
         {
             if (inFlight) { if (final) pendingFinal = id; return; }
             session = store.Get(id);
-            if (session is null || session.Lines.Count == 0) return;
-            if (!ling.HasKey) { Status = State.NoKey; Changed?.Invoke(); return; }
+            if (session is null || session.Lines.Count == 0) { if (final) FinalDone?.Invoke(id); return; }
+            if (!ling.HasKey) { Status = State.NoKey; Changed?.Invoke(); if (final) FinalDone?.Invoke(id); return; }
             inFlight = true;
+            if (final) finalId = id;
             lastAttempt = DateTime.UtcNow;
             Status = State.Updating;
             baseNotes = final ? new MeetingNotes() : (id == ShownId ? Notes : session.Notes ?? new MeetingNotes());
@@ -192,8 +200,9 @@ public sealed class NotesEngine
         finally
         {
             string? queued;
-            lock (gate) { inFlight = false; queued = pendingFinal; pendingFinal = null; }
+            lock (gate) { inFlight = false; if (final) finalId = null; queued = pendingFinal; pendingFinal = null; }
             Changed?.Invoke();
+            if (final) FinalDone?.Invoke(id);
             if (queued is not null) await Update(queued, final: true);
         }
     }

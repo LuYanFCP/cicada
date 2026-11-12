@@ -391,7 +391,7 @@ sealed class MainWindow : Window
 
     /// What the open page shows; a store change that leaves it the same doesn't redraw it.
     string? PageKey() => selected is not null && app.Store.Get(selected) is { } cur
-        ? $"{selected}|{tab}|{SessionStore.DisplayTitle(cur)}|{cur.Lines.Count}|{cur.Notes?.Covered}|{cur.Notes?.Final}|{app.Listen.Listening}|{app.Notes.GeneratingId == selected}|{cur.HasAudio}|{Recording.Playable(cur)}|{app.Settings.RecordAudio}|{FixKey(cur)}|{cur.Lines.Sum(l => l.Dst?.Length ?? 0)}"
+        ? $"{selected}|{tab}|{SessionStore.DisplayTitle(cur)}|{cur.Lines.Count}|{cur.Notes?.Covered}|{cur.Notes?.Final}|{app.Listen.Listening}|{app.Notes.GeneratingId == selected}|{cur.HasAudio}|{Recording.Playable(cur)}|{app.Settings.RecordAudio}|{FixKey(cur)}|{cur.Lines.Sum(l => l.Dst?.Length ?? 0)}|{FolderExportUi.Key(app, selected)}"
         : null;
 
     void ShowDetail()
@@ -424,6 +424,8 @@ sealed class MainWindow : Window
             titleRow.Children.Add(reset);
         }
         top.Children.Add(titleRow);
+        // 存到文件夹: where its file is, or why it isn't there yet.
+        if (!live && FolderExportUi.Line(app, s) is { } exported) top.Children.Add(exported);
         if (PlayerArea(s, live) is { } audio) top.Children.Add(audio);
         // Under the page, not in its header: the controls stay while the transcript scrolls.
         var footer = player is not null ? PlayerFooter() : null;
@@ -1176,6 +1178,7 @@ sealed class MainWindow : Window
         {
             ClosePlayer(); // it holds the recording open
             app.Store.Delete(s.Id);
+            app.FolderExport.Deleted(s.Id); // its file in the folder stays
         }
     }
 }

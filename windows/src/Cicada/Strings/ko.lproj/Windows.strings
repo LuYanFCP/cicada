@@ -359,3 +359,8 @@
 "Windows 把输出改成了 CABLE Input，点此恢复" = "Windows에서 출력이 CABLE Input으로 변경되었습니다. 클릭하여 복구하세요.";
 "自动恢复失败" = "자동 복구 실패";
 "请去 Windows 声音设置，把输出设备改回你的耳机或扬声器" = "Windows 소리 설정에서 출력 장치를 사용 중인 헤드폰이나 스피커로 다시 변경해 주세요.";
+/* 存到文件夹 on Windows: controlled folder access instead of macOS privacy settings, File Explorer instead of Finder. */
+"打开 Windows 安全中心" = "Windows 보안 열기";
+"在 Windows 安全中心里允许知了，或换个文件夹" = "Windows 보안에서 Cicada를 허용하거나 다른 폴더를 고르세요";
+"换个文件夹，或在它的属性里允许写入" = "다른 폴더를 고르거나 폴더 속성에서 쓰기를 허용하세요";
+"在文件资源管理器中显示" = "파일 탐색기에서 보기";
