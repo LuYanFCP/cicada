@@ -585,8 +585,8 @@ sealed class Controller
             }
             if (f?.Why == AICheck.Reason.Unreachable)
             {
-                string Body(AICheck h) => (h.Message(Ling.ServiceName, Ling.ServiceHost, Ling.Config.TextModel, Ling.HearName) ?? "")
-                    + (h.ProxyLine(Ling.ServiceName, Ling.ServiceHost) is { } proxy ? "\n" + proxy : "");
+                string Body(AICheck h) => (h.Message(Ling.ServiceLabel, Ling.ServiceHost, Ling.Config.TextModel, Ling.HearName) ?? "")
+                    + (h.ProxyLine(Ling.ServiceLabel, Ling.ServiceHost) is { } proxy ? "\n" + proxy : "");
                 await Task.Yield();
                 // 重新检查并开始: the check already under way (or one that finished reachable while the
                 // dialog was up), else a new one; reachable closes the dialog.
@@ -1145,7 +1145,7 @@ sealed class Controller
     {
         var h = Ling.Health;
         if (!Ling.HasKey || !h.NeedsUser) return null;
-        var name = Ling.ServiceName;
+        var name = Ling.ServiceLabel;
         if (h.Failure is not { } f) return h.BalanceLine(name) is { } low ? (low, L("用完后就听不了对方")) : null;
         var stopped = L("听对方暂时用不了");
         return f.Why switch
@@ -1217,8 +1217,8 @@ sealed class Controller
             ["notesBase"] = c.NotesApart ? c.ForNotes.Base : null, ["notesModel"] = c.NotesApart ? c.ForNotes.TextModel : null, ["notesOwnKey"] = Ling.NotesHasOwnKey,
             ["state"] = Ling.KeyState.ToString(), ["hears"] = Ling.Hears, ["seconds"] = Ling.Seconds is { } s ? Math.Round(s, 1) : null,
             ["check"] = Ling.Health.Summary,
-            ["problem"] = Ling.Health.Message(Ling.ServiceName, Ling.ServiceHost, Ling.Config.TextModel, Ling.HearName),
-            ["proxy"] = Ling.Health.ProxyLine(Ling.ServiceName, Ling.ServiceHost),
+            ["problem"] = Ling.Health.Message(Ling.ServiceLabel, Ling.ServiceHost, Ling.Config.TextModel, Ling.HearName),
+            ["proxy"] = Ling.Health.ProxyLine(Ling.ServiceLabel, Ling.ServiceHost),
             ["tray"] = AIProblem()?.Title,
             ["dot"] = Problem is not null ? "problem" : Listen.Listening ? "live" : Updates.Available is not null ? "update" : null,
             ["blocking"] = Problem,

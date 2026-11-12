@@ -254,6 +254,9 @@ public sealed class LingClient
     /// What messages call the service ("这个服务" for a custom address) and its host.
     public string ServiceName => Config.Provider.Id == "custom" ? Strings.L("这个服务") : Config.Name;
     public string ServiceHost => Host(Config.Base);
+    /// Who a status line names: a custom service by its address, which says more than 这个服务
+    /// and reads right in "The … key doesn't work".
+    public string ServiceLabel => Config.Provider.Id == "custom" && ServiceHost.Length > 0 ? ServiceHost : ServiceName;
     /// Where the hear model is asked (a custom service's own address for it, else the service's).
     public string HearHost => Host(Config.HearBase ?? Config.Base);
     static string Host(string? b) => b is not null && Uri.TryCreate(b, UriKind.Absolute, out var u) ? u.Host : "";

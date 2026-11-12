@@ -937,7 +937,7 @@ sealed partial class SettingsWindow : Window
             Card(null, L("模型"), null, CustomField("hear", s.AiHearModels.GetValueOrDefault("custom", ""), L("例如 qwen3-omni"))),
             Card(null, L("地址"), null, CustomField("hearBase", s.AiCustomHearBase, L("跟上面一样"))),
         };
-        if (check.Failure is { Step: AICheck.StepId.Hear } && check.Message(ling.ServiceName, ling.HearHost, c.TextModel, ling.HearName) is { } why)
+        if (check.Failure is { Step: AICheck.StepId.Hear } && check.Message(ling.ServiceLabel, ling.HearHost, c.TextModel, ling.HearName) is { } why)
             parts.Add(Line(why, Palette.Danger));
         parts.Add(Card(null, "", null, SaveButton()));
         return new StackPanel { Children = { header, Body([.. parts]) } };

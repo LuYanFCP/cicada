@@ -254,7 +254,7 @@ sealed class MainWindow : Window
         // The key is in but the service turned it down (or can't be reached, or can't hear): the
         // reason, and the settings page that fixes it.
         var ling = app.Ling;
-        var broken = app.KeyStepFailed ? ling.Health.Message(ling.ServiceName, ling.ServiceHost, ling.Config.TextModel, ling.HearName) : null;
+        var broken = app.KeyStepFailed ? ling.Health.Message(ling.ServiceLabel, ling.ServiceHost, ling.Config.TextModel, ling.HearName) : null;
         (string title, string detail, bool done)[] steps =
         [
             // A service whose check passed ticks it; another service is named (接上 ZenMux).
