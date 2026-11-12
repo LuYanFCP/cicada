@@ -55,6 +55,11 @@ class AppSettings(
     var fixMisheard: Boolean = true,
     /// 没见过的名字和专称先问我: a new name is asked about once instead of left as heard.
     var askNames: Boolean = true,
+    /// 存到文件夹: settled meetings are also written as Markdown into `exportFolder`, a SAF tree URI
+    /// (empty until one is chosen), whose short name "parent › folder" is `exportName`. Not secrets.
+    var exportOn: Boolean = false,
+    var exportFolder: String = "",
+    var exportName: String = "",
     /// When GitHub Releases last answered an update check (epoch ms; UpdateChecker).
     var updateLastChecked: Long? = null,
     /// The newest version a notification was posted for, so each one is announced once.
@@ -87,6 +92,7 @@ class AppSettings(
         "source" to source, "overlay" to overlay, "silenceEnd" to silenceEnd, "silenceMinutes" to silenceMinutes,
         "speakerVoices" to speakerVoices, "recordAudio" to recordAudio, "speakBack" to speakBack,
         "fixMisheard" to fixMisheard, "askNames" to askNames,
+        "exportOn" to exportOn, "exportFolder" to exportFolder, "exportName" to exportName,
         "updateLastChecked" to updateLastChecked, "updateNotified" to updateNotified,
     )
 
@@ -125,6 +131,8 @@ class AppSettings(
                             speakerVoices = o["speakerVoices"].bool() ?: true, recordAudio = o["recordAudio"].bool() ?: true,
                             speakBack = o["speakBack"].bool() ?: true,
                             fixMisheard = o["fixMisheard"].bool() ?: true, askNames = o["askNames"].bool() ?: true,
+                            exportOn = o["exportOn"].bool() ?: false, exportFolder = o["exportFolder"].str() ?: "",
+                            exportName = o["exportName"].str() ?: "",
                             updateLastChecked = (o["updateLastChecked"] as? Number)?.toLong(), updateNotified = o["updateNotified"].str(),
                         )
                     }

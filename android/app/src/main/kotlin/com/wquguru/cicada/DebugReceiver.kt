@@ -28,6 +28,8 @@ import java.util.concurrent.TimeUnit
 ///   fixstate · fixanswer yes|no · fixrevert <line> · fixlater · fixundo · fixedit <line>=<text>[|one][|keep0] · pinyin <text>
 ///   分享…: share <id>[,full][,pw] · unshare <id> · shares · shareSheet <id> (no id: closes it) · delete <id>
 ///   shareserver [url] (a local Worker; none: cicada.indaloop.app) · clipboard
+///   存到文件夹: export state · export folder <tree uri> (one already granted; else the problem shows) · export pick
+///   (the system picker) · export all (也存一份) · export retry · export off
 class DebugReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (!BuildConfig.DEBUG) return
@@ -182,6 +184,20 @@ class DebugReceiver : BroadcastReceiver() {
                 app.store.import(s)
             }
             "delete" -> app.store.delete(arg)
+            // rename <id>=<title>, as typed into the record's title (empty: the automatic one).
+            "rename" -> app.store.rename(arg.substringBefore('='), arg.substringAfter('=', ""))
+            "export" -> {
+                val ex = app.folderExport
+                val rest = arg.substringAfter(' ', "")
+                when (arg.substringBefore(' ')) {
+                    "folder" -> ex.choose(android.net.Uri.parse(rest))
+                    "pick" -> { SettingsActivity.pickFolder = true; open(SettingsActivity::class.java) }
+                    "all" -> ex.writeAll()
+                    "retry" -> ex.retry()
+                    "off" -> ex.turnOff()
+                    else -> return ex.debugState()
+                }
+            }
             // 分享… (the Mac's share: / unshare: / shareSheet:): `share <id>[,full][,pw]` shares as the
             // sheet would and logs the link; `unshare <id>` turns it off; `shares` lists them (never the token).
             "share" -> {

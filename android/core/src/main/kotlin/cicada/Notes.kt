@@ -21,6 +21,8 @@ class NotesEngine(private val ling: LingClient, private val store: SessionStore)
     private var sessionId: String? = null
     private var inFlight = false
     private var pendingFinal: String? = null
+    /// The meeting whose final pass is running.
+    private var finalId: String? = null
     private var lastAttempt = 0L
     private val listeners = mutableListOf<() -> Unit>()
 
@@ -28,6 +30,14 @@ class NotesEngine(private val ling: LingClient, private val store: SessionStore)
     @Volatile var status = State.Idle; private set
     /// The session the notes belong to (stays set after the meeting ends).
     @Volatile var shownId: String? = null; private set
+    /// A final pass is over, whether it wrote notes or not (存到文件夹 waits for it). On the
+    /// notes' worker thread.
+    @Volatile var finalDone: ((String) -> Unit)? = null
+
+    /// The final pass for this meeting is running, waiting its turn, or still to start: the
+    /// meeting has ended but finish() hasn't run yet (it starts on listening's pool).
+    fun settling(id: String): Boolean = synchronized(gate) { sessionId == id || finalId == id || pendingFinal == id } || generating == id
+
     /// The language notes are written in (English name), from 纪要语言.
     @Volatile var language: () -> String = { "Simplified Chinese" }
 
@@ -102,10 +112,12 @@ class NotesEngine(private val ling: LingClient, private val store: SessionStore)
         val prior: List<NoteTerm>
         synchronized(gate) {
             if (inFlight) { if (final) pendingFinal = id; return }
-            session = store.get(id) ?: return
-            if (session.lines.isEmpty()) return
-            if (!ling.hasKey) { status = State.NoKey; changed(); return }
+            fun over() { if (final) finalDone?.invoke(id) }
+            session = store.get(id) ?: run { over(); return }
+            if (session.lines.isEmpty()) { over(); return }
+            if (!ling.hasKey) { status = State.NoKey; changed(); over(); return }
             inFlight = true
+            if (final) finalId = id
             lastAttempt = System.currentTimeMillis()
             status = State.Updating
             base = if (final) MeetingNotes() else if (id == shownId) notes else session.notes ?: MeetingNotes()
@@ -162,8 +174,9 @@ class NotesEngine(private val ling: LingClient, private val store: SessionStore)
             status = State.Failed
             Log.d("notes: update failed ${e.javaClass.simpleName}")
         } finally {
-            val queued = synchronized(gate) { inFlight = false; pendingFinal.also { pendingFinal = null } }
+            val queued = synchronized(gate) { inFlight = false; if (final) finalId = null; pendingFinal.also { pendingFinal = null } }
             changed()
+            if (final) finalDone?.invoke(id)
             if (queued != null) update(queued, final = true)
         }
     }

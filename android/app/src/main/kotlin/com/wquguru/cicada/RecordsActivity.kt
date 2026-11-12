@@ -275,7 +275,7 @@ class RecordActivity : Activity() {
         if (!file) releasePlayer() else if (player == null && !broken) broken = ensurePlayer() == null
         val playable = file && !broken
         val key = listOf(SessionStore.displayTitle(s), s.lines.size, s.notes?.updatedAt, generating, app.notes.status, tab, s.lines.lastOrNull()?.dst,
-                         s.voiceNames, app.settings.speakerVoices, live, s.hasAudio, playable, app.settings.recordAudio, app.store.lines(id).sumOf { it.fixes?.hashCode() ?: 0 }, app.fixes.pending(id).size).joinToString("|")
+                         s.voiceNames, app.settings.speakerVoices, live, s.hasAudio, playable, app.settings.recordAudio, app.store.lines(id).sumOf { it.fixes?.hashCode() ?: 0 }, app.fixes.pending(id).size, app.folderExport.stateKey(), app.folderExport.file(id), app.folderExport.isPending(id)).joinToString("|")
         if (key == shown) return
         shown = key
         val top = ui.stack(0).apply { setPadding(ui.dp(20), ui.dp(4), ui.dp(20), ui.dp(6)) }
@@ -289,6 +289,8 @@ class RecordActivity : Activity() {
                                  s.sourceFile?.let { L("导入") }).joinToString(" · ")
         top.addView(ui.text(meta, 13f, Palette.secondary), ui.lp(top = 6))
         recordingNote(s, live, file, playable)?.let { top.addView(it, ui.lp(top = 6)) }
+        // 存到文件夹: where its file is, or why it isn't there yet.
+        if (!live) FolderExportViews.recordLine(this, ui, s)?.let { top.addView(it, ui.lp(top = 2)) }
         speakerChips(s)?.let { top.addView(it, ui.lp(top = 14)) }
         val tabLabels = listOf(L("纪要"), "${L("文字记录")} · ${LF("%lld 句", s.lines.size)}")
         val tabs = ui.tabs(tabLabels, tab) { tab = it; render() }
