@@ -754,6 +754,13 @@ class RecordsWindow(Gtk.Window):
         left.pack_start(self.title_label, False, False, 0)
         self.meta_label = ui.text(self._meta(s, live), 12, "tertiary", wrap=False)
         left.pack_start(self.meta_label, False, False, 0)
+        # 存到文件夹: where this record's file is, or why it isn't there yet (not while it's live).
+        self.export_slot = ui.hbox(0)
+        self.export_slot.set_margin_top(5)
+        self.export_slot.set_no_show_all(True)
+        self._export_key = False
+        left.pack_start(self.export_slot, False, False, 0)
+        self._fill_export_line(s, live)
         top.pack_start(left, True, True, 0)
         actions = ui.hbox(8)
         actions.set_valign(Gtk.Align.START)
@@ -784,6 +791,19 @@ class RecordsWindow(Gtk.Window):
         self.pinned.pack_start(bar, True, True, 0)
         bar.show_all()
         GLib.idle_add(lambda: (self.right.get_vadjustment().set_value(keep), self._pin()) and False)
+
+    def _fill_export_line(self, s, live) -> None:
+        from . import folder_export_view
+        key = None if live else folder_export_view.line_key(self.app, s)
+        if key == self._export_key:
+            return
+        self._export_key = key
+        ui.clear(self.export_slot)
+        line = folder_export_view.record_line(self.app, s, show_in_folder) if key is not None else None
+        if line is not None:
+            self.export_slot.pack_start(line, False, False, 0)
+            line.show_all()
+        self.export_slot.set_visible(line is not None)
 
     def _meta(self, s, live) -> str:
         langs = ""
@@ -816,6 +836,7 @@ class RecordsWindow(Gtk.Window):
         ui.retext(self.title_label, session_store.display_title(s))
         ui.retext(self.pinned_title, session_store.display_title(s))
         ui.retext(self.meta_label, self._meta(s, live))
+        self._fill_export_line(s, live)
         state = self._notes_state(s, live)
         if state != self._notes_key:
             self._notes_key = state
@@ -1888,6 +1909,7 @@ class RecordsWindow(Gtk.Window):
         sid, self.pending_delete = self.pending_delete, None
         if sid:
             self.app.store.delete(sid)
+            self.app.folder_export.deleted(sid)  # its file in the folder stays
 
 
 def show_in_folder(path: str) -> None:

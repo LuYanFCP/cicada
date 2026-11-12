@@ -21,6 +21,7 @@ class SessionStore:
         self._timer = None
         self._listeners = []
         self._word_listeners = []
+        self._save_listeners = []
         self.live: str | None = None  # the meeting being listened to (the Mac's liveID)
         self._load()
 
@@ -31,6 +32,11 @@ class SessionStore:
         """`listener(sid)` the moment recognised words land in a record: a new line (theirs or mine)
         or a half sentence that grew. What 结束会议 counts as someone speaking (MeetingEndWatch.heard)."""
         self._word_listeners.append(listener)
+
+    def on_save(self, listener) -> None:
+        """`listener(sid)` after a record was written to disk (存到文件夹 follows its changes). Fires on
+        the thread that saved it."""
+        self._save_listeners.append(listener)
 
     def _words(self, sid: str) -> None:
         for l in list(getattr(self, "_word_listeners", [])):
@@ -89,6 +95,12 @@ class SessionStore:
     def get(self, sid: str) -> Session | None:
         with self._gate:
             return self._sessions.get(sid)
+
+    def snapshot(self, sid: str) -> Session | None:
+        """A copy of a record no other thread changes while it is read (a file being written from it)."""
+        with self._gate:
+            s = self._sessions.get(sid)
+            return Session.read(s.write()) if s else None
 
     def lines(self, sid: str) -> list:
         """A copy of a record's lines, safe to read while listening adds to them."""
@@ -338,6 +350,9 @@ class SessionStore:
                 os.replace(tmp, os.path.join(folder, "session.json"))
             except OSError as e:
                 Log.d("store: save failed %s" % type(e).__name__)
+                continue
+            for l in list(self._save_listeners):
+                l(sid)
 
 
 def default_title(at: datetime) -> str:

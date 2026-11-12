@@ -216,6 +216,11 @@ class SettingsWindow(Gtk.Window):
         # 通用, the Mac's records section: what each meeting keeps.
         self.general = self._group(L("通用"), ui.boxed([self._record_row(), self._voices_row()]))
         page.pack_start(self.general, False, False, 0)
+        # 会后存一份 (存到文件夹), under 通用 as on the Mac.
+        from .folder_export_view import FolderExportCard
+        self.folder_card = FolderExportCard(app, self._group, self)
+        page.pack_start(self.folder_card.widget, False, False, 0)
+        self.connect("show", lambda *_: app.folder_export.retry())  # a folder fixed meanwhile
 
         room_group, room_combos = self._room_group()
         page.pack_start(room_group, False, False, 0)

@@ -568,6 +568,26 @@ class Notes(Base):
         notes._sync_key()
         self.assertEqual(notesmod.IDLE, notes.status)
 
+    def test_final_pass_settles(self):
+        """存到文件夹 waits while the final pass is to come or running, and hears when it is over, with
+        notes or without (no lines, a failed reply)."""
+        store = SessionStore()
+        ling = client(Fake(lambda body: reply("not json")))
+        notes = NotesEngine(ling, store)
+        done = []
+        notes.final_done = done.append
+        s = store.begin()
+        store.append(s.id, TranscriptLine(id="h1-1", t=0, src="x", srcLang="en", dstLang="zh-CN"))
+        notes.begin(s.id)
+        self.assertTrue(notes.settling(s.id), "still the meeting's: finish() hasn't run yet")
+        store.end(s.id)
+        notes.finish()
+        self.assertFalse(notes.settling(s.id))
+        self.assertEqual([s.id], done)
+        notes.generate("nothing-here")
+        notes._work.shutdown(wait=True)
+        self.assertEqual([s.id, "nothing-here"], done)
+
     def test_unreachable_is_the_notes_own_and_clears_when_the_service_answers(self):
         # NotesWindow.swift › banner: only the notes' own network failure says "can't reach", it ends
         # when anything reaches the service again, and a record opened later doesn't inherit it.

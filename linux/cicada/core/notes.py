@@ -45,6 +45,24 @@ class NotesEngine:
         self.shown_id = None  # the session the notes belong to (stays set after the meeting ends)
         self.language = lambda sid: "Simplified Chinese"  # a meeting's notes language (English name), from 纪要语言
         self.working_id = None  # the record being written now, for a "正在整理纪要…" next to it
+        # Final passes asked for and not over yet (queued in a pool, running or waiting their turn),
+        # and the call when one is over, notes written or not (存到文件夹 waits for it).
+        self._finals: list = []
+        self.final_done = None
+
+    def settling(self, sid: str) -> bool:
+        """The meeting's final pass is still to come, running or waiting: also while the meeting is
+        still this engine's own, before listening's pool gets to finish()."""
+        with self._gate:
+            return sid == self._session_id or sid in self._finals
+
+    def _final_over(self, sid: str) -> None:
+        with self._gate:
+            if sid in self._finals:
+                self._finals.remove(sid)
+            done = sid not in self._finals
+        if done and self.final_done is not None:
+            self.final_done(sid)
 
     def on_change(self, listener) -> None:
         self._listeners.append(listener)
@@ -90,6 +108,8 @@ class NotesEngine:
             self._stop_ticker()
             sid = self._session_id
             self._session_id = None
+            if sid is not None:
+                self._finals.append(sid)
         if sid is not None:
             self._update(sid, final=True)
 
@@ -112,6 +132,8 @@ class NotesEngine:
 
     def generate(self, sid: str) -> None:
         """Notes for a finished meeting that has none (runs in the background)."""
+        with self._gate:
+            self._finals.append(sid)
         self._work.submit(self._update, sid, True)
 
     def _sync_key(self) -> None:
@@ -151,25 +173,34 @@ class NotesEngine:
         self._work.submit(self._update, sid, False)
 
     def _update(self, sid: str, final: bool, fresh: bool = False) -> None:
+        over = None  # a final pass that ends here without running
+        start = False
         with self._gate:
             if self._in_flight:
                 if final:
-                    self._pending_final = sid
+                    # One waiting slot: the pass it held won't run, so that one is over.
+                    over, self._pending_final = self._pending_final, sid
                 elif fresh:
                     self._pending_fresh = sid  # after the round in the old language
-                return
-            session = self.store.get(sid)
-            if session is None or not session.lines:
-                return
-            if not self.ling.has_key:
-                self.status = NO_KEY
-                self._changed()
-                return
-            self._in_flight = True
-            self.working_id = sid
-            self._last_attempt = time.time()
-            self.status = UPDATING
-            base = MeetingNotes() if final or fresh else (self.notes if sid == self.shown_id else (session.notes or MeetingNotes()))
+            else:
+                session = self.store.get(sid)
+                if session is None or not session.lines:
+                    over = sid if final else None
+                elif not self.ling.has_key:
+                    self.status = NO_KEY
+                    over = sid if final else None
+                    self._changed()
+                else:
+                    start = True
+                    self._in_flight = True
+                    self.working_id = sid
+                    self._last_attempt = time.time()
+                    self.status = UPDATING
+                    base = MeetingNotes() if final or fresh else (self.notes if sid == self.shown_id else (session.notes or MeetingNotes()))
+        if over is not None:
+            self._final_over(over)
+        if not start:
+            return
         self._changed()
         try:
             lines = self.store.lines(sid)
@@ -233,6 +264,8 @@ class NotesEngine:
                 queued, again = self._pending_final, self._pending_fresh
                 self._pending_final = self._pending_fresh = None
             self._changed()
+            if final:
+                self._final_over(sid)
             if queued is not None:
                 self._update(queued, final=True)
             elif again is not None:

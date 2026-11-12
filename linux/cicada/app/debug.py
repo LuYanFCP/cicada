@@ -24,7 +24,10 @@ per connection, one JSON line back. Never in release builds.
   settings-general (设置 at 通用)
   share <record id>[,full][,pw] | unshare <record id> | share-last (how the last ended) | shareSheet <record id>|""
   share-ui scope notes|full | days 7|30|365 | names|pw|summary on|off | options (更改) | go | strip | back | confirm
-           | copy all|link|password | revoke | close | state"""
+           | copy all|link|password | revoke | close | state
+  export-folder <path>|off|on (存到文件夹: choose a folder as 存到这里 does, and its check) |
+  export-state (folder, problem, index, the records not written yet) | export-all (也存一份) | export-retry |
+  export-choose (open 存到哪里, as 更改… does; answer it with the dialog itself)"""
 from __future__ import annotations
 
 import os
@@ -127,6 +130,37 @@ def _problem(app) -> dict:
 def updates_notified():
     from ..core import updates
     return updates.notified()
+
+
+def _export(app, cmd: str, arg: str) -> dict:
+    """存到文件夹. Waits for the exporter's worker (it never waits for the main loop), so the reply
+    says what happened."""
+    ex = app.folder_export
+    if cmd == "export-folder":
+        if arg == "off":
+            ex.turn_off()
+        elif arg == "on" and ex.folder:
+            ex.choose(ex.folder)
+        elif arg:
+            ex.choose(arg)
+        else:
+            return {"ok": False, "error": "export-folder <path>|off|on"}
+        ex.wait()
+        return {"ok": True, **ex.state()}
+    if cmd == "export-all":
+        ex.write_all()
+        ex.wait()
+        return {"ok": True, **ex.state()}
+    if cmd == "export-retry":
+        ex.retry()
+        return {"ok": True}
+    if cmd == "export-choose":
+        app.show_settings(general=True)
+        GLib.idle_add(lambda: app.settings_window.folder_card._choose() and False)
+        return {"ok": True}
+    if cmd == "export-state":
+        return {"ok": True, **ex.state()}
+    return {"ok": False, "error": "unknown command"}
 
 
 def command(app, line: str) -> dict:
@@ -366,6 +400,8 @@ def command(app, line: str) -> dict:
                 "bars": w._bars is not None and w._bars.get_mapped() if w is not None else None,
                 "bar": w.bottom.get_children() != [] if w is not None else None,
                 "line": next((i for i, (_k, r) in enumerate(w._rows) if r is hl), None) if hl is not None else None}
+    if cmd.startswith("export-"):
+        return _export(app, cmd, arg)
     if cmd == "settings-general":
         app.show_settings(general=True)
         return {"ok": True}
@@ -429,6 +465,8 @@ def command(app, line: str) -> dict:
                 "shown": session_store.display_title(s) if s else None}
     if cmd == "delete":
         app.store.delete(arg)
+        if app.store.get(arg) is None:
+            app.folder_export.deleted(arg)
         return {"ok": True, "exists": app.store.get(arg) is not None, "live": app.store.live}
     if cmd == "notes-end":
         # The notes window's 结束: `ask`, then `keep` (继续记录) or `end` (结束会议).

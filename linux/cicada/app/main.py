@@ -122,6 +122,15 @@ class Controller:
         self.store.on_change(lambda _id: self.changed())
         self.store.on_words(self._words)
         self.ling.on_change(self.changed)
+        # 存到文件夹 (设置 › 通用): written once a record is settled, rewritten when it changes.
+        from ..core.folder_export import FolderExporter
+        self.folder_export = FolderExporter(self.store, self.settings)
+        self.folder_export.settling = self.notes.settling
+        self.folder_export.voices = lambda: self.settings.speakerVoices
+        self.folder_export.on_change(self.changed)
+        self.folder_export.on_denied = lambda: GLib.idle_add(lambda: self._notify_folder_denied() and False)
+        self.store.on_save(self.folder_export.saved)
+        self.notes.final_done = self.folder_export.settled
         self.notes_window = None
         self.share_dialog = None  # 分享… (share_dialog.py), one at a time
         self.records_window = None
@@ -202,6 +211,19 @@ class Controller:
             self._notified = False
             Log.d("problem: withdrawn")
 
+    def _notify_folder_denied(self) -> None:
+        """Once after a meeting, until a write works again (folder_export decides when): its own id,
+        so check_problem's withdraw never takes it away."""
+        from ..core.folder_export import short_path
+        folder = self.folder_export.folder
+        if not folder:
+            return
+        n = Gio.Notification.new(L("纪要没存到文件夹"))
+        n.set_body(LF("知了没有权限写入 %@。点按去设置", short_path(folder)))
+        n.set_default_action("app.folder-settings")
+        self.application.send_notification("folder-export", n)
+        Log.d("folder export: notified denied")
+
     def launch(self, speak: bool = False, background: bool = False) -> None:
         ui.install_css()
         lang = strings.language
@@ -251,6 +273,7 @@ class Controller:
             self.records_window.toasts.show(reopened)
         self.updates.start()
         self.keep_in_dock()
+        self.folder_export.retry()  # meetings that waited (a folder that wasn't there, or the app quit)
 
     def changed(self) -> None:
         """Engine threads call this: one coalesced refresh on the main loop."""
@@ -273,6 +296,7 @@ class Controller:
             if self.settings_window is not None:
                 self.settings_window.refresh_version()
                 self.settings_window.word_list.refresh()
+                self.settings_window.folder_card.refresh()
             self.check_problem()
             return False
         GLib.idle_add(run)
@@ -292,6 +316,8 @@ class Controller:
             from .records_window import RecordsWindow
             self.records_window = RecordsWindow(self)
             self.application.add_window(self.records_window)
+            # Coming forward: a folder fixed meanwhile (the Mac's didBecomeActive).
+            self.records_window.connect("focus-in-event", lambda *_: self.folder_export.retry() or False)
         return self.records_window
 
     def show_records(self) -> None:
@@ -973,6 +999,8 @@ class Controller:
         def run():
             sid = self.listen.session_id
             self.listen.stop(ended_at)
+            if sid and self.store.get(sid) is not None:
+                self.folder_export.ended(sid)
             if self.echo.on:
                 self.echo.remove()  # the speakers are the default output again
             if sid and self.settings.speakerVoices:
@@ -1082,7 +1110,10 @@ class Controller:
             if self.echo.on:
                 self.echo.remove()
             if self.listen.listening:
+                sid = self.listen.session_id
                 self.listen.stop()
+                if sid and self.store.get(sid) is not None:
+                    self.folder_export.ended(sid)  # kept as waiting: written at the next launch
             self.store.flush()
             GLib.idle_add(lambda: self.application.quit() and False)
         threading.Thread(target=run, daemon=True).start()
@@ -1109,6 +1140,8 @@ class App(Gtk.Application):
         # The update notification's click and its 更新说明 button; a problem's 打开设置.
         for name, action in (("install-update", lambda: self.controller.updates.install()),
                              ("ai-settings", lambda: self.controller.show_settings(ai=True)),
+                             # 纪要没存到文件夹: 设置 › 通用, where the row says what to do.
+                             ("folder-settings", lambda: self.controller.show_settings(general=True)),
                              ("update-notes", lambda: self.controller.updates.open_notes())):
             a = Gio.SimpleAction.new(name, None)
             a.connect("activate", lambda _a, _p, f=action: f())

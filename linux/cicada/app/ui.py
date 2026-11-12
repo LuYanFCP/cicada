@@ -174,6 +174,17 @@ button.iconbtn.on { background-color: #F3F4F6; color: #15171C; }
 .placetag { border-radius: 4px; border: 1px solid #E4E6EA; }
 .placetag.room { background-color: #F2F3F5; border-color: #F2F3F5; }
 .placetag label { color: #5A5F6B; }
+/* Save to folder (folder_export_view.py): the Obsidian vault tag, a problem in the card (accent-pale
+   when the folder refuses, ground grey otherwise), and the save-where choices (ink when picked). */
+.foldertag { border-radius: 4px; background-color: #F2F3F5; }
+.foldertag label { color: #5A5F6B; }
+.folderproblem { background-color: #F3F4F6; border-radius: 9px; }
+.folderproblem.denied { background-color: #FDEEE8; }
+button.folderoption { background-image: none; background-color: #FFFFFF; border: 1px solid #E4E6EA; box-shadow: none; border-radius: 9px; padding: 0; }
+button.folderoption:hover { background-color: #F6F7F9; }
+button.folderoption.picked, button.folderoption.picked:hover { background-color: #FFFFFF; border: 1.5px solid #15171C; }
+button.folderoption image { color: #6B7080; }
+button.folderoption.picked image { color: #15171C; }
 .metag { border-radius: 4px; border: 1px solid rgba(232,85,43,0.45); }
 .metag label { color: #B33A14; }
 .badge { background-color: #FDEEE8; border-radius: 5px; padding: 0 6px; color: #B33A14; }
@@ -298,6 +309,8 @@ button.fixlink label { color: #B33A14; }
 .fixbanner { background-color: #FEF6F2; border: 1px solid #FBE0D5; border-radius: 12px; }
 button.softbtn { background-image: none; background-color: #ECEDF0; border: none; box-shadow: none; border-radius: 7px; padding: 4px 14px; color: #5A5F6B; }
 button.softbtn:hover { background-color: #E2E4E8; }
+button.softbtn:disabled { background-color: #F3F4F6; color: #A3A7B1; }
+button.softbtn:disabled label { color: #A3A7B1; }
 .fixeditor { border: 1px solid #15171C; border-radius: 8px; background-color: #FFFFFF; }
 .fixeditor text { background-color: #FFFFFF; color: #15171C; }
 .heardchip { background-color: #F2F3F5; border-radius: 5px; }
