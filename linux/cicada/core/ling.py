@@ -359,6 +359,13 @@ class LingClient:
         return p.name if p.id != "custom" else strings.L("这个服务")
 
     @property
+    def service_label(self) -> str:
+        """Who a status line names: a custom service by its address, which says more than 这个服务
+        and reads right in "The … key doesn't work"."""
+        host = self.service_host
+        return host if self.provider.id == "custom" and host else self.service_name
+
+    @property
     def service_host(self) -> str:
         c = self.config()
         return urllib.parse.urlsplit(c.base or c.provider.base or "").hostname or ""
@@ -374,7 +381,7 @@ class LingClient:
         c = self.config()
         f = self.check_result.failure
         host = self.hear_host if f is not None and f[0] == "hear" else self.service_host
-        return self.check_result.message(self.service_name, host, c.text_model, c.hear_model)
+        return self.check_result.message(self.service_label, host, c.text_model, c.hear_model)
 
     def _classify(self, e: LingError, at: str, audio: bool = False):
         """aicheck.classify, except that a hear model at an address of its own that can't be reached

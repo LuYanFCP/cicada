@@ -197,7 +197,7 @@ class Controller:
         kind = self.notices.tick(time.time(), self.listen.listening, reason, shown)
         if kind is not None:
             from .aicheck_view import blocking, blocking_detail
-            name = self.ling.service_name
+            name = self.ling.service_label
             title = blocking(self) if kind == "blocking" else LF("连不上 %@", name)
             n = Gio.Notification.new(title or L("AI 服务的设置要改一下"))
             n.set_body(blocking_detail(self) if kind == "blocking" else self.ling.message() or "")

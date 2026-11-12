@@ -936,7 +936,7 @@ class NotesWindow(Gtk.Window):
         reason = self._reason()
         ling = self.app.ling
         # Who the line names: a custom service by its address, which says more than 这个服务.
-        name = ling.service_host if ling.provider.id == "custom" and ling.service_host else ling.service_name
+        name = ling.service_label
         # All but the key are about a round of the meeting going on now: a record opened later has none.
         live = self.app.listen.listening
         status = engine.status

@@ -97,7 +97,7 @@ def steps_widget(app, change_key, recheck_in_step: bool = True, width_chars: int
                 if st.kind == aicheck.BUSY_STATE:
                     ui.classes(w, "busy")
                 texts.pack_start(w, False, False, 0)
-            line = r.proxy_line(ling.service_name, host)
+            line = r.proxy_line(ling.service_label, host)
             if line:
                 texts.pack_start(ui.panel(ui.pad(ui.text(line, 12, "", width_chars=width_chars), 7, 10), "proxybox"), False, False, 0)
             acts = actions(app, change_key, recheck_in_step) if st.kind == aicheck.FAIL else []
@@ -145,7 +145,7 @@ def strip_words(app):
     r = ling.check_result
     if not ling.has_key or not r.needs_user:
         return None
-    name = ling.service_name
+    name = ling.service_label
     f = r.failure
     if f is None:
         return r.balance_line(name), L("用完后纪要会停下")
@@ -164,7 +164,7 @@ def blocking(app) -> str | None:
     if not ling.has_key:
         return None
     c = ling.config()
-    return problem.title(ling.check_result.reason, ling.service_name, c.text_model, c.hear_model)
+    return problem.title(ling.check_result.reason, ling.service_label, c.text_model, c.hear_model)
 
 
 def blocking_detail(app) -> str:
