@@ -1138,6 +1138,7 @@ object Tests {
             engine.stop()
         } finally { LingClient.spacing = old }
         check(PressSpeech.filler("嗯嗯。") && PressSpeech.filler("Um, uh...") && !PressSpeech.filler("嗯，好的。") && !PressSpeech.filler("OK."), "fillers")
+        check(PressSpeech.filler("翻译结果：") && PressSpeech.filler("Translation:") && !PressSpeech.filler("我想补充三点：价格、时间和人手。"), "a bare heading is no sentence")
     }
 
     // MARK: 说话人识别 (linux/tests/test_core.py › Speakers)
