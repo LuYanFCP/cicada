@@ -146,6 +146,10 @@ final class NotesEngine: ObservableObject {
     /// Final passes asked for while another call was running, in order; each runs after it.
     /// Several can wait: an imported file can finish while the meeting's own pass is queued.
     private var pendingFinals: [String] = []
+    /// A final pass is over, whether it wrote notes or not (存到文件夹 waits for it).
+    var finalDone: ((String) -> Void)?
+    /// The final pass for this meeting is running or waiting its turn.
+    func settling(_ id: String) -> Bool { generatingID == id || pendingFinals.contains(id) }
     /// A language change that arrived while another update was running: rewrite after it.
     private var pendingRewrite: String?
     private var lastAttempt = Date.distantPast
@@ -264,8 +268,8 @@ final class NotesEngine: ObservableObject {
             if fresh { pendingRewrite = id }
             return
         }
-        guard let session = store.session(id), !session.lines.isEmpty else { return }
-        guard ling.hasKey else { state = .noKey; return }
+        guard let session = store.session(id), !session.lines.isEmpty else { if final { finalDone?(id) }; return }
+        guard ling.hasKey else { state = .noKey; if final { finalDone?(id) }; return }
         inFlight = true
         lastAttempt = Date()
         state = .updating
@@ -273,6 +277,7 @@ final class NotesEngine: ObservableObject {
         defer {
             inFlight = false
             if final, generatingID == id { generatingID = nil }
+            if final { finalDone?(id) }
             if !pendingFinals.isEmpty {
                 let next = pendingFinals.removeFirst()
                 if pendingRewrite == next { pendingRewrite = nil } // the final pass starts from nothing anyway

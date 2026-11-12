@@ -90,6 +90,8 @@ final class SessionStore: ObservableObject {
     let root: URL
     /// Per meeting: a file being imported saves alongside the live meeting without delaying it.
     private var saveWork: [String: DispatchWorkItem] = [:]
+    /// A record was written to disk (存到文件夹 follows its changes).
+    var onSave: ((String) -> Void)?
 
     /// `root`: tests keep their meetings in a folder of their own.
     init(root: URL? = nil) {
@@ -446,6 +448,7 @@ final class SessionStore: ObservableObject {
         guard let data = try? encoder.encode(s) else { return }
         try? FileManager.default.createDirectory(at: folder(id), withIntermediateDirectories: true)
         try? data.write(to: folder(id).appendingPathComponent("session.json"), options: .atomic)
+        onSave?(id)
     }
 }
 

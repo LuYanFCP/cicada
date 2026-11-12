@@ -162,6 +162,8 @@ final class AppModel: ObservableObject {
     let updates = Updates()
     let loginItem = LoginItem()
     lazy var notes = NotesEngine(ling: ling, store: store)
+    /// 存到文件夹 (settings › 通用).
+    lazy var folderExport = FolderExporter(store: store, settings: settings)
     lazy var notesWindow = NotesWindowController(model: self)
     lazy var importer = FileImporter(store: store, settings: settings, translator: translator)
     let vocabulary = Vocabulary(url: Vocabulary.defaultURL)
@@ -316,6 +318,11 @@ final class AppModel: ObservableObject {
             }
         }
         importer.onFinished = { [weak self] id in self?.importFinished(id) }
+        // 存到文件夹: written once a record is settled, rewritten when it changes.
+        folderExport.settling = { [weak self] id in self?.notes.settling(id) ?? false }
+        store.onSave = { [weak self] id in self?.folderExport.saved(id) }
+        notes.finalDone = { [weak self] id in self?.folderExport.settled(id) }
+        folderExport.retry()
         notes.language = { [weak self] id in
             TranslationService.englishName(self?.notesLanguageCode(id) ?? "zh-CN")
         }
@@ -760,6 +767,7 @@ final class AppModel: ObservableObject {
         store.end(at: endedAt, heardSpeech: listen.heardSpeech)
         if settings.speakerVoices, let ended { speakerNamer.guess(ended, force: true) }
         notes.finish()
+        if let ended { folderExport.ended(ended) }
         overlay.hide()
         refresh()
         updates.notifyIfDue()  // held while the meeting was on
@@ -1164,7 +1172,10 @@ final class AppModel: ObservableObject {
         networkMonitor.start(queue: DispatchQueue(label: "cicada.ai-network"))
         // Turning the local network permission on doesn't change the path: look again on coming back.
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.ling.recheckLocalNetwork() }
+            MainActor.assumeIsolated {
+                self?.ling.recheckLocalNetwork()
+                self?.folderExport.retry()  // a folder permission fixed in System Settings
+            }
         }
     }
 
@@ -1687,6 +1698,7 @@ final class AppModel: ObservableObject {
     func deleteSession(_ id: String) {
         importer.cancel(id)
         store.delete(id)
+        folderExport.deleted(id)
     }
 
     private func importFinished(_ id: String) {
@@ -1695,6 +1707,7 @@ final class AppModel: ObservableObject {
         if settings.speakerVoices { speakerNamer.guess(id, force: true) }
         let notesToo = settings.importNotes && ling.hasKey && !s.lines.isEmpty
         if notesToo { notes.generate(for: id) }
+        folderExport.ended(id)
         let content = UNMutableNotificationContent()
         content.title = L("\(s.displayTitle) 转好了")
         content.body = L("\(RecordList.length(s)) · \(s.lines.count) 句") + (notesToo ? L("，正在整理纪要") : "")
@@ -2317,6 +2330,22 @@ final class AppModel: ObservableObject {
         case "frame":
             debugLog("overlay frame=\(overlay.barFrame) font=\(overlay.currentFontSize)")
         case "import": importFiles(arg.split(separator: ",").map { URL(fileURLWithPath: String($0)) })
+        // 存到文件夹: exportFolder:<path> picks a folder (as 存到这里 does), exportFolder:off turns it
+        // off; exportAll is 也存一份; exportState replies with the index and the problem.
+        case "exportFolder":
+            if arg == "off" { folderExport.turnOff() } else { folderExport.choose(URL(fileURLWithPath: arg, isDirectory: true)) }
+        case "exportAll": folderExport.writeAll()
+        case "rename":
+            // rename:<id>=<title> as if typed into the record's title (empty: the automatic one).
+            let p = arg.split(separator: "=", maxSplits: 1).map(String.init)
+            store.rename(p[0], to: p.count > 1 ? p[1] : "")
+        case "exportState":
+            let x = folderExport
+            DebugRun.reply?.data = [
+                "on": x.on, "folder": settings.exportFolder, "checking": x.checking,
+                "problem": x.problem.map { "\($0)" } as Any, "files": x.index.files, "pending": x.index.pending,
+                "unwritten": x.unwritten.count, "lastFile": x.index.lastFile as Any,
+            ] as [String: Any]
         case "importCancel": importer.cancelAll()
         case "importRetry":
             // `<id>=<locale>`: as if that language was picked in 这场会议只留下了录音.
@@ -2421,6 +2450,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
             // "听不到会议室": straight to System Settings, without bringing Cicada forward.
             if problem == "mic" {
                 model.openMicrophoneSettings()
+                return
+            }
+            // "纪要没存到文件夹": settings › 通用, where the row says what to do.
+            if problem == "folder" {
+                model.openSettings(.records)
                 return
             }
             // "有新版本": the panel shows the download, and install asks first if a meeting is on.

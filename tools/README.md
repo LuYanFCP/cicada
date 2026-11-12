@@ -24,6 +24,7 @@
   - 多开：两边都设 `CICADA_DEBUG_CHANNEL=x`（`open -n --env CICADA_DEBUG_CHANNEL=x build/Cicada.app`），命令只发给这一份，日志在 `/tmp/livesubs-dev-debug-x.log`
   - 导出：`export:<目录>`
   - 导入录音或视频：`import:<路径>[,<路径>…]`（等于拖进会议记录窗口），`importState` 把进度写进日志，`importCancel` 停止转写，`importRetry:<会议 id>[=<locale>]` 重新转写（带 locale 等于在“这场会议只留下了录音”里选了这种语言），`importNotify` 把通知权限写进日志
+  - 存到文件夹：`exportFolder:<路径>` 选文件夹（等于“存到这里”，会马上试写一次），`exportFolder:off` 关掉，`exportAll` 即“也存一份”，`rename:<会议 id>=<标题>` 像在记录里改标题（不给标题恢复自动标题），`exportState` 回复索引（`files`、`pending`、`unwritten`、`lastFile`）和问题（`denied` `missing` `failed`）
   - 新手引导与窗口：`onboarding:<步骤>[,skip|ask|setup]`（1–5，5 是收尾页；skip 是第 3 步点了“先不接”，ask / setup 是第 4 步的二选一 / 清单）、`samplePlay`、`speakers:<on|off>`（“说话人识别”）、`speakerGuess:<会议 id>`（马上让 Ling 认一遍名字）、`speakersRender:<会议 id>=<png>`、`voiceprintFile:<音频>=<json>`（用 app 里的声纹模型算整个文件的声纹，和参考模型对比）、`closeWindow:<main|settings|onboarding>`、`settings:<overlay|language|speak|records|ai|diagnostics>`、`about`
   - 显示与字幕：`display:<notes|bar|none>`、`subtitles:<both|translation|original>`、`meetingSubtitles:<…>`、`overlayState`、`overlayToggle`、`pillClick`（等于点主窗口顶部的“正在听”）、`overlayAuto[:off]`、`hideAfter:<秒>`
   - 纪要：`notesLang:<mine|source>`、`meetingNotesLang:<…>`、`notesRegenerate:<id>=<mine|source>`、`notesWindow[:x,y,w,h]`、`notesClose`、`notesMinimize`、`notesFrame`、`notesNow`、`notesState`、`notesShow:<id>`、`notesReplay:<id>[,<每次几句>]`（按会议时的节奏重写一遍纪要，默认每次 4 句；回复被 max_tokens 截断时日志写 `cut at max_tokens`）、`notesCapturable[:off]`（只改窗口能否被截屏）、`notesShare:<on|off>`（改“共享屏幕时让对方看到”这个设置，等于点图标或开关）

@@ -1270,6 +1270,7 @@ struct MainWindowView: View {
                     .help(([dateLine(s, live: live)] + more.compactMap { $0 }).joined(separator: " · "))
             }
             RecordTitleField(session: s, store: store).id(s.id).padding(.top, 8)
+            if !live { FolderExportLine(exporter: model.folderExport, model: model, session: s).padding(.top, 8) }
             if s.sourcePath != nil {
                 VStack(alignment: .leading, spacing: 12) {
                     if s.fromRecording, s.lines.isEmpty || s.importing == true, !working(s) {

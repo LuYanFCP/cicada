@@ -739,6 +739,8 @@ struct SettingsView: View {
                     SoftButton(L("打开")) { NSWorkspace.shared.open(model.store.root) }
                 }
             }
+            Text("会后存一份").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.secondary).padding(.top, 4)
+            FolderExportSettings(model: model, settings: settings, exporter: model.folderExport)
             Text("导入的文件").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.secondary).padding(.top, 4)
             SettingsCard {
                 SettingsRow(title: L("文件里说的"), detail: L("译成“翻译成”里的语言")) {

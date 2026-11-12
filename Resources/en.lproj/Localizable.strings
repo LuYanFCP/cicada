@@ -1434,3 +1434,36 @@
 "正在听外放…" = "Listening to the speaker…";
 "知了 · 正在听" = "Cicada · Listening";
 "没听到声音，请拔掉耳机或调大音量" = "No sound; unplug headphones or turn it up";
+
+/* FolderExport */
+"会后存一份" = "After the meeting";
+"纪要没存到文件夹" = "Notes weren't saved to the folder";
+"知了没有权限写入 %@。点按去设置" = "Cicada isn't allowed to write to %@. Click to open Settings";
+"上次存于 %@ · %@" = "Last saved %@ · %@";
+"存到文件夹" = "Save to folder";
+"纪要和文字记录存成 Markdown；文件夹同步到哪，内容就到哪" = "Notes and transcript as Markdown; wherever the folder syncs, they go too";
+"位置" = "Location";
+"以前的会议" = "Earlier meetings";
+"还有 %lld 场没存" = "%lld not saved yet";
+"正在确认能写入 %@…" = "Checking Cicada can write to %@…";
+"Obsidian 库" = "Obsidian vault";
+"更改…" = "Change…";
+"也存一份" = "Save them too";
+"其他文件夹…" = "Another folder…";
+"去系统设置" = "Open System Settings";
+"没有权限写入 %@" = "Not allowed to write to %@";
+"找不到 %@" = "Can't find %@";
+"接上或换个文件夹后自动补存" = "Saves once it's back, or pick another folder";
+"没存上" = "Not saved";
+"%lld 场会议没存上，允许后自动补存" = "%lld meetings not saved; they save once allowed";
+"在系统设置里允许知了，或换个文件夹" = "Allow Cicada in System Settings, or pick another folder";
+"Obsidian 库「%@」" = "Obsidian vault “%@”";
+"在库里新建 Cicada 文件夹" = "A new Cicada folder inside it";
+"存到哪里" = "Save where";
+"macOS 可能会问一次能不能访问这个位置" = "macOS may ask once whether Cicada can use this location";
+"存到这里" = "Save here";
+"会后把纪要和文字记录存成 Markdown 到这里" = "After each meeting, notes and transcript are saved here as Markdown";
+"已存到 %@ ·" = "Saved to %@ ·";
+"没存到文件夹 ·" = "Not saved to the folder ·";
+"整理好后存到 %@" = "Saves to %@ once the notes are ready";
+"在访达中显示" = "Show in Finder";
