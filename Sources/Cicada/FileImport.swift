@@ -179,12 +179,16 @@ final class FileImporter: ObservableObject {
             phase = .transcribing
             var n = 0
             var translations: [Task<Void, Never>] = []
-            let add = { (sentences: [(text: String, t: Double)], heard: String?, translation: String?) in
+            // 说话人识别, as when listening: each line's stretch of the file gets a voiceprint.
+            let voices = settings.speakerVoices ? ImportVoices(pcm: pcm, store: store, session: job.id) : nil
+            defer { voices?.stop() }
+            // `end`: when the recognized stretch ends, so its last line's sound ends there.
+            let add = { (sentences: [(text: String, t: Double)], end: Double, heard: String?, translation: String?) in
                 let src = heard.flatMap { code in sourceLanguages.first { $0.code == code }?.code } ?? lang.code
                 let to = heard == nil ? target : self.settings.resolvedTarget(source: src)
                 // The service's translation covers the whole stretch: kept when the stretch is one line.
                 let given = !self.settings.sentenceTranslation && sentences.count == 1 && to == heardTarget ? translation : nil
-                for sentence in sentences {
+                for (k, sentence) in sentences.enumerated() {
                     let text = HeardText.clean(sentence.text)
                     guard text.contains(where: \.isLetter) else { continue }
                     n += 1
@@ -192,6 +196,7 @@ final class FileImporter: ObservableObject {
                                               src: text, dst: src == to ? text : given, srcLang: src, dstLang: to)
                     self.store.append(line, to: job.id)
                     if line.dst == nil { translations.append(self.translate(line, session: job.id)) }
+                    voices?.tag(line.id, from: line.t, to: k + 1 < sentences.count ? sentences[k + 1].t : end)
                 }
             }
             if !Recognition.legacy, !Recognition.cloudOnly, #available(macOS 26, *) {
@@ -206,13 +211,13 @@ final class FileImporter: ObservableObject {
                     let pieces = result.text.runs.map { run in
                         (String(result.text[run.range].characters), run.audioTimeRange.map { CMTimeGetSeconds($0.start) })
                     }
-                    add(Self.sentences(pieces, start: CMTimeGetSeconds(result.range.start)), nil, nil)
+                    add(Self.sentences(pieces, start: CMTimeGetSeconds(result.range.start)), CMTimeGetSeconds(result.range.end), nil, nil)
                 }
                 _ = analyzer
             } else {
                 let hint = Recognition.cloudOnly ? named?.locale : lang.locale
                 try await transcribeLegacy(pcm, locale: hint, session: job.id) { piece in
-                    add(Self.sentences(Self.words(piece), start: piece.start), piece.language, piece.translation)
+                    add(Self.sentences(Self.words(piece), start: piece.start), piece.end, piece.language, piece.translation)
                 }
             }
             guard !Task.isCancelled, store.session(job.id) != nil else { return }
@@ -223,6 +228,7 @@ final class FileImporter: ObservableObject {
             heard = duration
             phase = .translating
             for t in translations { await t.value }
+            await voices?.finish()
             store.finishImport(job.id)
             debugLog(String(format: "import: %@ done, %d lines from %.0f s of audio in %.0f s", job.id, n, duration, Date().timeIntervalSince(started)))
             onFinished?(job.id)
@@ -417,5 +423,57 @@ final class FileImporter: ObservableObject {
         }
         if reader.status == .failed { throw reader.error ?? NSError(domain: "CicadaImport", code: 3) }
         return Double(frames) / 16_000
+    }
+}
+
+/// 说话人识别 for an imported file: each line's stretch of the decoded audio goes through a tagger
+/// of the file's own, so a meeting listened to meanwhile keeps its voices apart from the file's.
+@MainActor
+final class ImportVoices {
+    private let tagger = SpeakerTagger()
+    private let file: AVAudioFile?
+    /// Off once the file is stopped: a voiceprint still queued then must not land on the lines of
+    /// a 重新转写 that reuses the line ids.
+    private var on = true
+
+    init(pcm: URL, store: SessionStore, session id: String) {
+        file = try? AVAudioFile(forReading: pcm)
+        tagger.onVoice = { [weak self, weak store] line, voice in
+            guard self?.on == true else { return }
+            store?.setVoice(in: id, lineID: line, voice)
+        }
+    }
+
+    func tag(_ lineID: String, from start: Double, to end: Double) {
+        // The model looks at 20 s at most: no need to hold more of a long line in memory.
+        guard let file, let samples = Self.read(file, from: start, to: min(end, start + Voiceprints.maxSeconds)) else { return }
+        tagger.tag(lineID: lineID, samples: samples)
+    }
+
+    /// Returns once every line handed in so far has its voice, or is known to have none.
+    func finish() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            tagger.voice(of: []) { _ in c.resume() }   // too short to embed: just a place in the queue
+        }
+    }
+
+    func stop() { on = false }
+
+    /// 16 kHz mono floats from `start` to `end` seconds of the file.
+    nonisolated static func read(_ file: AVAudioFile, from start: Double, to end: Double) -> [Float]? {
+        let rate = file.processingFormat.sampleRate
+        let first = AVAudioFramePosition(max(0, start) * rate)
+        let last = min(file.length, AVAudioFramePosition(max(0, end) * rate))
+        guard last > first, let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(last - first)) else { return nil }
+        file.framePosition = first
+        // A read after a seek can stop short of what was asked (a packet boundary): read on to the end.
+        var out: [Float] = []
+        out.reserveCapacity(Int(last - first))
+        while file.framePosition < last {
+            guard (try? file.read(into: buf, frameCount: AVAudioFrameCount(last - file.framePosition))) != nil,
+                  buf.frameLength > 0, let d = buf.floatChannelData else { break }
+            out.append(contentsOf: UnsafeBufferPointer(start: d[0], count: Int(buf.frameLength)))
+        }
+        return out.isEmpty ? nil : out
     }
 }

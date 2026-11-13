@@ -9,12 +9,14 @@ final class LingStub: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var seen: [(at: Date, body: [String: Any], url: URL?, authorization: String?, method: String?)] = []
     /// Each request's body as sent (a multipart upload isn't JSON).
     nonisolated(unsafe) static var raw: [Data] = []
+    /// Where each request went and the key it carried, in order.
+    nonisolated(unsafe) static var sent: [(host: String, auth: String?)] = []
     /// Answers each request by what it asked, instead of `reply`.
     nonisolated(unsafe) static var respond: (([String: Any]) -> (Int, String))?
     private static let lock = NSLock()
 
     static func reset(_ status: Int = 200, _ body: String) {
-        lock.withLock { reply = (status, body); seen = []; raw = []; respond = nil }
+        lock.withLock { reply = (status, body); seen = []; raw = []; sent = []; respond = nil }
     }
 
     static func chatReply(_ text: String, finish: String? = "stop") -> String {
@@ -39,6 +41,7 @@ final class LingStub: URLProtocol, @unchecked Sendable {
         let (status, text) = Self.lock.withLock {
             Self.seen.append((Date(), body, request.url, request.value(forHTTPHeaderField: "Authorization"), request.httpMethod))
             Self.raw.append(data)
+            Self.sent.append((request.url?.host ?? "", request.value(forHTTPHeaderField: "Authorization")))
             return Self.respond?(body) ?? Self.reply
         }
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
@@ -313,7 +316,8 @@ final class LingStub: URLProtocol, @unchecked Sendable {
     }
 
     /// Qwen3-ASR through mlx-audio on this Mac: the check is one second of audio to
-    /// `/audio/transcriptions`, asking for JSON (mlx-audio streams NDJSON otherwise), with no key.
+    /// `/audio/transcriptions`, asking for JSON with the language (mlx-audio streams NDJSON
+    /// otherwise), with no key.
     @Test func speechServerIsCheckedWithOneTranscriptionAskingForJSON() async throws {
         LingStub.reset(200, #"{"text":""}"#)
         let speech = speechClient()
@@ -322,13 +326,75 @@ final class LingStub: URLProtocol, @unchecked Sendable {
         let first = try #require(LingStub.seen.first)
         #expect(first.url?.absoluteString == "http://localhost:8000/v1/audio/transcriptions" && first.authorization == nil)
         let body = String(decoding: try #require(LingStub.raw.first), as: UTF8.self)
-        #expect(body.contains("name=\"response_format\"\r\n\r\njson\r\n"))
+        #expect(body.contains("name=\"response_format\"\r\n\r\nverbose_json\r\n"))
         #expect(body.contains("mlx-community/Qwen3-ASR-1.7B-8bit"))
         #expect(speech.aiCheck.passed && speech.aiCheck.hear?.ok == true && speech.transcribes)
         // Meetings call it the same way and read the text back.
         LingStub.reset(200, #"{"text":" 大家好 "}"#)
         let heard = try await speech.transcribe(CloudHearing.wav(Array(repeating: 0, count: 1600)), language: nil)
-        #expect(heard.text == "大家好")
+        #expect(heard.text == "大家好" && heard.language == nil)
+    }
+
+    /// The language comes from the server (mlx-audio lists it, Whisper servers name it), so a
+    /// French line is not taken for English; a server that takes only plain JSON still works.
+    @Test func speechServerNamesTheLanguageAndFallsBackToPlainJSON() async throws {
+        let speech = speechClient()
+        let wav = CloudHearing.wav(Array(repeating: 0, count: 1600))
+        LingStub.reset(200, #"{"text":"Bonjour à tous.","language":["French"],"segments":[]}"#)
+        #expect(try await speech.transcribe(wav, language: nil).language == "French")
+        LingStub.reset(200, #"{"text":"Hello.","language":"english"}"#)
+        #expect(try await speech.transcribe(wav, language: nil).language == "english")
+        let line = CloudHearing.transcript("Bonjour à tous.", reported: "French", hint: "en", target: "zh-CN", seconds: 2)
+        #expect(line?.lang == "fr")
+
+        // gpt-4o-transcribe answers 400 to verbose_json: asked again as json, and json from then on.
+        LingStub.reset(200, "")
+        LingStub.respond = { _ in
+            let asked = String(decoding: LingStub.raw.last ?? Data(), as: UTF8.self)
+            return asked.contains("\r\n\r\nverbose_json\r\n") ? (400, "{}") : (200, #"{"text":"Hello."}"#)
+        }
+        #expect(try await speech.transcribe(wav, language: nil).text == "Hello.")
+        #expect(try await speech.transcribe(wav, language: nil).text == "Hello.")
+        let formats = LingStub.raw.map { String(decoding: $0, as: UTF8.self).contains("verbose_json") }
+        #expect(formats == [true, false, false])
+        // A 400 that plain JSON gets too is the server's answer, not a format it refused.
+        speech.reconfigure(check: false)
+        LingStub.reset(400, "{}")
+        await #expect(throws: LingClient.Failure.http(400)) { _ = try await speech.transcribe(wav, language: nil) }
+        LingStub.reset(200, #"{"text":"Hello."}"#)
+        _ = try await speech.transcribe(wav, language: nil)
+        #expect(String(decoding: LingStub.raw.last ?? Data(), as: UTF8.self).contains("verbose_json"))
+    }
+
+    /// 语音识别 › 内置: the engine in the app is brought up first, asked for a streamed answer (the
+    /// only one that names the language), and never sent the key saved for a server.
+    @Test func theBuiltInEngineIsStartedFirstAndNamesTheLanguage() async throws {
+        let speech = speechClient()
+        #expect(speech.saveKey("sk-for-my-server", for: speech.config()))
+        let base = URL(string: "http://127.0.0.1:50123/v1/")
+        speech.config = { AIConfig(provider: .custom, base: base, textModel: "", hearModel: "Qwen3-ASR-1.7B-8bit", hearBase: base, builtIn: true) }
+        var starts = 0
+        speech.startEngine = { starts += 1 }
+        #expect(speech.key == "" && speech.transcribes)
+        let done = #"{"type":"transcript.text.done","text":" Bonjour à tous. ","generation_metadata":{"generated_token_count":7,"language":"French","finish_reason":"stop"}}"#
+        LingStub.reset(200, ":\n\ndata: \(done)\n\ndata: [DONE]\n\n")
+        let heard = try await speech.transcribe(CloudHearing.wav(Array(repeating: 0, count: 1600)), language: nil)
+        #expect(heard.text == "Bonjour à tous." && heard.language == "French" && starts == 1)
+        let first = try #require(LingStub.seen.first)
+        #expect(first.url?.absoluteString == "http://127.0.0.1:50123/v1/audio/transcriptions" && first.authorization == nil)
+        let body = String(decoding: try #require(LingStub.raw.first), as: UTF8.self)
+        #expect(body.contains("name=\"stream\"\r\n\r\ntrue\r\n") && body.contains("name=\"include_generation_metadata\"\r\n\r\ntrue\r\n"))
+        #expect(!body.contains("response_format"))
+
+        // It ended on an error instead of a transcript.
+        LingStub.reset(200, #"data: {"type":"error","error":{"code":"transcription_failed"}}"# + "\n\n")
+        await #expect(throws: LingClient.Failure.parse) { _ = try await speech.transcribe(Data(), language: nil) }
+        // It would not start: nothing is sent, and it reads as a server on this Mac that isn't running.
+        LingStub.reset(200, "")
+        speech.startEngine = { throw SpeechEngine.Failure.noModel }
+        await #expect(throws: LingClient.Failure.network) { _ = try await speech.transcribe(Data(), language: nil) }
+        #expect(LingStub.seen.isEmpty)
+        speech.removeKey()
     }
 
     @Test func aSpeechServerWithoutTheModelOrAnsweringNDJSONSaysWhy() async throws {
@@ -553,6 +619,76 @@ final class LingStub: URLProtocol, @unchecked Sendable {
         #expect(LingStub.seen.last?.body["response_format"] == nil && LingStub.seen.last?.body["chat_template_kwargs"] != nil)
         _ = try await ling.chat(content: "y", instruction: "Translate.", priority: .translate)
         #expect(LingStub.seen.last?.body["chat_template_kwargs"] != nil)
+    }
+
+    // MARK: Notes apart
+
+    private func notesClient(own: Bool) -> LingClient {
+        let ling = client()
+        AIKey.save("sk-main-1111111111", "custom")
+        ling.config = { AIConfig(provider: .custom, base: URL(string: "https://main.example/v1/"), textModel: "mt",
+                                 notesModel: "big", notesBase: own ? URL(string: "https://notes.example/v1/") : nil,
+                                 notesOwnService: own) }
+        return ling
+    }
+
+    @Test func notesGoToTheirModelAndServerTranslationStays() async throws {
+        LingStub.reset(200, LingStub.chatReply("{}"))
+        let ling = notesClient(own: true)
+        AIKey.save("sk-notes-222222222", LingClient.notesKeyName)
+        _ = try await ling.chat(content: "x", instruction: "Notes.", priority: .notes, json: true)
+        _ = try await ling.chat(content: "y", instruction: "Translate.", priority: .translate)
+        #expect(LingStub.seen.map { $0.body["model"] as? String } == ["big", "mt"])
+        #expect(LingStub.sent.map(\.host) == ["notes.example", "main.example"])
+        #expect(LingStub.sent.map(\.auth) == ["Bearer sk-notes-222222222", "Bearer sk-main-1111111111"])
+    }
+
+    @Test func notesWithoutTheirOwnKeyUseTheTranslationKey() async throws {
+        LingStub.reset(200, LingStub.chatReply("{}"))
+        let ling = notesClient(own: true)
+        _ = try await ling.chat(content: "x", instruction: "Notes.", priority: .notes)
+        #expect(LingStub.sent.first?.auth == "Bearer sk-main-1111111111")
+        // The same service, another model: same address and key.
+        let same = notesClient(own: false)
+        AIKey.save("sk-notes-222222222", LingClient.notesKeyName)
+        _ = try await same.chat(content: "x", instruction: "Notes.", priority: .notes)
+        #expect(LingStub.sent.last?.host == "main.example" && LingStub.sent.last?.auth == "Bearer sk-main-1111111111")
+        #expect(LingStub.seen.last?.body["model"] as? String == "big")
+    }
+
+    @Test func aRefusedNotesKeyLeavesTranslationWorking() async throws {
+        LingStub.reset(200, "")
+        LingStub.respond = { body in body["model"] as? String == "big" ? (401, "{}") : (200, LingStub.chatReply("好")) }
+        let ling = notesClient(own: true)
+        await #expect(throws: LingClient.Failure.invalidKey) {
+            try await ling.chat(content: "x", instruction: "Notes.", priority: .notes)
+        }
+        #expect(ling.keyState != .invalid)
+        #expect(try await ling.chat(content: "y", instruction: "Translate.", priority: .translate) == "好")
+    }
+
+    @Test func notesAtAnUnusableAddressSendNothing() async throws {
+        LingStub.reset(200, LingStub.chatReply("{}"))
+        let ling = client()
+        AIKey.save("sk-main-1111111111", "custom")
+        AIKey.save("sk-notes-222222222", LingClient.notesKeyName)
+        ling.config = { AIConfig(provider: .custom, base: URL(string: "https://main.example/v1/"), textModel: "mt",
+                                 notesOwnService: true, notesBadAddress: true) }
+        await #expect(throws: LingClient.Failure.noKey) {
+            try await ling.chat(content: "x", instruction: "Notes.", priority: .notes)
+        }
+        #expect(LingStub.sent.isEmpty)
+    }
+
+    @Test func notesFallBackToTranslationUntilSet() {
+        let base = URL(string: "https://main.example/v1/")
+        let plain = AIConfig(provider: .custom, base: base, textModel: "mt")
+        #expect(!plain.notesApart && plain.forNotes == plain)
+        let model = AIConfig(provider: .custom, base: base, textModel: "mt", notesModel: "big")
+        #expect(model.notesApart && model.forNotes.textModel == "big" && model.forNotes.base == base)
+        // Only the custom service splits.
+        let ling = AIConfig(provider: .ling, base: AIProvider.ling.base, textModel: "x", notesModel: "big")
+        #expect(!ling.notesApart && ling.forNotes.textModel == "x")
     }
 
     // MARK: Retries

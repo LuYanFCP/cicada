@@ -65,6 +65,14 @@ extension AppModel {
         case "import":
             // What the import button shows until M3.
             comingSoon = L("导入录音或视频")
+        case "hear":
+            // hear:room|speaker, 声音来源
+            UserDefaults.standard.set(arg == "speaker" ? "speaker" : "room", forKey: Pref.hear)
+        case "interrupt":
+            // interrupt:began|ended, what the system sends for a call or Siri
+            room.debugInterrupt(arg != "ended")
+        case "pip":
+            pip.start()
         case "livePage":
             livePage = arg == "notes" ? .notes : .subtitles
         case "source":
@@ -221,7 +229,7 @@ extension AppModel {
         case "wordDelete":
             if let t = vocabulary.terms.first(where: { $0.word == arg }) { deleteWord(t) }
         case "state":
-            debugLog("room running=\(room.isRunning) lines=\(room.lines.count) draft=\(room.draft.count) level=\(room.level) status=\(room.status) session=\(room.sessionID ?? "-")")
+            debugLog("room running=\(room.isRunning) lines=\(room.lines.count) draft=\(room.draft.count) level=\(room.level) status=\(room.status) speaker=\(room.speakerMode) paused=\(room.paused) pip=\(pip.isActive) session=\(room.sessionID ?? "-")")
             debugLog("state tab=\(tab.rawValue) selection=\(selection ?? "-") page=\(recordPage) sessions=\(store.sessions.count) query=\(query) notesLang=\(notesLanguageCode(selection ?? store.sessions.first?.id ?? "")) undo=\(speakerUndo?.text ?? "-")")
         default:
             debugLog("debug command unknown: \(cmd)")

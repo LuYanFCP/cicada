@@ -16,6 +16,8 @@ struct AISettingsView: View {
     @State private var editing = false
     @State private var baseDraft = ""
     @State private var textDraft = ""
+    @State private var notesKeyDraft = ""
+    @State private var editingNotesKey = false
     /// A pasted key that belongs elsewhere: what it is, and (for another service's key) where it fits.
     @State private var keyHint: (text: String, service: AIProvider.Kind?, key: String)?
 
@@ -177,26 +179,42 @@ struct AISettingsView: View {
     private var customHosts: String {
         let c = settings.aiConfig
         var hosts = [c.base?.host]
+        if c.notesApart { hosts.append(c.forNotes.base?.host) }
         if c.hasVoices { hosts.append(c.voiceBase?.host) }
         hosts.append(settings.sentenceConfig?.base?.host)
         hosts.append(settings.speechConfig?.hearBase?.host)
         hosts.append(settings.audioConfig?.base?.host)
-        let set = Set(hosts.compactMap { $0 })
-        return set.count == 1 ? set.first! : L("你填的地址")
+        var seen: [String] = []
+        for h in hosts.compactMap({ $0 }) where !seen.contains(h) { seen.append(h) }
+        if seen.count == 2 { return L("\(seen[0]) 和 \(seen[1])") }
+        return seen.count == 1 ? seen[0] : L("你填的地址")
     }
 
     private var textHost: String { AIProvider.customBase(baseDraft)?.host ?? settings.aiConfig.base?.host ?? "" }
 
+    /// "192.168.1.20 · qwen-mt-turbo", then the notes' model, or their own server after a bar.
+    private var textDetail: String {
+        let c = settings.aiConfig
+        let model = settings.aiModels["custom"] ?? ""
+        if textHost.isEmpty || model.isEmpty { return L("填上地址和模型") }
+        let line = "\(textHost) · \(model)"
+        guard c.notesApart else { return line }
+        let n = c.forNotes
+        if let host = n.base?.host, n.base != c.base { return line + " ｜ \(host) · \(n.textModel)" }
+        return n.textModel == model ? line : line + " · \(n.textModel)"
+    }
+
     @ViewBuilder private var textSection: some View {
         let check = ling.aiCheck
-        let model = settings.aiModels["custom"] ?? ""
-        let detail = textHost.isEmpty || model.isEmpty ? L("填上地址和模型") : "\(textHost) · \(model)"
+        let notesDown = check.failure == nil && check.notesFailed
         let trailing: String? = check.running ? L("正在检查…") : check.failure != nil && ling.hasKey ? statusTitle
+            : notesDown ? L("纪要写不了")
             : check.translate.map { L("翻一句 \(String(format: "%.1f", $0.seconds)) 秒") }
-        sectionHeader("text", title: L("翻译和纪要"), detail: detail, dot: customTextDot, trailing: trailing,
-                      trailingColor: check.slow ? Palette.warn : check.failure != nil ? Palette.error : Palette.tertiary)
+        sectionHeader("text", title: L("翻译和纪要"), detail: textDetail, dot: customTextDot, trailing: trailing,
+                      trailingColor: check.failure != nil || notesDown ? Palette.error : check.slow ? Palette.warn : Palette.tertiary)
         if open.contains("text") {
             VStack(alignment: .leading, spacing: 8) {
+                groupTitle(L("翻译"))
                 field(L("地址"), "http://192.168.1.20:8000/v1", $baseDraft)
                 if !baseDraft.isEmpty, AIProvider.customBase(baseDraft) == nil {
                     Text("地址要用 https；这台 Mac 和局域网里的服务可以用 http。").font(.system(size: 11)).foregroundStyle(Palette.error)
@@ -205,30 +223,9 @@ struct AISettingsView: View {
                     localNetworkNote(baseDraft)
                 }
                 HStack(spacing: 8) {
-                    Text("模型").font(.system(size: 12)).foregroundStyle(Palette.secondary).frame(minWidth: 34, alignment: .leading).fixedSize()
-                    if ling.catalog.isEmpty {
-                        TextField(L("例如 qwen3:14b"), text: $textDraft)
-                            .textFieldStyle(.plain).font(.system(size: 13, design: .monospaced))
-                            .padding(.horizontal, 12).frame(height: 32)
-                            .background(RoundedRectangle(cornerRadius: 9).fill(Color.white))
-                            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Palette.line, lineWidth: 1))
-                            .onSubmit(save)
-                    } else {
-                        // The models the service lists: picking one saves and checks it.
-                        ModelMenu(value: textDraft, recommended: [], catalog: ling.catalog) {
-                            textDraft = $0
-                            save()
-                        }
-                        Spacer()
-                    }
-                }
-                HStack(spacing: 8) {
-                    Text("key").font(.system(size: 12)).foregroundStyle(Palette.secondary).frame(minWidth: 34, alignment: .leading).fixedSize()
+                    fieldLabel("key")
                     if let key = ling.key, !key.isEmpty, !editing {
-                        Text(AIKey.masked(key)).font(.system(size: 13, design: .monospaced)).foregroundStyle(Palette.ink)
-                            .padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
-                            .background(RoundedRectangle(cornerRadius: 9).fill(Color.white))
-                            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Palette.line, lineWidth: 1))
+                        maskedKey(key)
                         SoftButton(L("更换")) { draft = ""; editing = true }
                     } else {
                         SecureField(keyPlaceholder, text: $draft)
@@ -238,11 +235,25 @@ struct AISettingsView: View {
                             .overlay(RoundedRectangle(cornerRadius: 9).stroke(Palette.line, lineWidth: 1))
                             .onSubmit(save)
                     }
-                    SoftButton(check.running ? L("正在检查…") : L("保存并检查"), dark: true, action: save)
-                        .disabled(check.running)
                 }
                 if let hint = keyHint {
                     Text(hint.text).font(.system(size: 12)).foregroundStyle(Palette.error).fixedSize(horizontal: false, vertical: true)
+                }
+                HStack(spacing: 8) {
+                    fieldLabel(L("模型"))
+                    // The models the service lists; a name it doesn't list can be typed. Picking saves and checks.
+                    ModelPicker(value: textDraft, placeholder: L("例如 qwen3:14b"), catalog: ling.catalog, host: textHost,
+                                refetch: { Task { await ling.fetchCatalog() } }) {
+                        textDraft = $0
+                        save()
+                    }
+                }
+                Divider().padding(.vertical, 4)
+                notesGroup
+                HStack {
+                    Spacer()
+                    SoftButton(check.running ? L("正在检查…") : L("保存并检查"), dark: true, action: save)
+                        .disabled(check.running)
                 }
                 if let slow = check.slowLine(googleOff: settings.aiCustomOnly) {
                     Text(slow).font(.system(size: 12)).foregroundStyle(Palette.warn).fixedSize(horizontal: false, vertical: true)
@@ -252,12 +263,126 @@ struct AISettingsView: View {
                         .padding(.horizontal, 12).padding(.vertical, 2)
                         .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
                         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.line, lineWidth: 1))
+                } else if check.passed, settings.aiConfig.notesApart, let t = check.translate {
+                    checkRows(t)
                 } else if check.passed {
                     Text(textFacts).font(.system(size: 11)).foregroundStyle(Palette.tertiary)
                 }
             }
             .padding(.leading, 34).padding(.trailing, 16).padding(.bottom, 14)
         }
+    }
+
+    /// 纪要: the same service as translation (another model at most), or another one with its own
+    /// address and key. Switching back keeps what was typed.
+    @ViewBuilder private var notesGroup: some View {
+        let c = settings.aiConfig
+        let own = settings.aiCustomNotesOwn
+        let notesHost = c.forNotes.base?.host ?? textHost
+        // "给它单独填一个" only where a key of its own can be given (另一个服务).
+        let shared = own && !ling.notesHasOwnKey
+        HStack {
+            groupTitle(L("纪要"))
+            Spacer()
+            Segments(options: [("same", L("同一个服务")), ("own", L("另一个服务"))], value: own ? "own" : "same") {
+                settings.aiCustomNotesOwn = $0 == "own"
+                model.applyAIService()
+            }
+        }
+        if own {
+            CommitField(label: L("地址"), placeholder: L("跟上面一样"), value: settings.aiCustomNotesBase) {
+                settings.aiCustomNotesBase = $0
+                model.applyAIService()
+            }
+            if c.notesBadAddress {
+                Text("地址要用 https；这台 Mac 和局域网里的服务可以用 http。").font(.system(size: 11)).foregroundStyle(Palette.error)
+                    .padding(.leading, 42)
+            } else {
+                localNetworkNote(settings.aiCustomNotesBase)
+            }
+            HStack(spacing: 8) {
+                fieldLabel("key")
+                if let key = ling.notesKey, ling.notesHasOwnKey, !key.isEmpty, !editingNotesKey {
+                    maskedKey(key)
+                    SoftButton(L("更换")) { notesKeyDraft = ""; editingNotesKey = true }
+                    SoftButton(L("移除")) { ling.removeNotesKey() }
+                } else {
+                    SecureField(L("不填就用上面的 key"), text: $notesKeyDraft)
+                        .textFieldStyle(.plain).font(.system(size: 13, design: .monospaced))
+                        .padding(.horizontal, 12).frame(height: 30)
+                        .background(RoundedRectangle(cornerRadius: 9).fill(Color.white))
+                        .overlay(RoundedRectangle(cornerRadius: 9).stroke(
+                            ling.aiCheck.notes?.reason == .invalidKey ? Palette.error : Palette.line, lineWidth: 1))
+                        .onSubmit(save)
+                }
+            }
+        }
+        HStack(spacing: 8) {
+            fieldLabel(L("模型"))
+            ModelPicker(value: settings.aiModels["custom.notes"] ?? "", placeholder: L("和翻译模型一样"),
+                        sameLabel: L("和翻译模型一样"),
+                        catalog: c.forNotes.base != c.base ? ling.notesCatalog : ling.catalog, host: notesHost,
+                        refetch: { Task { c.forNotes.base != c.base ? await ling.fetchNotesCatalog() : await ling.fetchCatalog() } }) {
+                settings.aiModels["custom.notes"] = $0
+                model.applyAIService()
+            }
+        }
+        if let line = ling.aiCheck.notesLine(host: notesHost, model: c.forNotes.textModel, sharedKey: shared) {
+            Text(line).font(.system(size: 12)).foregroundStyle(Palette.error)
+                .fixedSize(horizontal: false, vertical: true).padding(.leading, 42)
+        } else {
+            Text("用来写实时纪要、识别说话人，默认和翻译用同一个").font(.system(size: 11)).foregroundStyle(Palette.tertiary)
+                .fixedSize(horizontal: false, vertical: true).padding(.leading, 42)
+        }
+    }
+
+    /// After a check with notes apart: one row each, what it runs and how it did.
+    private func checkRows(_ t: AICheck.Speed) -> some View {
+        let c = settings.aiConfig
+        let notes = ling.aiCheck.notes
+        let notesText: String = switch notes {
+        case .ok(let s)?: L("能写纪要 · \(String(format: "%.1f", s)) 秒")
+        case .fail(.invalidKey, _)?, .fail(.mgmtKey, _)?: L("key 不对")
+        case .fail(.noJSON, _)?: L("纪要写不了")
+        case .fail?: L("纪要写不了")
+        case .running?: L("正在检查…")
+        case nil: ""
+        }
+        return VStack(spacing: 0) {
+            checkRow(L("翻译"), c.textModel, ok: true,
+                     L("翻一句 \(String(format: "%.1f", t.seconds)) 秒") + " · " + (t.thinks ? L("会先思考") : L("不思考")))
+            Divider()
+            checkRow(L("纪要"), c.forNotes.textModel, ok: notes?.reason == nil, notesText)
+        }
+        .padding(.horizontal, 12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.line, lineWidth: 1))
+    }
+
+    private func checkRow(_ use: String, _ model: String, ok: Bool, _ result: String) -> some View {
+        HStack(spacing: 10) {
+            Circle().fill(ok ? Palette.ok : Palette.error).frame(width: 6, height: 6)
+            Text(use).font(.system(size: 12)).foregroundStyle(Palette.ink).frame(minWidth: 34, alignment: .leading).fixedSize()
+            Text(model).font(.system(size: 12, design: .monospaced)).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 8)
+            Text(result).font(.system(size: 12).monospacedDigit()).foregroundStyle(ok ? Palette.ok : Palette.error).lineLimit(1).fixedSize()
+        }
+        .frame(minHeight: 36)
+    }
+
+    private func groupTitle(_ text: String) -> some View {
+        Text(text).font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.ink).frame(height: 22)
+    }
+
+    private func fieldLabel(_ text: String) -> some View {
+        Text(text).font(.system(size: 12)).foregroundStyle(Palette.secondary).frame(minWidth: 34, alignment: .leading).fixedSize()
+    }
+
+    private func maskedKey(_ key: String) -> some View {
+        Text(AIKey.masked(key)).font(.system(size: 13, design: .monospaced)).foregroundStyle(Palette.ink)
+            .padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 9).fill(Color.white))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Palette.line, lineWidth: 1))
     }
 
     private var model_: AppModel { model }
@@ -274,7 +399,7 @@ struct AISettingsView: View {
         if !ling.hasKey { return Color(white: 0.75) }
         if check.running { return Palette.accent }
         if check.failure != nil { return Palette.error }
-        if check.slow || check.busy { return Palette.warn }
+        if check.slow || check.busy || check.notesFailed { return Palette.warn }
         return check.passed ? Palette.ok : Color(white: 0.75)
     }
 
@@ -460,9 +585,22 @@ struct AISettingsView: View {
     }
 
     private var lockLine: String {
-        let host = provider.id == .custom ? (settings.aiConfig.base?.host ?? L("你填的地址")) : (provider.base?.host ?? "")
+        let host = provider.id == .custom ? keyHosts : (provider.base?.host ?? "")
         return provider.id == .custom ? L("key 只存在这台 Mac 上（只有你的账户能读），只发给 \(host)")
             : L("只存在这台 Mac 上（只有你的账户能读），只发给 \(name)（\(host)）")
+    }
+
+    /// Where the custom service's key is sent: every use's address, the notes' only while they share it.
+    private var keyHosts: String {
+        let c = settings.aiConfig
+        var hosts = [c.base?.host]
+        if c.notesApart, !ling.notesHasOwnKey { hosts.append(c.forNotes.base?.host) }
+        if c.hasVoices { hosts.append(c.voiceBase?.host) }
+        if c.transcribes { hosts.append(c.hearBase?.host) }
+        var seen: [String] = []
+        for h in hosts.compactMap({ $0 }) where !seen.contains(h) { seen.append(h) }
+        if seen.count == 2 { return L("\(seen[0]) 和 \(seen[1])") }
+        return seen.count == 1 ? seen[0] : L("你填的地址")
     }
 
     /// Saves what was typed (a custom service's address and model too), then checks.
@@ -471,6 +609,13 @@ struct AISettingsView: View {
             settings.aiCustomBase = baseDraft.trimmingCharacters(in: .whitespaces)
             settings.aiModels["custom"] = textDraft.trimmingCharacters(in: .whitespaces)
             model.applyAIService()
+            // Notes' own key (另一个服务): saved here too; it goes only to the notes' address.
+            let nk = notesKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !nk.isEmpty, settings.aiCustomNotesOwn {
+                notesKeyDraft = ""
+                editingNotesKey = false
+                Task { await ling.setNotesKey(nk) }
+            }
         }
         let k = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         keyHint = nil
@@ -600,7 +745,13 @@ struct AISettingsView: View {
         } else {
             usageRow(L("你自己的声音"), tag: L("只有 Ling"), style: .ling, note: L("换用 Ling 才有"))
         }
-        if settings.speechServer {
+        if settings.speechBuiltIn {
+            // The engine inside the app: ready once its model is on disk.
+            let m = EngineModel.named(settings.speechEngineModel)
+            let ready = model.engine.installed(m)
+            usageRow(L("语音识别"), tag: ready ? L("内置") : L("还没下载"), style: ready ? .ok : .off,
+                     note: ready ? L("下一场会议起用 \(m.name)，声音不出这台 Mac") : L("下载模型后可用"), divider: false)
+        } else if settings.speechServer {
             // The user's own speech server: ready once a second of audio went through it.
             let ready = speech.usable && speech.aiCheck.passed && speech.aiCheck.hear?.ok == true
             let unset = settings.speechConfig?.transcribes != true
@@ -797,6 +948,130 @@ struct ModelMenu: View {
         let other = L("其他")
         let by = Dictionary(grouping: ids) { $0.contains("/") ? String($0.prefix { $0 != "/" }) : other }
         return by.keys.sorted().map { ($0, by[$0]!.sorted()) }
+    }
+}
+
+/// A custom service's model: the names its `/models` lists, searchable, and any name typed that it
+/// doesn't list (an alias, a model it hides). Without a list it is a plain field.
+struct ModelPicker: View {
+    let value: String
+    let placeholder: String
+    /// A first choice that clears the value ("和翻译模型一样"); nil: none.
+    var sameLabel: String? = nil
+    let catalog: [String]
+    /// The address the list came from, for the line under it.
+    let host: String
+    let refetch: () -> Void
+    let onPick: (String) -> Void
+    @State private var open = false
+    @State private var query = ""
+    @State private var typed = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        if catalog.isEmpty {
+            HStack(spacing: 8) {
+                TextField(sameLabel ?? placeholder, text: $typed)
+                    .textFieldStyle(.plain).font(.system(size: 13, design: .monospaced))
+                    .padding(.horizontal, 12).frame(height: 32)
+                    .background(RoundedRectangle(cornerRadius: 9).fill(Color.white))
+                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(Palette.line, lineWidth: 1))
+                    .focused($focused)
+                    .onSubmit(commitTyped)
+                    .onChange(of: focused) { _, now in if !now { commitTyped() } }
+                    .help(L("这个地址没列出模型，直接填名字"))
+                if !host.isEmpty { SoftButton(L("重新获取"), action: refetch) }
+            }
+            .onAppear { typed = value }
+            .onChange(of: value) { _, v in typed = v }
+        } else {
+            Button { query = ""; open = true } label: {
+                HStack(spacing: 6) {
+                    Text(value.isEmpty ? (sameLabel ?? L("选一个")) : value)
+                        .font(value.isEmpty ? .system(size: 13) : .system(size: 13, design: .monospaced))
+                        .foregroundStyle(value.isEmpty ? Palette.secondary : Palette.ink).lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 6)
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(Palette.secondary)
+                }
+                .padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 32)
+                .background(RoundedRectangle(cornerRadius: 9).fill(Color.white))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(open ? Palette.ink : Palette.line, lineWidth: 1))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $open, arrowEdge: .bottom) { list }
+        }
+    }
+
+    private var matches: [String] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        return q.isEmpty ? catalog : catalog.filter { $0.localizedCaseInsensitiveContains(q) }
+    }
+
+    private var list: some View {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Palette.tertiary)
+                TextField(L("搜索或输入模型"), text: $query)
+                    .textFieldStyle(.plain).font(.system(size: 12, design: .monospaced))
+                    .onSubmit {
+                        // Return: the only match, else exactly what was typed.
+                        let m = matches
+                        if m.count == 1 { pick(m[0]) } else if !q.isEmpty { pick(q) }
+                    }
+            }
+            .padding(.horizontal, 10).frame(height: 32)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if !q.isEmpty, !catalog.contains(q) {
+                        row(L("用 \(q)（列表里没有）"), selected: false, mono: false) { pick(q) }
+                        Divider().padding(.vertical, 4)
+                    }
+                    if let sameLabel, q.isEmpty {
+                        row(sameLabel, selected: value.isEmpty, mono: false) { pick("") }
+                        Divider().padding(.vertical, 4)
+                    }
+                    ForEach(matches, id: \.self) { id in row(id, selected: id == value, mono: true) { pick(id) } }
+                }
+                .padding(4)
+            }
+            .frame(maxHeight: 280)
+            Divider()
+            HStack {
+                Text(L("\(host) 列出 \(catalog.count) 个模型")).font(.system(size: 11)).foregroundStyle(Palette.tertiary)
+                Spacer()
+                Button(L("重新获取"), action: refetch).buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Palette.link)
+            }
+            .padding(.horizontal, 10).frame(height: 28)
+        }
+        .frame(width: 320)
+    }
+
+    private func row(_ text: String, selected: Bool, mono: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold)).opacity(selected ? 1 : 0)
+                Text(text).font(mono ? .system(size: 12, design: .monospaced) : .system(size: 12)).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(Palette.ink)
+            .padding(.horizontal, 8).frame(height: 26)
+            .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Palette.fill : Color.clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func pick(_ id: String) {
+        open = false
+        if id != value { onPick(id) }
+    }
+
+    private func commitTyped() {
+        let t = typed.trimmingCharacters(in: .whitespaces)
+        if t != value { onPick(t) }
     }
 }
 

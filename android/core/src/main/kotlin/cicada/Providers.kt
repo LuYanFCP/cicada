@@ -66,6 +66,9 @@ object Providers {
 
     fun named(raw: String?): Provider = ALL.firstOrNull { it.id == raw } ?: LING
 
+    /// The custom service's notes model in `aiModels` (the Mac's key): empty is the translation model.
+    const val NOTES_MODEL = "custom.notes"
+
     /// This phone itself: a model running in Termux, say.
     fun isLocal(hostOrUrl: String): Boolean = host(hostOrUrl) in listOf("localhost", "127.0.0.1", "::1")
 
@@ -123,8 +126,17 @@ object Providers {
             val name = s.aiCustomVoice.trim()
             // The hear model may run on its own server (an omni model beside a text one): empty is the same address.
             val hearBase = if (s.aiCustomHearBase.isNotBlank()) customBase(s.aiCustomHearBase) else base
-            return AIConfig(p, base, s.aiModels["custom"]?.trim().orEmpty(), s.aiHearModels["custom"]?.trim().orEmpty(),
-                            voice.ifEmpty { null }, if (voice.isNotEmpty()) voiceBase else null, name.ifEmpty { null }, hearBase)
+            // Notes (实时纪要, 说话人) may use another model, and with 另一个服务 another server: empty
+            // is translation's. 同一个服务 keeps the typed address but doesn't use it.
+            val textModel = s.aiModels["custom"]?.trim().orEmpty()
+            val notesModel = s.aiModels[NOTES_MODEL]?.trim().orEmpty()
+            val notesAddress = if (s.aiCustomNotesOwn) s.aiCustomNotesBase.trim() else ""
+            val notesBase = if (notesAddress.isEmpty()) null else customBase(notesAddress)
+            return AIConfig(p, base, textModel, s.aiHearModels["custom"]?.trim().orEmpty(),
+                            voice.ifEmpty { null }, if (voice.isNotEmpty()) voiceBase else null, name.ifEmpty { null }, hearBase,
+                            notesModel = notesModel.takeIf { it.isNotEmpty() && it != textModel },
+                            notesBase = notesBase.takeIf { it != base }, notesOwnService = s.aiCustomNotesOwn,
+                            notesBadAddress = notesAddress.isNotEmpty() && notesBase == null)
         }
         return AIConfig(p, p.base, s.aiModels[p.id]?.ifBlank { null } ?: p.textModels[0].id,
                         s.aiHearModels[p.id]?.ifBlank { null } ?: p.hearModels[0].id,
@@ -169,7 +181,23 @@ class AIConfig(
     val customVoice: String? = null,
     /** Where the hear model is asked (a custom service may name its own; null: not a valid address). */
     val hearBase: String? = base,
+    /** A custom service's notes (实时纪要, 说话人): another model, and with 另一个服务 another server
+     *  with its own key. Null: the same as translation. */
+    val notesModel: String? = null,
+    val notesBase: String? = null,
+    /** 另一个服务 is picked: notes use their own key file when there is one. */
+    val notesOwnService: Boolean = false,
+    /** 另一个服务 with an address that can't be used (http to the internet): notes fail the check. */
+    val notesBadAddress: Boolean = false,
 ) {
+    /// Notes go somewhere translation doesn't: they get their own check, result and start gate.
+    val notesApart get() = provider.id == "custom" && (notesModel != null || notesBase != null || notesOwnService)
+
+    /// What a notes call is sent with: notes' model at notes' address, the rest as translation.
+    val forNotes: AIConfig get() = if (!notesApart) this else
+        AIConfig(provider, notesBase ?: base, notesModel ?: textModel, hearModel, voiceModel, voiceBase, customVoice, hearBase,
+                 notesModel, notesBase, notesOwnService, notesBadAddress)
+
     val isLing get() = provider.id == "ling"
     val hasVoices get() = voiceModel != null && voiceBase != null
 

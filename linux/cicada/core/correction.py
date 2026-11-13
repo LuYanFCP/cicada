@@ -53,6 +53,22 @@ def label(f) -> tuple:
     cf, ct = core(f.from_, f.to)
     return (f.from_, f.to) if not cf or not ct else (cf, ct)
 
+def word(s: str, text: str) -> int:
+    """Where `s` stands as words of its own in `text` (its offset, or -1): a Latin edge of it never runs
+    on into a Latin word around it. `core` pads a fix to two characters, so the word list learned
+    "S平 → X平", which matched inside "iOS平台" and made it "iOX平台"."""
+    if not s:
+        return -1
+    i = text.find(s)
+    while i >= 0:
+        before = text[i - 1] if i > 0 else ""
+        after = text[i + len(s)] if i + len(s) < len(text) else ""
+        if not (_word(s[0]) and before and _word(before)) and not (_word(s[-1]) and after and _word(after)):
+            return i
+        i = text.find(s, i + 1)
+    return -1
+
+
 def apply(fixes: list, src: str) -> tuple:
     """The line as shown: each applied fix replaces its words where they still are. The marks are the
     replaced words as (start, end) character offsets into the text, for the underline."""
@@ -63,7 +79,9 @@ def apply(fixes: list, src: str) -> tuple:
     for f in ordered:
         if not f.applied or not f.from_:
             continue
-        start = text.find(f.from_)
+        start = word(f.from_, text)
+        if start < 0:
+            start = text.find(f.from_)
         if start < 0:
             continue
         delta = len(f.to) - len(f.from_)
@@ -110,10 +128,23 @@ def decide(e: Edit, known, rejected) -> str:
     if latin_from and latin_to and cf.isascii() and ct.isascii() and e.confidence >= SPELLING_AT \
             and cf.lower() != ct.lower() and distance(cf.lower(), ct.lower()) <= 2:
         return APPLY
-    # A new name (Chinese heard as a Latin name, or a respelled one): sound can't check it.
-    if latin_to and e.confidence >= ASK_AT:
+    # A new name (Chinese heard as a Latin name, or a respelled one): sound can't check it. A
+    # name has a capital or a digit; "X平台 → X platform" is a translation, and one 对 to it
+    # taught the word list 平台 → platform, which then rewrote every 平台 in the meeting.
+    if latin_to and e.confidence >= ASK_AT and name_shaped(ct):
         return ASK
     return DROP
+
+
+def name_shaped(s: str) -> bool:
+    """Latin text that could be a name: a capital or a digit in it (Morpho, GPT4o), not "platform"."""
+    return any(c.isascii() and (c.isupper() or c.isdigit()) for c in s)
+
+
+def translation(heard: str, word: str) -> bool:
+    """A Chinese word "fixed" into a plain English one (平台 → platform): a translation, not a
+    misheard name."""
+    return han(heard) and any(_latin_letter(c) for c in word) and word.isascii() and not name_shaped(word)
 
 
 def _latin_letter(c: str) -> bool:

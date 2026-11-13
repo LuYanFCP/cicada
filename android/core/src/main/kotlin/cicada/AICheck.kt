@@ -24,7 +24,23 @@ data class AICheck(
     val balance: Double? = null,
     /** A custom service: how long one real sentence took, and whether the model thought first. */
     val translate: Speed? = null,
+    /** A custom service whose notes go to another model or server: how that one answered. Null
+     *  while notes use the translation model (then `steps` say it all). A notes failure doesn't
+     *  stop translation: `failure` and `passed` stay about translation. */
+    val notes: Notes? = null,
 ) {
+    sealed class Notes {
+        object Running : Notes() { override fun toString() = "running" }
+        data class Ok(val seconds: Double) : Notes() {
+            override fun toString() = "ok(${String.format(java.util.Locale.US, "%.1f", seconds)}s)"
+        }
+        data class Fail(val why: Reason, val code: Int? = null) : Notes() {
+            override fun toString() = "fail(${lower(why.name)}${code?.let { " $it" } ?: ""})"
+        }
+        val ok get() = this is Ok
+        val reason get() = (this as? Fail)?.why
+    }
+
     data class Speed(val seconds: Double, val thinks: Boolean) {
         /// A sentence that takes this long often misses the 6 s a translation is given
         /// (Translator.translate) and falls back to Google.
@@ -65,7 +81,9 @@ data class AICheck(
         return null
     }
 
-    val running get() = steps.any { it.state == State.Running }
+    val running get() = steps.any { it.state == State.Running } || notes == Notes.Running
+    /** Translation works but the notes' own model or server doesn't (a busy one fixes itself). */
+    val notesFailed get() = notes?.reason.let { it != null && it != Reason.Busy }
     val busy get() = steps.any { it.state == State.Busy }
     /** Every step passed (busy counts; a step nothing has tested yet does not block). */
     val passed get() = at != null && failure == null && !running
@@ -166,6 +184,23 @@ data class AICheck(
         else LF("翻一句要 %@ 秒，超过 6 秒会改用 Google。换一个更小的模型会快一些。", secs)
     }
 
+    /// The notes' own model or server's problem, in one sentence. `sharedKey`: notes use the
+    /// translation key, so a refused key wants one of their own.
+    fun notesLine(host: String, model: String, sharedKey: Boolean): String? {
+        val n = notes as? Notes.Fail ?: return null
+        return when (n.why) {
+            Reason.InvalidKey, Reason.MgmtKey ->
+                if (sharedKey) LF("%@ 不认上面的 key，给它单独填一个。", host) else LF("%@ 说这个 key 无效，可能没复制全，或已删除。", host)
+            Reason.Unreachable -> LF("这台手机访问不到 %@。", host)
+            Reason.BadAddress -> L("地址要用 https；这台手机和局域网里的服务可以用 http。")
+            Reason.NoCredit -> LF("%@ 账户余额不足。", host)
+            Reason.NoModel -> LF("%@ 上找不到 %@ 这个模型。", host, model)
+            Reason.NoJSON -> L("这个模型没按要求返回 JSON，写不了纪要。换一个通用模型。")
+            Reason.Deaf, Reason.Busy -> null
+            Reason.ServerError -> LF("%@ 暂时出错（HTTP %lld），稍后再试。", host, n.code ?: 0)
+        }
+    }
+
     /// The proxy line under "can't reach": what this phone's proxy looks like, and what to do.
     fun proxyLine(service: String, host: String): String? {
         if (failure?.reason != Reason.Unreachable) return null
@@ -197,7 +232,8 @@ data class AICheck(
         }
         return parts + (proxy?.let { " proxy=${lower(it.name)}" } ?: "") +
             (balance?.let { " balance=${String.format(java.util.Locale.US, "%.2f", it)}" } ?: "") + (if (passive) " passive" else "") +
-            (translate?.let { " translate=${String.format(java.util.Locale.US, "%.1f", it.seconds)}s${if (it.thinks) " thinks" else ""}" } ?: "")
+            (translate?.let { " translate=${String.format(java.util.Locale.US, "%.1f", it.seconds)}s${if (it.thinks) " thinks" else ""}" } ?: "") +
+            (notes?.let { " notes=$it" } ?: "")
     }
 
     companion object {

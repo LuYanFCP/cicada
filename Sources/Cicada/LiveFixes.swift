@@ -106,8 +106,10 @@ final class LiveFixes: ObservableObject {
     private func known(in src: String, _ fixes: [LineFix]) -> [LineFix] {
         var out = fixes
         for t in vocabulary.terms {
-            // A heard form two words claim (两个都留) is never fixed silently.
-            for h in t.heard where h.count >= 2 && src.contains(h) && !refused.contains(Self.pair(h, t.word))
+            // A heard form two words claim (两个都留) is never fixed silently. A translation a yes taught
+            // before that was refused (平台 → platform) isn't either; one the user typed is.
+            for h in t.heard where h.count >= 2 && Correction.word(h, in: src) != nil && !refused.contains(Self.pair(h, t.word))
+                && (t.source == "user" || !Correction.translation(heard: h, word: t.word))
                 && vocabulary.owners(ofHeard: h, except: t.word).isEmpty {
                 if out.contains(where: { $0.from == h || ($0.applied && $0.from.contains(h)) || ($0.off == true && $0.from == h) }) { continue }
                 out.append(LineFix(from: h, to: t.word))

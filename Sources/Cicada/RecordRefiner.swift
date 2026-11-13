@@ -99,9 +99,12 @@ struct RecordRefiner {
         var j = m
         if freeTail { j = (0...m).min { d[n][$0] < d[n][$1] || d[n][$0] == d[n][$1] && $0 > $1 }! }
         // Walk back, noting the record position at each live position (the furthest one).
+        // `low`: the nearest one, before the record words inserted there.
         var at = Array(repeating: 0, count: n + 1)
+        var low = at
         var i = n
         at[n] = j
+        low[n] = j
         while i > 0 || j > 0 {
             if i > 0, j > 0, d[i][j] == d[i - 1][j - 1] + (Self.same(live[i - 1], record[j - 1]) ? 0 : 1) {
                 i -= 1; j -= 1
@@ -109,9 +112,11 @@ struct RecordRefiner {
                 i -= 1
             } else {
                 j -= 1
+                low[i] = j
                 continue
             }
             if at[i] == 0 { at[i] = j }
+            low[i] = j
         }
         var ends = bounds.map { b in at[b] }
         // The live lines were often cut mid-sentence for the subtitles: a line ends at the record's
@@ -119,13 +124,23 @@ struct RecordRefiner {
         // Otherwise it ends between words: Chinese comes one character per run, and "审 / 计" is no line end.
         let words = Self.wordStarts(record)
         let inside = HeardText.insideConnectives(record)
+        // A line the speaker ended a sentence on was not cut: its end is where the next voice may
+        // start, and the record often drops the "." ("lock that in" + " Okay,"): snapping there
+        // took the next speaker's word. It only takes the mark that ends its last word. Words the
+        // live recognizer lost between the two ("Friday." + " Great." + "Let's…") cost the same on
+        // either side: its "." is the record's first one there, and they start the next line.
+        let mark: (Character) -> Bool = { "。！？.!?".contains($0) }
         for k in ends.indices {
-            var e = Self.snap(ends[k], in: record)
+            let closed = lines[k].last.map(mark) ?? false
+            var e = ends[k]
+            if !closed { e = Self.snap(e, in: record) }
+            else if bounds[k] > 0, case let p = low[bounds[k] - 1], p < e - 1, mark(record[p]) { e = p + 1 }
             if e == ends[k], e > 0, e < m, !words.contains(e) {
                 let after = (e...m).first { words.contains($0) || $0 == m } ?? m
                 let before = (0...e).last { words.contains($0) } ?? 0
                 e = after - e <= e - before ? after : before
             }
+            if closed, e > 0, e < m, mark(record[e]) { e += 1 }
             // "所 / 以": the tokenizer splits some connectives; the line ends before the whole word.
             if let start = inside[e] { e = start }
             ends[k] = max(e, k > 0 ? ends[k - 1] : 0)

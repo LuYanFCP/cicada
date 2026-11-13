@@ -76,6 +76,16 @@ import Testing
         #expect(TranscriptExport.speakerName(line(4, nil, me: true), ["l4": 1]) == L("你 · 同传"))
     }
 
+    /// An imported file names nobody ("对方" means nothing there) until its voices are told apart.
+    @Test func importedFilesNameSpeakersOnceTold() {
+        var s = Session(id: "i", title: "t", startedAt: Date(), endedAt: nil, lines: [line(0, 1)], hasAudio: false)
+        s.sourceFile = "call.m4a"
+        #expect(!TranscriptExport.saysWho(s, [:]))
+        #expect(TranscriptExport.saysWho(s, ["l0": 1]))
+        s.sourceFile = nil
+        #expect(TranscriptExport.saysWho(s, [:]))
+    }
+
     private func named(_ voiceNames: [String: String]?) -> Session {
         let lines = (0..<5).map { line($0, 9) } + (5..<10).map { line($0, 4) } + [line(10, nil, me: true)]
         return Session(id: "s", title: "t", startedAt: Date(), endedAt: nil, lines: lines, hasAudio: false,

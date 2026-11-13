@@ -448,7 +448,8 @@ extension MenuPanelView {
 
 /// 打开麦克风 / 关闭麦克风, the same switch in the panel and the notes window. In the panel it is
 /// the dark button while off (the thing to do) and a quiet one while on; in the notes window's
-/// header it sits beside 结束 like it, tinted while the microphone is on.
+/// header it sits beside 结束 like it, tinted while the microphone is on. Its chevron picks the
+/// microphone, where the user is when the room sounds wrong rather than in Settings.
 struct MicButton: View {
     @ObservedObject var model: AppModel
     @ObservedObject var settings: AppSettings
@@ -456,22 +457,58 @@ struct MicButton: View {
 
     var body: some View {
         let on = model.micOn
-        Button { model.setMic(!on) } label: {
-            HStack(spacing: 5) {
-                Image(systemName: on ? "mic.fill" : "mic")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(on ? Palette.accent : (inHeader ? Palette.ink : Color.white))
-                Text(on ? L("关闭麦克风") : L("打开麦克风")).font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(!on && !inHeader ? Color.white : Palette.ink)
-                    .lineLimit(1).fixedSize()
+        HStack(spacing: 0) {
+            Button { model.setMic(!on) } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: on ? "mic.fill" : "mic")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(on ? Palette.accent : (inHeader ? Palette.ink : Color.white))
+                    Text(on ? L("关闭麦克风") : L("打开麦克风")).font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(ink(on))
+                        .lineLimit(1).fixedSize()
+                }
+                .padding(.leading, inHeader ? 10 : 12).padding(.trailing, 7).frame(height: 28)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, inHeader ? 10 : 12).frame(height: 28)
-            .background(RoundedRectangle(cornerRadius: 7).fill(background(on)))
-            .overlay(RoundedRectangle(cornerRadius: 7).stroke(border(on), lineWidth: 1))
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .accessibilityLabel(on ? L("关闭麦克风") : L("打开麦克风"))
+            Rectangle().fill(divider(on)).frame(width: 1, height: 14)
+            chooser(on)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(on ? L("关闭麦克风") : L("打开麦克风"))
+        .background(RoundedRectangle(cornerRadius: 7).fill(background(on)))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(border(on), lineWidth: 1))
+    }
+
+    /// The room's microphones, with 自动 first naming the one it would take. A chosen one that is
+    /// unplugged shows as 自动 until it is back.
+    private func chooser(_ on: Bool) -> some View {
+        let choices = AudioDevices.roomMicChoices()
+        let chosen = choices.contains { $0.device.uid == settings.roomMicUID } ? settings.roomMicUID : ""
+        let auto = AudioDevices.roomMic()?.name
+        return Menu {
+            Picker(L("会议室用哪个麦克风"), selection: Binding(get: { chosen }, set: { model.setRoomMic($0) })) {
+                Text(auto.map { L("自动（\($0)）") } ?? L("自动")).tag("")
+                ForEach(choices, id: \.device.uid) { c in
+                    // A headset hears its wearer, not the table: fine for your own notes, so say it.
+                    Text(c.bluetooth ? L("\(c.device.name)（只听得到戴的人）") : c.device.name).tag(c.device.uid)
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
+                .foregroundStyle(ink(on).opacity(0.75))
+                .frame(width: 24, height: 28).contentShape(Rectangle())
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .accessibilityLabel(L("选择麦克风"))
+        .help(L("选择麦克风"))
+    }
+
+    private func ink(_ on: Bool) -> Color { !on && !inHeader ? Color.white : Palette.ink }
+
+    private func divider(_ on: Bool) -> Color {
+        if inHeader { return on ? Palette.accent.opacity(0.25) : Palette.line }
+        return on ? Palette.line : Color.white.opacity(0.25)
     }
 
     private func background(_ on: Bool) -> Color {
@@ -804,6 +841,7 @@ struct MainWindowView: View {
     @State private var editingLine: String?
     @State private var editingStart = ""
     @State private var hoveredLine: String?
+    @State private var wordClick = WordClick()
 
     /// Wide enough for the notes and the bilingual transcript side by side.
     private var sideBySide: Bool { showQuotes && wideEnough }
@@ -855,6 +893,15 @@ struct MainWindowView: View {
         .onChange(of: store.liveID) { _, _ in loadPlayer() }
         // Opened afresh: a file opened before the room was mixed in (#19) would play one side only.
         .onChange(of: store.audioFinished) { _, id in if id == current?.id { player.unload(); loadPlayer() } }
+        // A click on a line's words: its selectable text takes the mouse before the row's tap.
+        .onAppear {
+            wordClick.install(line: { hoveredLine.flatMap { id in editingLine == id ? nil : id } }) { id in
+                guard let s = current, player.sessionID == s.id, player.ready,
+                      let l = s.lines.first(where: { $0.id == id }) else { return }
+                player.play(from: l.t)
+            }
+        }
+        .onDisappear { wordClick.remove() }
         .onReceive(NotificationCenter.default.publisher(for: .debugPlay)) { n in
             if let t = n.object as? Double { player.play(from: t) }
         }
@@ -1038,6 +1085,15 @@ struct MainWindowView: View {
                     transcript(s)
                 }
                 if s.id == store.liveID { liveNow }
+                // Under the page, not in its header: the controls stay while the transcript scrolls.
+                if player.sessionID == s.id, s.id != store.liveID, player.ready || player.missing {
+                    RecordingPlayerBar(player: player)
+                        .frame(maxWidth: 680, alignment: .leading)
+                        .padding(.horizontal, 40).padding(.vertical, 10)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.white)
+                        .overlay(alignment: .top) { Rectangle().fill(Self.hairline).frame(height: 1) }
+                }
             }
             .onChange(of: s.id) { _, _ in pinned = false }
             .onChange(of: tab) { _, _ in pinned = false }
@@ -1225,6 +1281,7 @@ struct MainWindowView: View {
                     .help(([dateLine(s, live: live)] + more.compactMap { $0 }).joined(separator: " · "))
             }
             RecordTitleField(session: s, store: store).id(s.id).padding(.top, 8)
+            if !live { FolderExportLine(exporter: model.folderExport, model: model, session: s).padding(.top, 8) }
             if s.sourcePath != nil {
                 VStack(alignment: .leading, spacing: 12) {
                     if s.fromRecording, s.lines.isEmpty || s.importing == true, !working(s) {
@@ -1232,15 +1289,12 @@ struct MainWindowView: View {
                     } else {
                         ImportStatusStrip(model: model, importer: importer, session: s)
                     }
-                    if player.sessionID == s.id { RecordingPlayerBar(player: player) }
                 }
                 .padding(.top, 16)
             } else if live {
                 if settings.recordAudio {
                     Text("会议结束后可以回放录音").font(.system(size: 12)).foregroundStyle(Palette.tertiary).padding(.top, 10)
                 }
-            } else if player.sessionID == s.id {
-                RecordingPlayerBar(player: player).padding(.top, 16)
             } else if !s.hasAudio, !s.lines.isEmpty {
                 HStack(spacing: 4) {
                     Text("这场会议没存录音 ·").foregroundStyle(Palette.tertiary)
@@ -1364,15 +1418,46 @@ struct MainWindowView: View {
                 if pinned { pinnedBar(s) { withAnimation { proxy.scrollTo(PinnedHeader.top, anchor: .top) } } }
             }
             .animation(.easeOut(duration: 0.15), value: pinned)
+            .onUserScroll(ownSince: { player.ownScroll }) { if player.sessionID == s.id { player.userScrolled() } }
             .overlay(alignment: .bottom) { FixToast(fixes: model.fixes).padding(.bottom, 18) }
+            .overlay(alignment: .bottom) {
+                // Scrolled away from what is playing: one way back.
+                if player.sessionID == s.id, !player.following, let id = player.lineID(in: s),
+                   let l = s.lines.first(where: { $0.id == id }) {
+                    Button { player.follow() } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "waveform").font(.system(size: 11, weight: .semibold))
+                            Text(L("回到正在播放") + " · " + TranscriptExport.clock(l.t))
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundStyle(.white).padding(.horizontal, 16).frame(height: 34)
+                        .background(Capsule().fill(Palette.ink))
+                        .shadow(color: Palette.ink.opacity(0.18), radius: 10, y: 4)
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain).linkPointer()
+                    .padding(.bottom, 16)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: player.following)
             .onChange(of: s.lines.count) { _, _ in
                 if s.id == store.liveID, let last = s.lines.last {
                     withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
             }
-            // The transcript follows the recording while it plays.
+            // The transcript follows the recording while it plays, until scrolled by hand.
             .onChange(of: player.lineID(in: s)) { _, id in
-                if player.playing, let id { withAnimation { proxy.scrollTo(id, anchor: .center) } }
+                if player.playing, player.following, let id {
+                    player.ownScroll = Date()
+                    withAnimation { proxy.scrollTo(id, anchor: .center) }
+                }
+            }
+            .onChange(of: player.following) { _, on in
+                if on, let id = player.lineID(in: s) {
+                    player.ownScroll = Date()
+                    withAnimation { proxy.scrollTo(id, anchor: .center) }
+                }
             }
             .onAppear {
                 if let t = jumpTo, let l = s.lines.first(where: { $0.t >= t - 1 }) { proxy.scrollTo(l.id, anchor: .top) }
@@ -1383,14 +1468,19 @@ struct MainWindowView: View {
 
     private func lineRow(_ l: TranscriptLine, speaker: Int? = nil, label: Bool = true, voices: Bool = false, place: Bool = false, in shownSession: Session? = nil, current: Bool = false) -> some View {
         let me = l.speaker == "me"
+        let playable = shownSession.map { player.sessionID == $0.id && player.ready } ?? false
+        let hovered = playable && hoveredLine == l.id && editingLine != l.id
         return HStack(alignment: .top, spacing: 16) {
-            if let shownSession, player.sessionID == shownSession.id, player.ready {
-                // The recording plays from this line.
+            if playable {
+                // The recording plays from this line (so does a click anywhere on it).
                 Button { player.play(from: l.t) } label: {
-                    Text(TranscriptExport.clock(l.t))
-                        .font(.system(size: 12, weight: current ? .semibold : .regular).monospacedDigit())
-                        .foregroundStyle(current ? Palette.accent : Palette.link)
-                        .frame(width: 52, alignment: .leading).padding(.top, 1).contentShape(Rectangle())
+                    HStack(spacing: 3) {
+                        if hovered { Image(systemName: "play.fill").font(.system(size: 8)) }
+                        Text(TranscriptExport.clock(l.t))
+                            .font(.system(size: 12, weight: current || hovered ? .semibold : .regular).monospacedDigit())
+                    }
+                    .foregroundStyle(current || hovered ? Palette.accent : Palette.link)
+                    .frame(width: 52, alignment: .leading).padding(.top, 1).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).help(L("从这里播放"))
             } else {
@@ -1444,12 +1534,18 @@ struct MainWindowView: View {
                 }
             }
             Spacer(minLength: 0)
+            PlayingBars(on: current && player.playing).frame(width: 14).padding(.top, 4)
         }
+        // The padding is part of the line, so there is no dead strip between two lines.
+        .padding(.vertical, 12)
         .contentShape(Rectangle())
         .onHover { inside in if inside { hoveredLine = l.id } else if hoveredLine == l.id { hoveredLine = nil } }
-        .padding(.vertical, 12)
-        // The line the recording is playing.
-        .background(RoundedRectangle(cornerRadius: 10).fill(current ? Palette.accentPale : .clear).padding(.horizontal, -10))
+        // A click anywhere on the line plays from it; a drag selects text instead (a tap ends without moving).
+        .onTapGesture { if playable, editingLine != l.id { player.play(from: l.t) } }
+        // The line the recording is playing; a lighter fill under the pointer when a click would play it.
+        .background(RoundedRectangle(cornerRadius: 10).fill(current ? Palette.accentPale : hovered ? Palette.raised : .clear)
+            .padding(.horizontal, -10))
+        .animation(.easeOut(duration: 0.2), value: current)
     }
 }
 
@@ -1744,4 +1840,47 @@ extension Notification.Name {
     static let debugPlay = Notification.Name("cicada.debugPlay")
     /// Debug `shareSheet:<id>`: the 分享… sheet opens for that record (no id: it closes).
     static let debugShareSheet = Notification.Name("cicada.debugShareSheet")
+}
+
+/// A click on the words of a transcript line plays from it, as a click elsewhere on the line does:
+/// selectable text takes the mouse before SwiftUI's tap. A drag (selecting) or a double click
+/// (a word) does nothing; the time and 改这句… keep their own buttons.
+final class WordClick {
+    private var monitor: Any?
+
+    func install(line: @escaping () -> String?, play: @escaping (String) -> Void) {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { e in
+            guard e.clickCount == 1, let id = line(), Self.onText(e) else { return e }
+            // The text tracks the mouse until it is let go, and its mouse-up never reaches a
+            // monitor: look once that tracking is over.
+            let start = NSEvent.mouseLocation
+            Self.whenReleased(within: 1) {
+                let now = NSEvent.mouseLocation
+                guard hypot(now.x - start.x, now.y - start.y) < 3, line() == id else { return }
+                play(id)
+            }
+            return e
+        }
+    }
+
+    /// Once the button is up (a click, not a press held to select): checked every 50 ms.
+    private static func whenReleased(within seconds: Double, _ action: @escaping () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            if NSEvent.pressedMouseButtons & 1 == 0 { action() } else if seconds > 0.05 { whenReleased(within: seconds - 0.05, action) }
+        }
+    }
+
+    func remove() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+
+    /// The mouse went down on selectable text, not on a button or the row's empty space (which
+    /// the row's own tap handles).
+    private static func onText(_ e: NSEvent) -> Bool {
+        guard let content = e.window?.contentView,
+              let hit = content.hitTest(content.convert(e.locationInWindow, from: nil)) else { return false }
+        return hit is NSText || String(describing: type(of: hit)).contains("TextField")
+    }
 }

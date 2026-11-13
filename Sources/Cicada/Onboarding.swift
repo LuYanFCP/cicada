@@ -433,7 +433,7 @@ struct OnboardingView: View {
         HStack(spacing: 16) {
             // In the checklist, 先不用了 replaces 上一步, but only when speaking was turned on right here:
             // someone re-running the guide with it already on shouldn't have it switched off.
-            if step > 1 && !(step == 4 && model.onboardingSpeakSetup == true) {
+            if step > 1 && !(step == 4 && model.onboardingSpeakSetup == .checklist) {
                 Button("上一步") {
                     model.onboardingKeySkip = false
                     step -= 1
@@ -453,9 +453,9 @@ struct OnboardingView: View {
                 // The two cards above are the choice; nothing to confirm here.
                 EmptyView()
             case 4:
-                if model.onboardingSpeakSetup == true {
+                if model.onboardingSpeakSetup == .checklist {
                     Button("先不用了") {
-                        model.onboardingSpeakSetup = false
+                        model.onboardingSpeakSetup = .ask
                         model.enableSpeaking(false)
                     }
                     .buttonStyle(.plain).foregroundStyle(Palette.secondary)
@@ -587,7 +587,7 @@ struct OnboardingView: View {
                           badge: settings.target == "system" ? L("跟随系统") : nil, options: targetOptions) { model.targetSelection = $0 }
             }
             OnboardingNotesTeaser(ling: model.textAI, hearing: model.hearingAI, ready: model.hearingReady,
-                                  own: settings.speechServer || settings.audioUnderstanding)
+                                  own: settings.speechOwn || settings.audioUnderstanding)
         }
     }
 
@@ -605,7 +605,13 @@ struct OnboardingView: View {
     // MARK: Step 4: speaking, only for those who want it
 
     /// The checklist shows once speaking is on (or was already on); before that, a yes/no.
-    private var speakSetupShown: Bool { model.onboardingSpeakSetup ?? settings.speakEnabled }
+    private var speakSetupShown: Bool {
+        switch model.onboardingSpeakSetup {
+        case .followSetting: settings.speakEnabled
+        case .ask: false
+        case .checklist: true
+        }
+    }
 
     private var speaking: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -621,7 +627,7 @@ struct OnboardingView: View {
     private var speakChoice: some View {
         HStack(spacing: 14) {
             choiceCard(L("要，现在设置"), L("约 2 分钟，会装一个虚拟麦克风")) {
-                model.onboardingSpeakSetup = true
+                model.onboardingSpeakSetup = .checklist
                 model.enableSpeaking(true)
             }
             choiceCard(L("先不用"), L("以后在设置 › 同声传译里打开")) { step = Self.done }

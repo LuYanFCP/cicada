@@ -81,12 +81,13 @@ public sealed class Vocabulary
     }
 
     /// The user said yes to a fix (or added it): the word, and the form it was heard as. A pair
-    /// that isn't a word for a word (`Learnable`) adds the word only, or nothing.
+    /// that isn't a word for a word (`Learnable`) adds the word only, or nothing. A yes in a meeting
+    /// never teaches a translation (平台 → platform): it would rewrite that word everywhere after.
     public void Confirm(string heard, string word, string source = "live")
     {
         if (heard.Length > 0)
         {
-            if (Learnable(heard, word) is not { } l) return;
+            if (Learnable(heard, word) is not { } l || (source != "user" && Correction.Translation(l.Heard, l.Word))) return;
             (heard, word) = l;
         }
         lock (gate)

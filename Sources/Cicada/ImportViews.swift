@@ -14,8 +14,15 @@ final class RecordingPlayer: ObservableObject {
     /// The meeting's own recording rather than an imported file: 找不到录音, not 找不到原文件.
     @Published private(set) var own = false
     @Published private(set) var rate: Float = 1
+    /// The transcript keeps the playing line in view. Scrolling it by hand stops that until a line is
+    /// picked, the bar is dragged or 回到正在播放 is pressed: following would yank the page away.
+    @Published private(set) var following = true
+    /// When the transcript last scrolled itself to follow, so that scroll isn't taken for the user's.
+    var ownScroll = Date.distantPast
     private var player: AVPlayer?
     private var observer: Any?
+    /// The end of the recording: the time observer stops firing there, so it would still say playing.
+    private var ended: NSObjectProtocol?
 
     var ready: Bool { player != nil }
 
@@ -35,6 +42,9 @@ final class RecordingPlayer: ObservableObject {
         }
         let p = AVPlayer(url: url)
         player = p
+        ended = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: p.currentItem, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.playing = false }
+        }
         observer = p.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 4), queue: .main) { [weak self] t in
             MainActor.assumeIsolated {
                 guard let self, let p = self.player else { return }
@@ -53,6 +63,8 @@ final class RecordingPlayer: ObservableObject {
 
     func unload() {
         if let observer { player?.removeTimeObserver(observer) }
+        if let ended { NotificationCenter.default.removeObserver(ended) }
+        ended = nil
         player?.pause()
         observer = nil
         player = nil
@@ -60,8 +72,16 @@ final class RecordingPlayer: ObservableObject {
         playing = false
         missing = false
         own = false
+        following = true
         time = 0
     }
+
+    /// The transcript was scrolled by hand while it plays.
+    func userScrolled() {
+        if following, playing { following = false }
+    }
+
+    func follow() { following = true }
 
     func toggle() {
         guard let player else { return }
@@ -71,6 +91,7 @@ final class RecordingPlayer: ObservableObject {
 
     func play(from t: Double) {
         guard let player else { return }
+        debugLog("play from \(String(format: "%.1f", t))")
         seek(t)
         player.playImmediately(atRate: rate)
         playing = true
@@ -78,6 +99,7 @@ final class RecordingPlayer: ObservableObject {
 
     func seek(_ t: Double) {
         time = t
+        following = true
         player?.seek(to: CMTime(seconds: t, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
@@ -271,5 +293,29 @@ struct ImportDropOverlay: View {
         .background(Color.white.opacity(0.92))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Palette.ink.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])).padding(12))
         .allowsHitTesting(false)
+    }
+}
+
+/// Three bars that bounce beside the line the recording is playing; nothing while paused.
+struct PlayingBars: View {
+    var on: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if on {
+            TimelineView(.animation(paused: reduceMotion)) { tl in
+                let t = tl.date.timeIntervalSinceReferenceDate
+                HStack(alignment: .bottom, spacing: 2) {
+                    ForEach(0..<3, id: \.self) { i in
+                        let h = reduceMotion ? 0.7 : 0.35 + 0.65 * abs(sin(t * 3.5 + Double(i) * 0.9))
+                        Capsule().fill(Palette.accent).frame(width: 3, height: 12 * h)
+                    }
+                }
+                .frame(height: 12, alignment: .bottom)
+            }
+            .accessibilityHidden(true)
+        } else {
+            Color.clear.frame(height: 12)
+        }
     }
 }

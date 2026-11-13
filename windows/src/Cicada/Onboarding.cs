@@ -594,7 +594,7 @@ sealed class Onboarding : Window
         {
             Children =
             {
-                Numbered(Disc(1, cable), L("装一个虚拟麦克风"), L("VB-Cable，免费，Windows 会问一次是否允许"), cableControl),
+                Numbered(Disc(1, cable), L("装一个虚拟麦克风"), L("VB-Cable，免费，Windows 会问一次是否允许"), cableControl, cable ? SpeakerNote() : null),
                 Divider(),
                 Numbered(Disc(2), L("会议软件里，麦克风选 CABLE Output"), L("Teams、Zoom、腾讯会议都在“音频设置”里")),
                 Divider(),
@@ -603,6 +603,11 @@ sealed class Onboarding : Window
         });
         return Page(L("线上开会时要说外语吗？"), LF("按住%@说话，线上的人听到翻译后的声音。不需要可以跳过。", PushToTalk.Label), card);
     }
+
+    /// After the install: where the computer's sound plays, so nobody thinks Cicada took it.
+    FrameworkElement? SpeakerNote() =>
+        Endpoints.SpeakerIsCable() ? CableInstaller.SpeakerStrip(this, Render)
+        : Endpoints.Default(Endpoints.Flow.Render) is { } d ? Ui.Text(LF("电脑声音照常从 %@ 播放", d.Name), 13, Palette.Secondary) : null;
 
     void SpeakChanged() => Dispatcher.BeginInvoke(() => { if (step == 3 && IsLoaded) page.Content = SpeakStep(); });
 

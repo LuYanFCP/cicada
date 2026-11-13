@@ -135,6 +135,24 @@ class Correction(unittest.TestCase):
         self.assertEqual(verdict("Ero", "Euler", 0.85), ASK)
         self.assertEqual(verdict("莫纳", "Morpho", 0.7), DROP)
 
+    def test_learned_words_stay_whole(self):
+        """A learned "S平 → X平" never reaches into "iOS平台"; on its own it still applies."""
+        self.assertEqual(correction.word("S平", "iOS平台很好"), -1)
+        self.assertEqual(correction.word("A工", "DATA工具"), -1)
+        self.assertNotEqual(correction.word("S平", "在S平台上"), -1)
+        self.assertNotEqual(correction.word("S平", "iOS平台和S平台"), -1)
+        self.assertNotEqual(correction.word("莫拉", "解释这个莫拉的"), -1)
+        self.assertEqual(apply([LineFix("S平", "X平")], "iOS平台和S平台")[0], "iOS平台和X平台")
+
+    def test_translations_are_not_asked(self):
+        """A translation isn't a misheard name: one 对 to "X平台 → X platform" taught 平台 → platform."""
+        self.assertEqual(verdict("X平台", "X platform", 0.9), DROP)
+        self.assertEqual(verdict("平台", "platform", 0.95), DROP)
+        self.assertEqual(verdict("respons", "responsible", 0.85), DROP)
+        self.assertEqual(verdict("GPT四", "GPT4", 0.85), ASK)
+        self.assertTrue(correction.translation("平台", "platform"))
+        self.assertFalse(correction.translation("莫拉", "Morpho"))
+
     def test_confirmed_heard_form_is_applied(self):
         self.assertEqual(verdict("莫拉", "Morpho", 0.5, known=[("莫拉", "Morpho")]), APPLY)
         self.assertEqual(verdict("解释这个莫拉的", "解释这个Morpho的", 0.5, known=[("莫拉", "Morpho")]), APPLY)
@@ -238,6 +256,13 @@ class Vocab(Base):
         self.assertEqual((r.updated, r.added), (1, 0))
         self.assertEqual(len(v.terms), 1)
         self.assertTrue(v.knows("阿韦", "Aave"))
+
+    def test_a_yes_never_teaches_a_translation(self):
+        v = Vocabulary(None)
+        v.confirm("平台", "platform")
+        self.assertEqual(v.terms, [])
+        v.confirm("平台", "platform", source="user")
+        self.assertTrue(v.knows("平台", "platform"))
 
     def test_confirm_and_forget(self):
         v = Vocabulary(None)

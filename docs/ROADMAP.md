@@ -17,4 +17,4 @@ In rough order, and subject to change. Tell us what you need in Issues.
 
 The Windows, Linux and Android apps shipped in 1.1.0; see the README in each one's folder.
 
-Back to the [README](../README.en.md).
+Back to the [README](../README.md).

@@ -31,10 +31,12 @@ static class Palette
     public static readonly SolidColorBrush AccentFill = B(0xC9441D);
     public static readonly SolidColorBrush AccentPale = B(0xFDEBE4);
     public static readonly SolidColorBrush AccentText = B(0xA8370F);
-    /// 回放: a line's time as a link, the line at the playhead, and the player bar's box.
+    /// 回放: a line's time as a link, the line at the playhead (the Mac's accentPale), the player
+    /// bar's box, and a line under the pointer that a click would play (the Mac's raised).
     public static readonly SolidColorBrush TimeLink = B(0xB33B14);
-    public static readonly SolidColorBrush Playing = B(0xFDEEE7);
+    public static readonly SolidColorBrush Playing = B(0xFCEDE7);
     public static readonly SolidColorBrush PlayerFill = B(0xF5F6F8);
+    public static readonly SolidColorBrush Raised = B(0xF5F6F8);
     public static readonly SolidColorBrush Success = B(0x0F7B3F);
     public static readonly SolidColorBrush Danger = B(0xC42B1C);
     public static readonly SolidColorBrush ErrorBg = B(0xFDECEA);
@@ -244,7 +246,7 @@ static class Ui
     static void AutomationName(UIElement e, string name) => System.Windows.Automation.AutomationProperties.SetName(e, name);
 
     /// Rounded, no Windows 7 chrome. Plain buttons get a grey wash on hover; filled ones dim a little.
-    static ControlTemplate Template(bool plain, bool onDark = false, Type? target = null, double radius = 10, bool soft = false)
+    public static ControlTemplate Template(bool plain, bool onDark = false, Type? target = null, double radius = 10, bool soft = false)
     {
         var t = new ControlTemplate(target ?? typeof(Button));
         var border = new FrameworkElementFactory(typeof(Border), "bg");

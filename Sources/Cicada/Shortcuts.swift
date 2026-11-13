@@ -62,10 +62,25 @@ struct Shortcut: Equatable {
         kVK_Home: "↖", kVK_End: "↘", kVK_PageUp: "⇞", kVK_PageDown: "⇟", kVK_RightOption: L("右 ⌥"),
     ]
 
+    /// Names worked out on the main thread. SwiftUI sometimes builds the panel off it, and the
+    /// input-source calls assert the main queue there (a crash since 1.4.0): off it, the last name.
+    private static let nameLock = NSLock()
+    nonisolated(unsafe) private static var names: [Int: String] = [:]
+
     /// The character the key types on the current layout (US letters on non-Latin layouts).
     static func keyName(_ code: Int) -> String {
         if let f = functionKeys[code] { return f }
         if let n = named[code] { return n }
+        guard Thread.isMainThread else {
+            nameLock.lock(); defer { nameLock.unlock() }
+            return names[code] ?? "#\(code)"
+        }
+        let name = layoutName(code)
+        nameLock.lock(); names[code] = name; nameLock.unlock()
+        return name
+    }
+
+    private static func layoutName(_ code: Int) -> String {
         guard let source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue(),
               let ptr = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else { return "#\(code)" }
         let data = Unmanaged<CFData>.fromOpaque(ptr).takeUnretainedValue() as Data
@@ -235,7 +250,11 @@ final class RightOptionKey {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
         case .flagsChanged:
             let flags = event.flags.rawValue
-            let isRight = event.getIntegerValueField(.keyboardEventKeycode) == Int64(kVK_RightOption)
+            let code = event.getIntegerValueField(.keyboardEventKeycode)
+            let isRight = code == Int64(kVK_RightOption)
+            // "I held ⌥ and nothing happened" was the left one (or a keyboard or remote session
+            // that only sends it): say so in the log.
+            if code == Int64(kVK_Option), flags & 0x20 != 0 { debugLog("right option: left ⌥ pressed, not the talk key") }
             if isRight, flags & RightOptionKey.rightAlt != 0 {
                 // Only a clean press starts talking, not ⌘ + right ⌥ and the like.
                 if !active, flags & RightOptionKey.otherModifiers == 0 { active = true; onDown?() }

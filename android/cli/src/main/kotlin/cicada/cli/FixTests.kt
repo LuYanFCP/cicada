@@ -20,6 +20,8 @@ object FixTests {
         "lowConfidenceIsDropped" to ::lowConfidenceIsDropped,
         "spellingFixNeedsHighConfidence" to ::spellingFixNeedsHighConfidence,
         "newNamesAreAsked" to ::newNamesAreAsked,
+        "learnedWordsStayWhole" to ::learnedWordsStayWhole,
+        "translationsAreNotAsked" to ::translationsAreNotAsked,
         "confirmedHeardFormIsApplied" to ::confirmedHeardFormIsApplied,
         "rejectedIsDropped" to ::rejectedIsDropped,
         "coreDropsSharedEnds" to ::coreDropsSharedEnds,
@@ -33,6 +35,7 @@ object FixTests {
         "addedWordStaysOnItsLineAndNeverMatchesPunctuation" to ::addedWordStaysOnItsLineAndNeverMatchesPunctuation,
         "vocabImportLinesWithHeardForms" to ::importLinesWithHeardForms,
         "vocabSameWordWhateverWidthOrCase" to ::sameWordWhateverWidthOrCase,
+        "vocabAYesNeverTeachesATranslation" to ::aYesNeverTeachesATranslation,
         "vocabConfirmAndForget" to ::confirmAndForget,
         "vocabPromptPutsRecentFirst" to ::promptPutsRecentFirst,
         "vocabSavesAndLoads" to ::savesAndLoads,
@@ -196,6 +199,26 @@ object FixTests {
         equal(D, verdict("莫纳", "Morpho", 0.7), "莫纳")
     }
 
+    /// A learned "S平 → X平" never reaches into "iOS平台"; on its own it still applies.
+    fun learnedWordsStayWhole() {
+        equal(null, Correction.word("S平", "iOS平台很好"), "inside iOS")
+        equal(null, Correction.word("A工", "DATA工具"), "inside DATA")
+        check(Correction.word("S平", "在S平台上") != null, "on its own")
+        check(Correction.word("S平", "iOS平台和S平台") != null, "the second one")
+        check(Correction.word("莫拉", "解释这个莫拉的") != null, "Chinese")
+        equal("iOS平台和X平台", Correction.apply(listOf(LineFix("S平", "X平")), "iOS平台和S平台").text, "apply")
+    }
+
+    /// A translation isn't a misheard name: one 对 to "X平台 → X platform" taught 平台 → platform.
+    fun translationsAreNotAsked() {
+        equal(D, verdict("X平台", "X platform", 0.9), "X平台")
+        equal(D, verdict("平台", "platform", 0.95), "平台")
+        equal(D, verdict("respons", "responsible", 0.85), "respons")
+        equal(Q, verdict("GPT四", "GPT4", 0.85), "GPT四")
+        check(Correction.translation("平台", "platform"), "a translation")
+        check(!Correction.translation("莫拉", "Morpho"), "a name")
+    }
+
     fun confirmedHeardFormIsApplied() {
         equal(A, verdict("莫拉", "Morpho", 0.5, known = listOf("莫拉" to "Morpho")), "known")
         equal(A, verdict("解释这个莫拉的", "解释这个Morpho的", 0.5, known = listOf("莫拉" to "Morpho")), "known in a phrase")
@@ -349,6 +372,14 @@ object FixTests {
         equal(false, c.swap, "Chinese not a swap")
         // A real swap is still a swap.
         equal(true, Correction.userEdit("我木娜找了", "我Monad找了", "我木娜找了", emptyList())?.swap, "swap")
+    }
+
+    fun aYesNeverTeachesATranslation() {
+        val v = Vocabulary(null)
+        v.confirm("平台", "platform")
+        check(v.terms.isEmpty(), "a yes teaches no translation")
+        v.confirm("平台", "platform", source = "user")
+        check(v.knows("平台", "platform"), "the user's own does")
     }
 
     fun confirmAndForget() {

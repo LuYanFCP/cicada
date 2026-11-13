@@ -5,6 +5,165 @@ writes it from the `feat:` and `fix:` commits since the last tag, grouped by pla
 scope), and the release workflow publishes it as the release notes. Since 1.1.2 every release ships
 every platform (one with nothing new says No changes); earlier ones shipped only those listed. Lines under `## Unreleased` become the release's summary. The Chinese changelog for users is `site/changelog.json`.
 
+## 1.9.0 — 2026-11-12
+
+### Mac
+
+#### New
+
+- While a recording plays back, the whole line being played lights up and a click anywhere on a line plays from there ([4e0aa4f](https://github.com/wquguru/cicada/commit/4e0aa4f7685ed57cbaf0ded0d684afade8f4d904))
+- Notes can use their own model, or another OpenAI-compatible service with its own address and key ([21642b9](https://github.com/wquguru/cicada/commit/21642b9bf74e0623d6bdbaee9cb04b150f5c8b3e))
+- Interpreting can run hands-free: while Cicada listens to a meeting, just start talking and the translation goes out after a one-second pause ([a44d0e8](https://github.com/wquguru/cicada/commit/a44d0e8b8abdabe8bf6445ab1f4adaf8303555ca))
+- After each meeting, notes and transcript can be saved as Markdown into a folder you pick, such as an Obsidian vault ([3b48808](https://github.com/wquguru/cicada/commit/3b488088d89396d851520db7d1dfa8ac8711787f))
+
+#### Fixed
+
+- A short reply in a voice not yet known no longer joins the answer before it in the live transcript ([ab787d4](https://github.com/wquguru/cicada/commit/ab787d4ad960da95b62e0fc4cf9731b15948cc4d))
+- The meeting record no longer moves a word from one speaker's sentence into the next speaker's line ([4cb8512](https://github.com/wquguru/cicada/commit/4cb8512b0d2b587a16b30046198bf57462bcee3b))
+- What you say with the talk key while the other side talks is no longer dropped as silence ([3c6bb56](https://github.com/wquguru/cicada/commit/3c6bb56db093f30ddf595500f3ae6a022dab280c))
+- Cicada no longer quits when a speech model starts downloading as listening begins ([91e1cda](https://github.com/wquguru/cicada/commit/91e1cda8cc24584828385af0192dc082ba01ec2f))
+- With the mic on in a hybrid meeting, the talk key now works while the other side is talking ([bc82c12](https://github.com/wquguru/cicada/commit/bc82c1242a21592f64c8644f53707136fcc4728e))
+- Other apps hear the built-in mic again while Interpreting is on ([4cbc0a1](https://github.com/wquguru/cicada/commit/4cbc0a19c12bcf148eb38017ea5291d6955a98f0))
+- With a meeting language picked by hand, people in the room speaking your language are recognized once you turn on the mic ([648f273](https://github.com/wquguru/cicada/commit/648f273b0d91a2502a54ced13d32e05e09810433))
+- In Dark Mode, text and checkboxes no longer turn white on Cicada's white cards ([3e2cb86](https://github.com/wquguru/cicada/commit/3e2cb8687fff21713760a78e1cbeace55132eb66))
+- Imported recordings and videos, and re-transcribed meetings, now tell speakers apart too ([3a97dab](https://github.com/wquguru/cicada/commit/3a97dab9043090ce40a91a446f9968e2c4e0f6f1))
+- A custom AI service whose key fails is named by its address, not "The this service key doesn't work" ([abe84d2](https://github.com/wquguru/cicada/commit/abe84d23d8b1359f1596202967ff08230946a7b1))
+- A click on the words of a transcript line plays the recording from there, and the play button comes back when it ends ([7c11a14](https://github.com/wquguru/cicada/commit/7c11a14dc8975d32ce76cb43ab70ea8c97262e7f))
+- Cicada no longer quits now and then when the menu bar panel opens ([9d3286e](https://github.com/wquguru/cicada/commit/9d3286eba8baba72973c14d7e7b807c50aea61eb))
+- Cicada no longer quits after an interpreted sentence when the meeting plays from the speakers ([1c3d014](https://github.com/wquguru/cicada/commit/1c3d0142e4c2ad874c35c38f24733980ac8ca5e7))
+- While a meeting is listened to, the talk key hears you from the moment you press it and no longer sends the meeting's own words ([872a570](https://github.com/wquguru/cicada/commit/872a570659d2dae6dae576dd8dd1f87c0dc831fd))
+- Interpreting no longer speaks a bare heading like "翻译结果：" into the meeting ([f53c136](https://github.com/wquguru/cicada/commit/f53c13637a08aa94af52c469f4d19b32b30f0c86))
+
+### Windows
+
+#### New
+
+- While a recording plays back, the whole line being played lights up and a click anywhere on a line plays from there ([5904907](https://github.com/wquguru/cicada/commit/59049078d486dd31849b927bc4d76215f585f0ca))
+- Notes can use their own model, or another OpenAI-compatible service with its own address and key ([5acd003](https://github.com/wquguru/cicada/commit/5acd003b144ddbfc1e659fc383a9ba05b78aef32))
+- After each meeting, notes and transcript can be saved as Markdown into a folder you pick, such as an Obsidian vault ([bd1ccb6](https://github.com/wquguru/cicada/commit/bd1ccb6041037ea25891e901f76b21bf9a453fca))
+
+#### Fixed
+
+- Installing VB-Cable no longer leaves the computer silent ([a3aa981](https://github.com/wquguru/cicada/commit/a3aa981a4a7c6f450631091da220c60e3a45cc03))
+- The talk key now sends what you say while the other side talks on the speakers ([6ca73c8](https://github.com/wquguru/cicada/commit/6ca73c83e9677e0e5d5f1e8a0ade71323f8c1e34))
+- A custom AI service whose key fails is named by its address in the tray and notes window ([933d596](https://github.com/wquguru/cicada/commit/933d596be41d19aa83962f42ff1863ca5dd9be86))
+- Interpreting no longer speaks a bare heading like "翻译结果：" into the meeting ([598ea2c](https://github.com/wquguru/cicada/commit/598ea2c87cfca60b2d984946007775963344898b))
+
+### Android
+
+#### New
+
+- While a recording plays back, the whole line being played lights up and the list follows it until you scroll away ([f6187ba](https://github.com/wquguru/cicada/commit/f6187ba2b1bd1bbb7e1f50af7a89280509b26040))
+- Notes can use their own model, or another OpenAI-compatible service with its own address and key ([49ad404](https://github.com/wquguru/cicada/commit/49ad40493cafcee1d0d58ca0b5e355198f8caea2))
+- After each meeting, notes and transcript can be saved as Markdown into a folder you pick ([7f22d77](https://github.com/wquguru/cicada/commit/7f22d77beb2d7de9857aed14ed3f39423042223a))
+
+#### Fixed
+
+- Imported recordings and videos show who said each line ([c6ece7c](https://github.com/wquguru/cicada/commit/c6ece7cdc8dd554a68b5cc022193e9dc7bbc6900))
+- A custom AI service whose key fails is named by its address on the AI card and notification ([ba25b10](https://github.com/wquguru/cicada/commit/ba25b10bd5c981faf377e2760cdff8bee24607be))
+- Interpreting no longer speaks a bare heading like "翻译结果：" into the meeting ([2bb0834](https://github.com/wquguru/cicada/commit/2bb0834ffbdd029fd8ef129274f0fd64dad405a5))
+
+### Linux
+
+#### New
+
+- While a recording plays back, the whole line being played lights up and a click anywhere on a line plays from there ([fba3a7a](https://github.com/wquguru/cicada/commit/fba3a7afe4bd9cbd67b6bc390448b69a11c1754d))
+- Notes can use their own model, or another OpenAI-compatible service with its own address and key ([5f26aea](https://github.com/wquguru/cicada/commit/5f26aea53cf680beaec59bdc83909ccb1d1d0ae1))
+- After each meeting, notes and transcript can be saved as Markdown into a folder you pick, such as an Obsidian vault ([48a0af4](https://github.com/wquguru/cicada/commit/48a0af4c946593b084f6606b731f459919edfc30))
+
+#### Fixed
+
+- What you say with the talk key while the other side is talking is sent instead of dropped ([1a1a5eb](https://github.com/wquguru/cicada/commit/1a1a5eb079e4d06573851e50ba8dc7d8c1fccf0a))
+- In a dark desktop theme, the live notes window's status line and its button are readable again ([184739a](https://github.com/wquguru/cicada/commit/184739a1b176879a5a723d1d997e0423bb7269bd))
+- Imported records that tell speakers apart show who said each line ([83379f6](https://github.com/wquguru/cicada/commit/83379f6771e36470819a637b835c489a8cdf4259))
+- A custom AI service whose key fails is named by its address in the tray, notification and notes window ([9458abb](https://github.com/wquguru/cicada/commit/9458abb39fa4f31ee183a7f9a03d1cc171fe989f))
+- Interpreting no longer speaks a bare heading like "翻译结果：" into the meeting ([13e9591](https://github.com/wquguru/cicada/commit/13e95912813ad11dac2481538b610045ae7c30d2))
+
+## 1.8.0 — 2026-11-09
+
+### Mac
+
+#### New
+
+- Choose the microphone used for room meetings ([981f00a](https://github.com/wquguru/cicada/commit/981f00a70181918345aa8682d0d7ffb37abb5380))
+- Pick which microphone hears the room from the arrow beside Turn on mic ([1701241](https://github.com/wquguru/cicada/commit/170124157bb83f436ce28c5586ceda98862fe471))
+
+#### Fixed
+
+- Fixing misheard words no longer turns a Chinese word into its English translation, or changes letters inside an English word ([2ef62fc](https://github.com/wquguru/cicada/commit/2ef62fc1ce4c9fd8f409d026aeea24a8a25f14d7))
+- A name the notes got wrong no longer spreads into translations and later fixes, and a name said again and again stays its own term ([09b3b3d](https://github.com/wquguru/cicada/commit/09b3b3d9b9577ea0ee070f5e3a49e90f9a818acd))
+- The microphone menus no longer list the speakers or a VPAUAggregateAudioDevice while echo cancellation runs ([07ed4c0](https://github.com/wquguru/cicada/commit/07ed4c052ec26315dd69fea64385bb4ca1a5f42a))
+
+### Windows
+
+#### New
+
+- Keyboards without right Ctrl can pick another talk key in Settings › Interpreting ([994dd23](https://github.com/wquguru/cicada/commit/994dd23faf3a99e8909202939a79d2aa3efdae6a))
+
+#### Fixed
+
+- Fixing misheard words no longer turns a Chinese word into its English translation, or changes letters inside an English word ([9ac1feb](https://github.com/wquguru/cicada/commit/9ac1feb789feb297ec41c354ff9cab35d029f662))
+- A name the notes got wrong no longer spreads into translations and later fixes, and a name said again and again stays its own term ([dace10e](https://github.com/wquguru/cicada/commit/dace10e3bc35bbb0a2504d0418d7f56d3b58fc78))
+- Preview says why no sound played, and a Windows voice the PC doesn't have is no longer picked ([3c8c9fd](https://github.com/wquguru/cicada/commit/3c8c9fd64ad1430b7e82d4e1bdc7e6a3562a646d))
+
+### Android
+
+#### Fixed
+
+- Fixing misheard words no longer turns a Chinese word into its English translation, or changes letters inside an English word ([6d13b5c](https://github.com/wquguru/cicada/commit/6d13b5c75007fc4e1ddd8cb76a0d66cc180c48c7))
+- A name the notes got wrong no longer spreads into translations and later fixes, and a name said again and again stays its own term ([64710de](https://github.com/wquguru/cicada/commit/64710de2f747a70560edd4e7a0fedb4ffb6e2be0))
+
+### Linux
+
+#### Fixed
+
+- Fixing misheard words no longer turns a Chinese word into its English translation, or changes letters inside an English word ([ee60b86](https://github.com/wquguru/cicada/commit/ee60b8663d4c8d9171e21b5d9297474b53511499))
+- A name the notes got wrong no longer spreads into translations and later fixes, and a name said again and again stays its own term ([3bd0057](https://github.com/wquguru/cicada/commit/3bd005738f7aafae305d77bea43cb8fad302103e))
+
+## 1.7.0 — 2026-11-08
+
+### Mac
+
+#### New
+
+- Cicada stays in the Dock while it runs, with an orange dot while recording and a right-click menu ([308f00c](https://github.com/wquguru/cicada/commit/308f00c27dfe008f3ccea3dbb22a58e482b5026e))
+- Share… copies the link and password together as one message in the app's language ([64b9471](https://github.com/wquguru/cicada/commit/64b94712a1ef3d9b9049e062db0a4952e45b6974))
+
+#### Fixed
+
+- A fresh 7-day share link no longer says it lasts 8 days ([a67e9c7](https://github.com/wquguru/cicada/commit/a67e9c72ba1a20e18c81b7ce291c03b04aa4f5ce))
+- Fast speech without pauses comes out one sentence or clause per line instead of one growing block (#20) ([93dfb07](https://github.com/wquguru/cicada/commit/93dfb075e933fa3903378fb8b3caafd0a462ecd4))
+- The live notes transcript starts a new paragraph every two or three sentences when someone talks fast ([7c40e6b](https://github.com/wquguru/cicada/commit/7c40e6b11301246680e85f22016033945cdd1e3e))
+- The meeting record no longer splits a Chinese word like 所以 across two lines ([ac4d8e0](https://github.com/wquguru/cicada/commit/ac4d8e0929f153c68fae78435ddcfd8de073475a))
+- In the live notes window, fast Chinese lines end at a clause more often instead of between two words ([79af264](https://github.com/wquguru/cicada/commit/79af264913a67bb50123788d92eaac4fb24d7ba4))
+
+### Windows
+
+#### New
+
+- Share… copies the link and password together as one message in the app's language ([b01fe7f](https://github.com/wquguru/cicada/commit/b01fe7fc59215e1f708f61c687434244e4600947))
+
+### Android
+
+#### New
+
+- Share… copies the link and password together as one message in the app's language ([3ba3243](https://github.com/wquguru/cicada/commit/3ba32437b8933d3d22265528ee7a82909d056647))
+
+### Linux
+
+#### New
+
+- Share… copies the link and password together as one message in the app's language ([46e82e2](https://github.com/wquguru/cicada/commit/46e82e203398f24b929535594f936828c42ccf66))
+
+#### Fixed
+
+- Cicada stays in the dock while it runs, so it can be found during a meeting ([7b14308](https://github.com/wquguru/cicada/commit/7b1430864cc54ccc71a3ac414a1191bcdef94c0a))
+
+### Website
+
+- A shared meeting opens on its notes, and each chapter's dialogue, the speakers and the original text appear when asked for ([d231fc8](https://github.com/wquguru/cicada/commit/d231fc8c5db2296061c053fd2d3d5799478f5655))
+- A shared meeting with one speaker or one line says 1 person and 1 line in English ([e1efbe8](https://github.com/wquguru/cicada/commit/e1efbe830888d3d4ca2aacbf9054e9b4fd36dc2e))
+
 ## 1.6.1 — 2026-11-08
 
 ### Mac

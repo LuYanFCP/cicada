@@ -79,6 +79,7 @@ combobox arrow { -gtk-icon-source: -gtk-icontheme("pan-down-symbolic"); min-widt
 combobox cellview, combobox button label { font-size: 12px; }
 entry { background-image: none; background-color: #FFFFFF; border: 1px solid #E4E6EA; box-shadow: none; border-radius: 7px; min-height: 26px; padding: 0 9px; font-size: 13px; color: #15171C; caret-color: #15171C; }
 entry:focus { border-color: #E8552B; box-shadow: 0 0 0 2px rgba(232,85,43,0.18); }
+entry.error { border-color: #B3261E; }
 entry.search { background-color: #E8EAEE; border-color: transparent; min-height: 28px; font-size: 12px; }
 entry.search:focus { background-color: #FFFFFF; }
 entry selection, label selection { background-color: rgba(232,85,43,0.22); color: #15171C; }
@@ -124,6 +125,10 @@ dialog.sharesheet entry.mono { font-family: "Ubuntu Sans Mono", monospace; }
 .statusdot.needsyou { background-color: #B42318; }
 button.quietbtn.statusaction, button.quietbtn.statusaction:hover { background-color: transparent; padding: 4px 0; min-width: 0; }
 .panel.dark .endingstrip { background-color: rgba(232,85,43,0.16); }
+/* The light fills would sit as pale slabs, their grey text washed out, on the dark notes window. */
+.panel.dark .statusline, .panel.dark .notice { background-color: #2A2C32; }
+.panel.dark .notice.error { background-color: rgba(180,35,24,0.22); }
+.panel.dark .segmented button { color: #A3A7B1; }
 entry.notes-search { min-height: 32px; font-size: 13px; border-radius: 9px; }
 .panel.dark entry.notes-search { background-color: #2A2C32; color: #F2F3F5; }
 button.iconbtn.on { background-color: #F3F4F6; color: #15171C; }
@@ -169,6 +174,17 @@ button.iconbtn.on { background-color: #F3F4F6; color: #15171C; }
 .placetag { border-radius: 4px; border: 1px solid #E4E6EA; }
 .placetag.room { background-color: #F2F3F5; border-color: #F2F3F5; }
 .placetag label { color: #5A5F6B; }
+/* Save to folder (folder_export_view.py): the Obsidian vault tag, a problem in the card (accent-pale
+   when the folder refuses, ground grey otherwise), and the save-where choices (ink when picked). */
+.foldertag { border-radius: 4px; background-color: #F2F3F5; }
+.foldertag label { color: #5A5F6B; }
+.folderproblem { background-color: #F3F4F6; border-radius: 9px; }
+.folderproblem.denied { background-color: #FDEEE8; }
+button.folderoption { background-image: none; background-color: #FFFFFF; border: 1px solid #E4E6EA; box-shadow: none; border-radius: 9px; padding: 0; }
+button.folderoption:hover { background-color: #F6F7F9; }
+button.folderoption.picked, button.folderoption.picked:hover { background-color: #FFFFFF; border: 1.5px solid #15171C; }
+button.folderoption image { color: #6B7080; }
+button.folderoption.picked image { color: #15171C; }
 .metag { border-radius: 4px; border: 1px solid rgba(232,85,43,0.45); }
 .metag label { color: #B33A14; }
 .badge { background-color: #FDEEE8; border-radius: 5px; padding: 0 6px; color: #B33A14; }
@@ -200,6 +216,7 @@ button.iconbtn.on { background-color: #F3F4F6; color: #15171C; }
 .breathemark.late { animation-delay: 1.1s; }
 .idledot { background-color: #C9CCD3; border-radius: 4px; min-width: 7px; min-height: 7px; }
 /* The custom service's per-use rows: how each use is doing (AISettings.swift sectionHeader). */
+separator.hairline { background-color: #E4E6EA; min-height: 1px; margin: 4px 0; }
 .statedot { background-color: #C9CCD3; border-radius: 4px; min-width: 8px; min-height: 8px; }
 .statedot.ok { background-color: #1F7A45; }
 .statedot.warn { background-color: #8A5A00; }
@@ -214,12 +231,23 @@ button.iconbtn.on { background-color: #F3F4F6; color: #15171C; }
 .sidebar list row:hover { background-color: #ECEEF1; }
 .group-label { font-weight: 700; color: #6B7080; }
 .transcript-row { border-top: 1px solid #EEF0F3; }
-.transcript-row.playing { background-color: #FDEEE7; }
+/* With a recording: a lighter fill under the pointer (a click plays the line), the line playing on the pale accent. */
+.transcript-row.hover { background-color: #F5F6F8; border-radius: 10px; border-top-color: transparent; }
+.transcript-row.playing { background-color: #FCEDE7; border-radius: 10px; border-top-color: transparent; }
 button.timelink { background-image: none; background-color: transparent; border: none; box-shadow: none; padding: 0; min-height: 0; min-width: 0; }
 button.timelink:hover label { text-decoration-line: underline; }
+.transcript-row button.timelink:hover label { text-decoration-line: none; }
 
 /* The recording's player bar (RecordingPlayerBar): a soft box, a round ink play button, the played part in the accent. */
-.playerbar { background-color: #F5F6F8; border-radius: 10px; }
+.playerbar { background-color: #F5F6F8; border-radius: 12px; }
+.playerstrip { background-color: #FFFFFF; border-top: 1px solid #F0F1F4; }
+/* "Back to playing - m:ss", over the bottom of the page once it is scrolled away from what plays. */
+button.backpill { background-image: none; background-color: #15171C; border: none; border-radius: 17px; min-height: 34px; padding: 0 16px; box-shadow: 0 4px 10px rgba(21,23,28,0.18); }
+button.backpill:hover { background-color: #2A2D34; }
+button.backpill label { color: #FFFFFF; }
+.pillwave .stick { background-color: #FFFFFF; border-radius: 1px; }
+/* PlayingBars: three accent capsules bouncing beside the line that plays. */
+.playbars .stick { background-color: #E8552B; border-radius: 2px; }
 button.playround { background-image: none; background-color: #15171C; border: none; box-shadow: none; border-radius: 16px; min-width: 32px; min-height: 32px; padding: 0; }
 button.playround:hover { background-color: #2A2D34; }
 button.playround image { color: #FFFFFF; }
@@ -281,6 +309,8 @@ button.fixlink label { color: #B33A14; }
 .fixbanner { background-color: #FEF6F2; border: 1px solid #FBE0D5; border-radius: 12px; }
 button.softbtn { background-image: none; background-color: #ECEDF0; border: none; box-shadow: none; border-radius: 7px; padding: 4px 14px; color: #5A5F6B; }
 button.softbtn:hover { background-color: #E2E4E8; }
+button.softbtn:disabled { background-color: #F3F4F6; color: #A3A7B1; }
+button.softbtn:disabled label { color: #A3A7B1; }
 .fixeditor { border: 1px solid #15171C; border-radius: 8px; background-color: #FFFFFF; }
 .fixeditor text { background-color: #FFFFFF; color: #15171C; }
 .heardchip { background-color: #F2F3F5; border-radius: 5px; }

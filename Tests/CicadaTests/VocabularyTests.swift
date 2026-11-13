@@ -20,6 +20,14 @@ import Testing
         #expect(v.knows(heard: "阿韦", word: "Aave"))
     }
 
+    @Test func aYesNeverTeachesATranslation() {
+        let v = Vocabulary(url: nil)
+        v.confirm(heard: "平台", word: "platform")
+        #expect(v.terms.isEmpty)
+        v.confirm(heard: "平台", word: "platform", source: "user")
+        #expect(v.knows(heard: "平台", word: "platform"))
+    }
+
     @Test func confirmAndForget() {
         let v = Vocabulary(url: nil)
         v.confirm(heard: "开布特", word: "Curve")

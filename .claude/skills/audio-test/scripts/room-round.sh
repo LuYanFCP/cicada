@@ -2,7 +2,7 @@
 # One room-test round on the Mac dev build, scored. Usage:
 #   room-round.sh <label> [mac|music|none] [volume 0-100]
 # Env: OUT (output device name part, default "MacBook Pro Speakers"; "BlackHole" stands in for
-# headphones), ECHO (roomEcho on|off, default off), GATE (roomGate on|off, default on),
+# headphones), ECHO (roomEcho bypass|on|off, default bypass as in the app), GATE (roomGate on|off, default on),
 # TABLE (on|off: play table.wav on the ESP32, default on), WORK (clips and tools, default
 # $TMPDIR/cicada-room-test).
 # Prints: mac/room line counts, echoes dropped, English room lines (echo that got through), and
@@ -11,7 +11,7 @@ set -e
 here=${0:A:h}
 repo=${here:h:h:h:h}
 label=${1:?label}; play=${2:-mac}; vol=${3:-56}
-OUT=${OUT:-MacBook Pro Speakers}; ECHO=${ECHO:-off}; GATE=${GATE:-on}; TABLE=${TABLE:-on}
+OUT=${OUT:-MacBook Pro Speakers}; ECHO=${ECHO:-bypass}; GATE=${GATE:-on}; TABLE=${TABLE:-on}
 WORK=${WORK:-${TMPDIR:-/tmp}/cicada-room-test}
 TV=~/workshop/15.experiment/m5-stopwatch/tablevoice/tv.py
 LOG=/tmp/livesubs-dev-debug.log

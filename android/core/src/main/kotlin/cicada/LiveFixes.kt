@@ -89,8 +89,10 @@ class LiveFixes(val store: SessionStore, val vocabulary: Vocabulary, private val
         val out = fixes.toMutableList()
         for (t in vocabulary.terms) {
             for (h in t.heard) {
-                // A heard form two words claim (两个都留) is never fixed silently.
-                if (h.length < 2 || !src.contains(h) || pair(h, t.word) in refused || vocabulary.owners(h, t.word).isNotEmpty()) continue
+                // A heard form two words claim (两个都留) is never fixed silently. A translation a yes taught
+                // before that was refused (平台 → platform) isn't either; one the user typed is.
+                if (t.source != "user" && Correction.translation(h, t.word)) continue
+                if (h.length < 2 || Correction.word(h, src) == null || pair(h, t.word) in refused || vocabulary.owners(h, t.word).isNotEmpty()) continue
                 if (out.any { it.from == h || (it.applied && it.from.contains(h)) || (it.off == true && it.from == h) }) continue
                 out.add(LineFix(h, t.word))
             }

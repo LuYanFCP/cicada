@@ -194,6 +194,9 @@ class Player:
         self.rate = 1.0
         self.playing = False
         self.started = False  # played at least once: the line at the playhead shows from then
+        # The transcript keeps the playing line in view. Scrolling it by hand stops that until a line is
+        # picked, the bar is moved or 回到正在播放 is pressed: following would yank the page away.
+        self.following = True
         self._length = 0.0
         self._seeking = None  # (where to, when): the position reads 0 while a flushing seek settles
         pb = _make("playbin", uri=Gst.filename_to_uri(path))
@@ -258,6 +261,17 @@ class Player:
         self.playing = False
         self._changed()
 
+    def user_scrolled(self) -> None:
+        """The transcript was scrolled by hand while it plays."""
+        if self.following and self.playing:
+            self.following = False
+            self._changed()
+
+    def follow(self) -> None:
+        if not self.following:
+            self.following = True
+            self._changed()
+
     def play_from(self, t: float) -> None:
         self.seek(t)
         self.play()
@@ -267,6 +281,7 @@ class Player:
         if self.pb is None:
             return
         t = max(0.0, min(t, self.length or t))
+        self.following = True
         self._seeking = (t, time.monotonic())
         self.pb.seek(self.rate, Gst.Format.TIME, Gst.SeekFlags.FLUSH | Gst.SeekFlags.ACCURATE,
                      Gst.SeekType.SET, int(t * Gst.SECOND), Gst.SeekType.NONE, -1)
@@ -274,7 +289,9 @@ class Player:
     def next_rate(self) -> None:
         """1× → 1.5× → 2×."""
         self.rate = 1.0 if self.rate >= 2 else self.rate + 0.5
+        following = self.following  # a new speed isn't a seek: scrolled away stays scrolled away
         self.seek(self.time)
+        self.following = following
         self._changed()
 
     def _eos(self, *_):

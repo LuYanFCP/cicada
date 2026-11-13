@@ -26,6 +26,11 @@ class AppSettings:
         # The custom service's hear model at an address of its own (the port's, like the Mac's
         # aiCustomHearBase); empty: the same address as the text model.
         "aiCustomHearBase": "",
+        # The custom service's notes (the Mac's keys): 另一个服务, at its own address (empty: the same
+        # one) with its own key in the `custom-notes` key file. Off keeps the address. The notes
+        # model is aiModels["custom.notes"] (empty: the translation model).
+        "aiCustomNotesOwn": False,
+        "aiCustomNotesBase": "",
         # 语音和文字只发给你的服务 (the Mac's aiCustomOnly): with the custom service, Google Translate is
         # never asked. Kept when another service is picked, but only acts on the custom one.
         "aiCustomOnly": False,
@@ -42,6 +47,10 @@ class AppSettings:
         # 同声传译: what I say is interpreted and spoken into 知了 麦克风 (the Mac's speakEnabled etc.).
         # 保存会议录音 (the Mac's recordAudio): system.m4a beside session.json, when GStreamer has an AAC encoder.
         "recordAudio": True,
+        # 存到文件夹 (the Mac's keys): settled meetings also written as Markdown into exportFolder (a
+        # path; "" until one is chosen). See folder_export.py.
+        "exportOn": False,
+        "exportFolder": "",
         # 会中改正听错的词 (the Mac's keys): finished sentences carry the word list to the AI service, which
         # points out misheard words (correction.py); askNames: a new name is asked about once.
         "fixMisheard": True,

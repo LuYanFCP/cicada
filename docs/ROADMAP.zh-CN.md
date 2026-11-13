@@ -18,4 +18,4 @@
 
 Windows、Linux 和 Android 版在 1.1.0 发布，见各自目录里的 README。
 
-回到 [README](../README.md)。
+回到 [README](../README.zh-CN.md)。

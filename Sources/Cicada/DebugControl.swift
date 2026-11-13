@@ -96,6 +96,10 @@ extension AppModel {
             "music": self.roomListen.echoGate.playingMusic(), "micSilent": self.roomMicSilent,
             "micLost": self.roomMicLost ?? "", "micDenied": self.hybridMicDenied, "held": self.heldRoom.count,
             "voicedSeconds": self.roomListen.router.stats().voicedTotal,
+            // The microphone it hears now, the one chosen beside 打开麦克风 ("" = 自动) and the choices.
+            "mic": (self.settings.hearsBoth ? self.roomListen : self.listen).roomMicUID ?? "",
+            "micChosen": self.settings.roomMicUID,
+            "mics": AudioDevices.roomMicChoices().map { "\($0.device.uid)=\($0.device.name)" },
         ] }
         all["display"] = { [
             "mode": self.settings.displayMode, "notesShown": self.notesShown,
@@ -115,6 +119,7 @@ extension AppModel {
         all["speak"] = { [
             "enabled": self.settings.speakEnabled, "phase": "\(self.speakPhase)", "mic": self.speak.micDeviceName,
             "output": self.speak.outputDevice()?.name ?? "", "voiceMicInUse": self.voiceMic.inUse,
+            "handsFree": self.speak.handsFree,
             "test": ["shown": self.speakTestShown, "phase": "\(self.speakTester.phase)"] as [String: Any],
         ] }
         all["ai"] = { [

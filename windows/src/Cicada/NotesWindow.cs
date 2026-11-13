@@ -365,8 +365,7 @@ sealed class NotesWindow : Window
         return stack;
     }
 
-    /// Who the banners name: a custom service by its address, which says more than 这个服务.
-    string ServiceLabel() => app.Ling.Config.Provider.Id == "custom" && app.Ling.ServiceHost.Length > 0 ? app.Ling.ServiceHost : app.Ling.ServiceName;
+    string ServiceLabel() => app.Ling.ServiceLabel;
 
     /// When the last line the notes cover was said (0: nothing covered yet).
     double NotesCoveredUntil()

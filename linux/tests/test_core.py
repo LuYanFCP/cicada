@@ -24,7 +24,7 @@ from cicada.core import jsonfmt, strings, support  # noqa: E402
 from cicada.core.audio import PcmAudioSource, Wav  # noqa: E402
 from cicada.core.ling import AUDIO_MODEL, INVALID, NOTES, TRANSLATE, AIKey, LingClient, LingError, Response  # noqa: E402
 from cicada.core.listen import ListenEngine, continues, join  # noqa: E402
-from cicada.core.models import Fishbone, FishboneBranch, MeetingNotes, NoteItem, NoteTerm, NoteTopic, Session, TranscriptLine  # noqa: E402
+from cicada.core.models import Fishbone, FishboneBranch, LineFix, MeetingNotes, NoteItem, NoteTerm, NoteTopic, Session, TranscriptLine  # noqa: E402
 from cicada.core import notes as notesmod  # noqa: E402
 from cicada.core.notes import NotesEngine  # noqa: E402
 from cicada.core.segmenter import Segmenter  # noqa: E402
@@ -568,6 +568,26 @@ class Notes(Base):
         notes._sync_key()
         self.assertEqual(notesmod.IDLE, notes.status)
 
+    def test_final_pass_settles(self):
+        """存到文件夹 waits while the final pass is to come or running, and hears when it is over, with
+        notes or without (no lines, a failed reply)."""
+        store = SessionStore()
+        ling = client(Fake(lambda body: reply("not json")))
+        notes = NotesEngine(ling, store)
+        done = []
+        notes.final_done = done.append
+        s = store.begin()
+        store.append(s.id, TranscriptLine(id="h1-1", t=0, src="x", srcLang="en", dstLang="zh-CN"))
+        notes.begin(s.id)
+        self.assertTrue(notes.settling(s.id), "still the meeting's: finish() hasn't run yet")
+        store.end(s.id)
+        notes.finish()
+        self.assertFalse(notes.settling(s.id))
+        self.assertEqual([s.id], done)
+        notes.generate("nothing-here")
+        notes._work.shutdown(wait=True)
+        self.assertEqual([s.id, "nothing-here"], done)
+
     def test_unreachable_is_the_notes_own_and_clears_when_the_service_answers(self):
         # NotesWindow.swift › banner: only the notes' own network failure says "can't reach", it ends
         # when anything reaches the service again, and a record opened later doesn't inherit it.
@@ -652,6 +672,14 @@ class Notes(Base):
         self.assertEqual(["Strip"], n.terms[0].heard)
         self.assertIsNone(notesmod.parse("not json", [], 0.0))
         self.assertIsNone(notesmod.parse("{}", [], 0.0))
+
+    def test_terms_keep_only_forms_the_recognizer_wrote(self):
+        """A heard form only a fix wrote ("platform" for 平台) isn't one: it would teach the translator
+        and the next fix the same mistake."""
+        l = TranscriptLine(id="a", t=0, speaker="them", src="我们 twoty 平台", dst=None, srcLang="zh-CN", dstLang="en")
+        l.fixes = [LineFix("平台", "platform")]
+        terms = [NoteTerm(name="X平台", note="n", heard=["Xplatform", "platform", "Twoty"])]
+        self.assertEqual(["Twoty"], notesmod.heard_as_said(terms, [l])[0].heard)
 
     def test_keeps_earliest_times(self):
         old = MeetingNotes(topics=[NoteTopic(title="t", points=["a"], pointTimes=[3.0])], todos=[NoteItem(text="x", t=2.0)])
@@ -1203,11 +1231,11 @@ class Speaking(Base):
         eng = SpeakEngine(ling, Translator(ling), settings, listen=listen, player=lambda: player)
         return eng, fake, player
 
-    def _say(self, eng, pcm):
+    def _say(self, eng, pcm, echo_cancelled=False):
         src = PcmAudioSource(lambda: pcm, speed=0)
         done = threading.Event()
         src.on_ended = lambda why: done.set()
-        eng.start(src)
+        eng.start(src, echo_cancelled)
         done.wait(5)
         time.sleep(0.6)
         eng.stop()
@@ -1236,6 +1264,7 @@ class Speaking(Base):
         self.assertEqual([], fake.spoken, "nothing sent to the voice")
         from cicada.core.speak import filler
         self.assertTrue(filler("嗯嗯。") and filler("Um, uh...") and not filler("嗯，好的。") and not filler("OK."))
+        self.assertTrue(filler("翻译结果：") and filler("Translation:") and not filler("我想补充三点：价格、时间和人手。"))
 
     def test_fetches_the_next_voice_while_the_last_one_plays(self):
         eng, fake, player = self._engine("ORIGINAL: 你好\nTRANSLATION: Hello")
@@ -1295,6 +1324,35 @@ class Speaking(Base):
         self.assertEqual(0, eng.spoken)
         self.assertEqual([], fake.calls, "not even sent to Ming")
         self.assertIsNotNone(eng.problem, "and the user is told")
+
+    def test_through_the_echo_canceller_talking_over_them_goes_out(self):
+        # The talk key read the microphone through module-echo-cancel: their voices are taken out,
+        # so what I say over them is mine and is sent (the Mac's rule since 96205f8).
+        class Listening:
+            listening = True
+            spoken = "en"
+            session_id = None
+        eng, fake, player = self._engine("ORIGINAL: 你好\nTRANSLATION: Hello", listen=Listening())
+        stop = threading.Event()
+
+        def loud():
+            while not stop.is_set():
+                eng.loudness.add(True)
+                time.sleep(0.02)
+        threading.Thread(target=loud, daemon=True).start()
+        self._say(eng, concat(tone(1.2), silence(1.0)), echo_cancelled=True)
+        stop.set()
+        self.assertEqual(1, eng.spoken)
+        self.assertEqual(1, len(fake.calls), "sent to Ming")
+        self.assertIsNone(eng.problem)
+
+    def test_echo_drop_is_only_for_the_plain_mic(self):
+        from cicada.core.speak import echo_dropped
+        self.assertTrue(echo_dropped(True, False, 0.8, False), "plain mic, loud meeting: dropped")
+        self.assertFalse(echo_dropped(True, False, 0.8, True), "echo cancelled: sent")
+        self.assertFalse(echo_dropped(True, True, 0.8, False), "headphones: sent")
+        self.assertFalse(echo_dropped(True, False, 0.4, False), "loud for less than half: sent")
+        self.assertFalse(echo_dropped(False, False, 1.0, False), "not listening, nothing measured: sent")
 
     def test_with_headphones_talking_over_them_still_goes_out(self):
         class Listening:
@@ -1402,6 +1460,8 @@ class Speakers(Base):
         md = session_store.markdown(got, voices=True)
         self.assertIn("**[00:00] 说话人 1**", md)
         self.assertIn("**[00:30] 未识别**", md)
+        got.sourceFile = "call.m4a"
+        self.assertIn("**[00:00] 说话人 1**", session_store.markdown(got, voices=True), "an imported file with voices names them")
         notes = MeetingNotes(summary="说话人 2 会发说明", topics=[NoteTopic(title="说话人2 的计划")])
         named = speakers.named(notes, {2: "George"})
         self.assertEqual(("George 会发说明", "George 的计划"), (named.summary, named.topics[0].title))

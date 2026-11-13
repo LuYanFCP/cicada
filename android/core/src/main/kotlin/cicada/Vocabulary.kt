@@ -59,10 +59,12 @@ class Vocabulary(private val file: File? = Paths.vocabulary) {
     }
 
     /// The user said yes to a fix (or added it): the word, and the form it was heard as. A pair
-    /// that isn't a word for a word (`learnable`) adds nothing.
+    /// that isn't a word for a word (`learnable`) adds nothing. A yes in a meeting never teaches a
+    /// translation (平台 → platform): it would rewrite that word everywhere after.
     fun confirm(heard: String, word: String, source: String = "live") {
         if (heard.isEmpty()) return add("", word, source)
         val l = learnable(heard, word) ?: return
+        if (source != "user" && Correction.translation(l.first, l.second)) return
         add(l.first, l.second, source)
     }
 

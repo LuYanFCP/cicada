@@ -131,6 +131,21 @@
 "纪要写不了" = "Can't write notes";
 "会先思考" = "Thinks first";
 "不思考" = "Doesn't think";
+"%@ 不认上面的 key，给它单独填一个。" = "%@ doesn't accept the key above. Give it its own.";
+"这个模型没按要求返回 JSON，写不了纪要。换一个通用模型。" = "This model didn't return JSON, so it can't write notes. Try a general-purpose model.";
+"%@ 和 %@" = "%@ and %@";
+"用来写实时纪要、识别说话人，默认和翻译用同一个" = "For live notes and telling speakers apart. Same as translation unless you pick one.";
+"能写纪要 · %@ 秒" = "Writes notes · %@ s";
+"key 不对" = "Wrong key";
+"同一个服务" = "Same service";
+"另一个服务" = "Another service";
+"不填就用上面的 key" = "Empty: the key above";
+"和翻译模型一样" = "Same as translation";
+"这个地址没列出模型，直接填名字" = "This address lists no models. Type the name.";
+"重新获取" = "Refresh";
+"搜索或输入模型" = "Search or type a model";
+"用 %@（列表里没有）" = "Use %@ (not listed)";
+"%@ 列出 %lld 个模型" = "%1$@ lists %2$lld models";
 "上次正常" = "Worked last time";
 "上次没出声" = "Silent last time";
 "需支持 /audio/speech；不填则用本机声音。" = "Needs /audio/speech; leave blank to use the on-device voice.";
@@ -139,6 +154,23 @@
 "例如 vivian" = "e.g. vivian";
 "跟上面一样" = "Same as above";
 "自建服务" = "Your service";
+"内置" = "Built-in";
+"还没下载" = "Not downloaded";
+"下一场会议起用 %@，声音不出这台 Mac" = "%@ from the next meeting; audio never leaves this Mac";
+"下载模型后可用" = "Available once the model is downloaded";
+"没能启动" = "Didn't start";
+"正在下载 %lld%%" = "Downloading %lld%%";
+"要先下载模型" = "Download the model first";
+"知了自带的 Qwen3-ASR 引擎：不用装别的，会议的声音不出这台 Mac。" = "Cicada's own Qwen3-ASR engine: nothing else to install, and the meeting's audio never leaves this Mac.";
+"下载模型（%@）" = "Download Model (%@)";
+"内置引擎没能启动，会议先用本机识别。" = "The built-in engine didn't start. Meetings are recognized on-device for now.";
+"检查通过，下一场会议起用它识别；启动不了时自动换回本机" = "Check passed. Used from the next meeting; this Mac takes over if it can't start.";
+"删除模型" = "Delete Model";
+"内置引擎出错了（HTTP %lld），会议先用本机识别。" = "The built-in engine failed (HTTP %lld). Meetings are recognized on-device for now.";
+"内置引擎出错了，会议先用本机识别。" = "The built-in engine failed. Meetings are recognized on-device for now.";
+"下载的文件不完整，请再试一次" = "The download is incomplete. Try again.";
+"磁盘空间不够，还需要 %@ GB" = "Not enough disk space: %@ GB more needed";
+"下载没有完成，请检查网络后再试；已下载的部分会接着下" = "The download didn't finish. Check the network and try again; it continues where it stopped.";
 "更快，不花钱，声音不出这台 Mac" = "Faster, free, and audio never leaves this Mac";
 "听一秒音频 %@ 秒" = "One second of audio in %@ s";
 "新字幕暂时只有原文，连上后自动继续。" = "New subtitles show the original only for now; translation resumes once connected.";
@@ -784,6 +816,10 @@
 "把我说的翻译给对方" = "Translate what I say for them";
 "说话" = "Speaking";
 "按住说话" = "Hold to talk";
+"不用按键" = "Hands-free";
+"打开麦克风时暂停" = "Paused while the mic is on";
+"开始听会议后生效" = "Starts when you start listening";
+"开口就翻译，停顿 1 秒后说出去" = "Translates as you speak, sent after a 1-second pause";
 "说%@，对方听到" = "You speak %@, they hear";
 "按键还需要“输入监控”权限" = "The key needs Input Monitoring";
 "系统麦克风还是 %@，别的软件听不到你" = "System mic is still %@; other apps can't hear you";
@@ -857,6 +893,7 @@
 "没有虚拟麦克风 · 没有说出去" = "No virtual microphone · nothing was said";
 "这句没翻译成 · 没有说出去" = "This line wasn't translated · nothing was said";
 "对方在说话时说的，没有说出去" = "Said while they were talking, so not sent";
+"没听清你说的，没有说出去" = "Didn't catch what you said, so not sent";
 
 /* SpeakTest */
 "语音识别还没准备好，请稍后再试" = "Speech recognition isn't ready yet; try again shortly";
@@ -1102,6 +1139,7 @@
 "全部 %lld 句" = "All %lld lines";
 "翻译中…" = "Translating…";
 "从这里播放" = "Play from here";
+"回到正在播放" = "Back to playing";
 "正在整理纪要…" = "Writing notes…";
 "纪要会在会议进行中自动生成" = "Notes are written during the meeting";
 "用 %@ 整理出总结、议题、结论和人名，约半分钟。" = "Uses %@ to organize summary, topics, conclusions, and names in ~30s.";
@@ -1470,3 +1508,54 @@
 /* Views */
 "配置 AI 服务后可生成纪要；文字记录照常保存" = "Configure an AI service to create notes; transcripts are still saved.";
 "前往 设置 › AI 服务 配置翻译和纪要后即可生成。" = "Configure translation and notes in Settings › AI Service to generate them.";
+
+/* Mic button: the chevron that picks the room's microphone */
+"选择麦克风" = "Choose microphone";
+"会议室用哪个麦克风" = "Microphone for the room";
+"%@（只听得到戴的人）" = "%@ (hears only the wearer)";
+
+/* iOS: 声音来源, interruptions, picture-in-picture subtitles */
+"声音来源" = "Audio source";
+"手机外放" = "Phone speaker";
+"外放" = "Speaker";
+"外放 · %@" = "Speaker · %@";
+"别戴耳机，字幕会浮在小窗里" = "No headphones; subtitles float in a small window";
+"听不到其他 app 的声音，线上会议请用电脑版" = "Can't hear other apps; use a computer for online meetings";
+"已暂停，结束后接着听" = "Paused; resumes when it's over";
+"继续听" = "Listening again";
+"正在听外放…" = "Listening to the speaker…";
+"知了 · 正在听" = "Cicada · Listening";
+"没听到声音，请拔掉耳机或调大音量" = "No sound; unplug headphones or turn it up";
+
+/* FolderExport */
+"会后存一份" = "After the meeting";
+"纪要没存到文件夹" = "Notes weren't saved to the folder";
+"知了没有权限写入 %@。点按去设置" = "Cicada isn't allowed to write to %@. Click to open Settings";
+"上次存于 %@ · %@" = "Last saved %@ · %@";
+"存到文件夹" = "Save to folder";
+"纪要和文字记录存成 Markdown；文件夹同步到哪，内容就到哪" = "Notes and transcript as Markdown; wherever the folder syncs, they go too";
+"位置" = "Location";
+"以前的会议" = "Earlier meetings";
+"还有 %lld 场没存" = "%lld not saved yet";
+"正在确认能写入 %@…" = "Checking Cicada can write to %@…";
+"Obsidian 库" = "Obsidian vault";
+"更改…" = "Change…";
+"也存一份" = "Save them too";
+"其他文件夹…" = "Another folder…";
+"去系统设置" = "Open System Settings";
+"没有权限写入 %@" = "Not allowed to write to %@";
+"找不到 %@" = "Can't find %@";
+"接上或换个文件夹后自动补存" = "Saves once it's back, or pick another folder";
+"没存上" = "Not saved";
+"%lld 场会议没存上，允许后自动补存" = "%lld meetings not saved; they save once allowed";
+"在系统设置里允许知了，或换个文件夹" = "Allow Cicada in System Settings, or pick another folder";
+"Obsidian 库「%@」" = "Obsidian vault “%@”";
+"在库里新建 Cicada 文件夹" = "A new Cicada folder inside it";
+"存到哪里" = "Save where";
+"macOS 可能会问一次能不能访问这个位置" = "macOS may ask once whether Cicada can use this location";
+"存到这里" = "Save here";
+"会后把纪要和文字记录存成 Markdown 到这里" = "After each meeting, notes and transcript are saved here as Markdown";
+"已存到 %@ ·" = "Saved to %@ ·";
+"没存到文件夹 ·" = "Not saved to the folder ·";
+"整理好后存到 %@" = "Saves to %@ once the notes are ready";
+"在访达中显示" = "Show in Finder";

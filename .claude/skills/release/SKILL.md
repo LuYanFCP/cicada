@@ -75,6 +75,7 @@ Smoke check: onboarding, sample meeting, one AI service with a good key, End Mee
 - Fix every problem: a bug in shared behaviour is fixed on every platform at once and re-verified together. One Conventional Commit each with the platform scope, plus its Chinese item in `site/changelog.json`; re-verify on the machine; run each touched platform's `scripts/test.sh`.
 - A fix that joins mid-release (yours or a peer's) gets its own rows in the plan, rechecked where it changed; the rest stays checked.
 - Update `README*.md` (4 languages) and `site/i18n` for new features.
+- Polish the new Chinese copy once it's all in: `scripts/polish-copy.py changelog` (the undated entry) and `scripts/polish-copy.py readme v<last>` (`README.zh-CN.md` sections changed since the last tag, retranslated into `README.md` (English) and ja/ko). Only this release's copy, never the released entries. Read the diff: put back any symptom or condition it dropped, then `python3 scripts/site.py` and one `docs:` commit. If ZenMux refuses (`ZENMUX_API_KEY` missing or out of credit), skip it and say so in the report.
 
 ## 2. Draft
 

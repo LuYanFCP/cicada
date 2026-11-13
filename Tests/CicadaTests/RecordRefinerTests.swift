@@ -96,6 +96,61 @@ import Testing
         #expect(out.map(\.text).joined() == "他这个管理员可能就是因为他权限比较大了审计日志一定要记下来")
     }
 
+    /// Two voices 0.2 s apart (the sample meeting): no word crosses the end of a line that closed a
+    /// sentence, though the record heard "Great." where the live line had "Great,".
+    @Test func wordsStayWithTheirSpeaker() {
+        var r = RecordRefiner()
+        _ = r.emitted(id: 1, start: 0, end: 4, text: "Uh, I think we can ship March 3rd if design signs off by Friday.")
+        _ = r.emitted(id: 2, start: 4.2, end: 5.5, text: "Great, let's lock that in.")
+        var out = r.heard([run(" Uh, I think we can ship March 3rd if design signs off by Friday.", 0.1, 3.9)], through: 4.1)
+        out += r.heard([run(" Great.", 4.2, 4.6)])
+        out += r.heard([run(" let's lock that in", 4.7, 5.4)])
+        _ = r.emitted(id: 3, start: 9.5, end: 11, text: "Okay, so where are we on the launch?")
+        out += r.heard([run(" Okay, so where are we on the launch?", 9.5, 11)], through: 11.2)
+        out += r.finish()
+        #expect(out.map(\.text).map { $0.trimmingCharacters(in: .whitespaces) } == [
+            "Uh, I think we can ship March 3rd if design signs off by Friday.",
+            "Great. let's lock that in",
+            "Okay, so where are we on the launch?",
+        ])
+        // The record heard the two sentences as one.
+        var one = RecordRefiner()
+        _ = one.emitted(id: 1, start: 0, end: 4, text: "Uh, I think we can ship March 3rd if design signs off by Friday.")
+        _ = one.emitted(id: 2, start: 4.2, end: 5.5, text: "Great, let's lock that in.")
+        _ = one.emitted(id: 3, start: 9.5, end: 11, text: "Okay, so where are we on the launch?")
+        let both = one.heard([run(" Uh, I think we can ship March 3rd if design signs off by Friday. Great. let's lock that in", 0.1, 5.4)], through: 5.6)
+        #expect(both.map { $0.text.trimmingCharacters(in: .whitespaces) } == [
+            "Uh, I think we can ship March 3rd if design signs off by Friday.", "Great. let's lock that in",
+        ])
+    }
+
+    /// The next line comes late (the live recognizer dropped "Great."): the record's words past a
+    /// line that closed a sentence wait for it.
+    @Test func closedLineLeavesTheRestForTheNext() {
+        var r = RecordRefiner()
+        _ = r.emitted(id: 1, start: 0, end: 4, text: "Uh, I think we can ship March 3rd if design signs off by Friday.")
+        var out = r.heard([run(" Uh, I think we can ship March 3rd if design signs off by Friday.", 0.1, 3.9)], through: 4.1)
+        out += r.heard([run(" Great.", 4.2, 4.6)])
+        out += r.heard([run(" let's lock that in", 4.7, 5.4)], through: 5.6)
+        // The line it was said in comes now: the first one settles with it as context.
+        out += r.emitted(id: 2, start: 4.7, end: 5.4, text: "Let's lock that in")
+        out += r.finish()
+        #expect(out.map { $0.text.trimmingCharacters(in: .whitespaces) } == [
+            "Uh, I think we can ship March 3rd if design signs off by Friday.", "Great. let's lock that in",
+        ])
+    }
+
+    /// A closed line whose end the alignment puts inside its last word still keeps its ".".
+    @Test func closedLineKeepsItsMark() {
+        var r = RecordRefiner()
+        _ = r.emitted(id: 1, start: 0, end: 0.5, text: "Great.")
+        _ = r.emitted(id: 2, start: 0.7, end: 1.5, text: "lock that in.")
+        _ = r.emitted(id: 3, start: 6, end: 7, text: "Okay, so where are we on the launch?")
+        var out = r.heard([run(" Great.", 0, 0.5)])
+        out += r.heard([run(" Let's lock that in", 0.6, 1.5)], through: 1.7)
+        #expect(out.first?.text.trimmingCharacters(in: .whitespaces) == "Great.")
+    }
+
     @Test func finishSettlesTheRest() {
         var r = RecordRefiner()
         _ = r.emitted(id: 1, start: 0, end: 2, text: "好的。")

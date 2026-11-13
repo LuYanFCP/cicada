@@ -76,10 +76,20 @@ public static class Correction
         if (!latinFrom && !latinTo && Han(c.From) && Han(c.To) && SoundsAlike(c.From, c.To)) return Verdict.Apply;
         if (latinFrom && latinTo && c.From.All(char.IsAscii) && c.To.All(char.IsAscii) && e.Confidence >= SpellingAt
             && Distance(c.From.ToLowerInvariant(), c.To.ToLowerInvariant()) <= 2) return Verdict.Apply;
-        // A new name (Chinese heard as a Latin name, or a respelled one): sound can't check it.
-        if (latinTo && e.Confidence >= AskAt) return Verdict.Ask;
+        // A new name (Chinese heard as a Latin name, or a respelled one): sound can't check it. A
+        // name has a capital or a digit; "X平台 → X platform" is a translation, and one 对 to it
+        // taught the word list 平台 → platform, which then rewrote every 平台 in the meeting.
+        if (latinTo && e.Confidence >= AskAt && NameShaped(c.To)) return Verdict.Ask;
         return Verdict.Drop;
     }
+
+    /// Latin text that could be a name: a capital or a digit in it (Morpho, GPT4o), not "platform".
+    public static bool NameShaped(string s) => s.Any(c => char.IsAsciiLetterUpper(c) || char.IsAsciiDigit(c));
+
+    /// A Chinese word "fixed" into a plain English one (平台 → platform): a translation, not a
+    /// misheard name.
+    public static bool Translation(string heard, string word) =>
+        Han(heard) && word.Any(char.IsAsciiLetter) && word.All(char.IsAscii) && !NameShaped(word);
 
     // Toneless pinyin for every CJK Unified Ideograph (U+4E00–U+9FFF) that has a reading: Windows
     // has no Mandarin transform of its own, so this table was generated once from Apple's ICU/CLDR
@@ -146,6 +156,24 @@ public static class Correction
         return row[b.Length];
     }
 
+    /// Where `s` stands as words of its own in `text` (its offset, or -1): a Latin edge of it never
+    /// runs on into a Latin word around it. `Core` pads a fix to two characters, so the word list
+    /// learned "S平 → X平", which matched inside "iOS平台" and made it "iOX平台".
+    public static int WordIn(string s, string text)
+    {
+        if (s.Length == 0) return -1;
+        static bool Latin(char c) => char.IsAsciiLetterOrDigit(c);
+        for (int from = 0; from < text.Length;)
+        {
+            int at = text.IndexOf(s, from, StringComparison.Ordinal);
+            if (at < 0) return -1;
+            int end = at + s.Length;
+            if (!(Latin(s[0]) && at > 0 && Latin(text[at - 1])) && !(Latin(s[^1]) && end < text.Length && Latin(text[end]))) return at;
+            from = at + 1;
+        }
+        return -1;
+    }
+
     /// The line as shown: each applied fix replaces its words where they still are. The marks are
     /// the replaced words (start, length in the shown text), for the dotted underline.
     public static (string Text, List<(int Start, int Length)> Marks) Apply(IReadOnlyList<LineFix> fixes, string src)
@@ -156,7 +184,8 @@ public static class Correction
         foreach (var f in fixes.Where(f => f.User != true).Concat(fixes.Where(f => f.User == true)))
         {
             if (!f.Applied || f.From.Length == 0) continue;
-            var at = text.IndexOf(f.From, StringComparison.Ordinal);
+            var at = WordIn(f.From, text);
+            if (at < 0) at = text.IndexOf(f.From, StringComparison.Ordinal);
             if (at < 0) continue;
             var delta = f.To.Length - f.From.Length;
             for (int k = 0; k < spans.Count; k++) if (spans[k].At > at) spans[k] = (spans[k].Word, spans[k].At + delta);

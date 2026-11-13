@@ -84,6 +84,10 @@ object SpeakerLabels {
         return n
     }
 
+    /// Whether lines say who spoke. An imported file has no "other side" to call 对方: its lines
+    /// are named only once its voices are told apart.
+    fun saysWho(s: Session, numbers: Map<String, Int>): Boolean = s.sourceFile == null || numbers.isNotEmpty()
+
     /// Who said a line: 你 · 同传 (said with 我说, so the other side heard its translation), a
     /// speaker's name or number, else 对方 (未识别 once others have numbers).
     fun speakerName(l: TranscriptLine, numbers: Map<String, Int>, names: Map<Int, String>): String {
@@ -128,8 +132,7 @@ object TranscriptExport {
         if (notes.isNotEmpty()) b.append(notes).append("## ${Strings.L("文字记录")}\n\n")
         val numbers = SpeakerLabels.numbers(s.lines); val names = SpeakerLabels.names(s)
         for (l in s.lines) {
-            // An imported file has no "other side" to name.
-            val who = if (s.sourceFile == null) " ${SpeakerLabels.speakerName(l, numbers, names)}" else ""
+            val who = if (SpeakerLabels.saysWho(s, numbers)) " ${SpeakerLabels.speakerName(l, numbers, names)}" else ""
             b.append("**[${Languages.clock(l.t)}]$who**  \n${l.shown}\n")
             l.dst?.takeIf { it != l.shown && it.isNotEmpty() }?.let { b.append("> $it\n") }
             b.append("\n")
@@ -187,7 +190,7 @@ object TranscriptExport {
         }
         val numbers = SpeakerLabels.numbers(s.lines); val names = SpeakerLabels.names(s)
         for (l in s.lines) {
-            add("[${Languages.clock(l.t)}]" + if (s.sourceFile == null) " ${SpeakerLabels.speakerName(l, numbers, names)}" else "", 9.0, bold = true, color = "555555", after = 2.0)
+            add("[${Languages.clock(l.t)}]" + if (SpeakerLabels.saysWho(s, numbers)) " ${SpeakerLabels.speakerName(l, numbers, names)}" else "", 9.0, bold = true, color = "555555", after = 2.0)
             add(l.shown, 11.0, after = 2.0)
             l.dst?.takeIf { it != l.shown && it.isNotEmpty() }?.let { add(it, 11.0, color = "4D4D4D", after = 10.0) }
         }

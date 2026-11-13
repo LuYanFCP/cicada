@@ -108,8 +108,10 @@ public sealed class LiveFixes
         foreach (var t in Vocabulary.Terms)
             foreach (var h in t.Heard)
             {
-                // A heard form two words claim (两个都留) is never fixed silently.
-                if (Correction.Length(h) < 2 || !src.Contains(h, StringComparison.Ordinal) || refused.Contains(Pair(h, t.Word))
+                // A heard form two words claim (两个都留) is never fixed silently. A translation a yes taught
+                // before that was refused (平台 → platform) isn't either; one the user typed is.
+                if (Correction.Length(h) < 2 || Correction.WordIn(h, src) < 0 || refused.Contains(Pair(h, t.Word))
+                    || (t.Source != "user" && Correction.Translation(h, t.Word))
                     || Vocabulary.Owners(h, t.Word).Count > 0) continue;
                 if (out_.Any(f => f.From == h || (f.Applied && f.From.Contains(h, StringComparison.Ordinal)) || (f.Off == true && f.From == h))) continue;
                 out_.Add(new LineFix(h, t.Word));

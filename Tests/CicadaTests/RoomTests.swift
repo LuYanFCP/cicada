@@ -9,6 +9,27 @@ import Testing
     let airpods = In(uid: "airpods", bluetooth: true)
     let blackhole = In(uid: "blackhole", virtual: true)
 
+
+    @Test func explicitPhoneWinsOverTheSystemDefault() {
+        let phone = In(uid: "continuity-iphone")
+        #expect(RoomMicPlan.pick(defaultUID: "builtin", inputs: [builtIn, phone],
+                                preferredUID: phone.uid) == phone.uid)
+    }
+
+    @Test func explicitHeadsetIsHonoredForPersonalNotes() {
+        #expect(RoomMicPlan.pick(defaultUID: "builtin", inputs: [builtIn, airpods],
+                                preferredUID: airpods.uid) == airpods.uid)
+    }
+
+    @Test func missingOrVirtualPreferenceFallsBackSafely() {
+        #expect(RoomMicPlan.pick(defaultUID: "usb", inputs: [builtIn, usb],
+                                preferredUID: "missing-phone") == "usb")
+        #expect(RoomMicPlan.pick(defaultUID: "builtin", inputs: [builtIn, blackhole],
+                                preferredUID: blackhole.uid) == "builtin")
+        #expect(RoomMicPlan.pick(defaultUID: nil, inputs: [],
+                                preferredUID: "missing-phone") == nil)
+    }
+
     @Test func keepsTheChosenMicrophone() {
         #expect(RoomMicPlan.pick(defaultUID: "usb", inputs: [builtIn, usb, airpods]) == "usb")
         #expect(RoomMicPlan.pick(defaultUID: "builtin", inputs: [builtIn, usb]) == "builtin")

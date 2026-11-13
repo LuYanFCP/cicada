@@ -35,6 +35,11 @@ final class AppSettings: ObservableObject {
     @Published var speakConfirmed: Bool {
         didSet { save() }
     }
+    /// 不用按键: interpret whenever I speak, no key held (`HandsFreeDetector`). Mac only: the ports
+    /// have no echo cancellation to hear me over the meeting.
+    @Published var speakHandsFree: Bool {
+        didSet { save() }
+    }
     /// Locale of the language I speak.
     @Published var speakFrom: String {
         didSet { save() }
@@ -60,6 +65,14 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
     @Published var recordAudio: Bool {
+        didSet { save() }
+    }
+    /// 存到文件夹: settled meetings are also written as Markdown into `exportFolder` (a path; empty
+    /// until one is chosen). Not a secret: it may sit in UserDefaults.
+    @Published var exportOn: Bool {
+        didSet { save() }
+    }
+    @Published var exportFolder: String {
         didSet { save() }
     }
     /// Imported files: the language they are in ("auto" or a locale), and whether notes are written
@@ -136,6 +149,28 @@ final class AppSettings: ObservableObject {
     @Published var speechModel: String {
         didSet { save() }
     }
+    /// 语音识别 › 内置: the meeting recognized by the engine inside the app (`SpeechEngine`) with
+    /// this model, instead of this Mac's own recognition or a server (`speechServer` is off then).
+    @Published var speechEngine: Bool {
+        didSet { save() }
+    }
+    @Published var speechEngineModel: String {
+        didSet { save() }
+    }
+    /// The engine is chosen and this build on this Mac has it.
+    var speechBuiltIn: Bool { speechEngine && SpeechEngine.available }
+    /// The meeting is recognized by a speech client of its own (a server or the engine) rather
+    /// than by this Mac's recognition or the audio model.
+    var speechOwn: Bool { speechServer || speechBuiltIn }
+    /// The custom service's notes: 另一个服务 (its own address, empty: the same one, and its own key
+    /// in the `custom-notes` key file). Off keeps the address, so switching back and forth loses
+    /// nothing. The notes model is `aiModels["custom.notes"]` (empty: the translation model).
+    @Published var aiCustomNotesOwn: Bool {
+        didSet { save() }
+    }
+    @Published var aiCustomNotesBase: String {
+        didSet { save() }
+    }
     /// 语音和文字只发给你的服务: with the custom service, Google Translate is never asked (partial
     /// lines show the original). Kept when another service is picked, but only acts on the custom one.
     @Published var aiCustomOnly: Bool {
@@ -200,8 +235,15 @@ final class AppSettings: ObservableObject {
             let voice = (aiVoiceModels["custom"] ?? "").trimmingCharacters(in: .whitespaces)
             let voiceBase = aiCustomVoiceBase.isEmpty ? base : AIProvider.customBase(aiCustomVoiceBase)
             let name = aiCustomVoice.trimmingCharacters(in: .whitespaces)
-            return AIConfig(provider: p, base: base, textModel: aiModels["custom"] ?? "", voiceModel: voice.isEmpty ? nil : voice,
-                            voiceBase: voiceBase, customVoice: name.isEmpty ? nil : name)
+            let textModel = aiModels["custom"] ?? ""
+            let notesModel = (aiModels["custom.notes"] ?? "").trimmingCharacters(in: .whitespaces)
+            let notesAddress = aiCustomNotesOwn ? aiCustomNotesBase.trimmingCharacters(in: .whitespaces) : ""
+            let notesBase = notesAddress.isEmpty ? nil : AIProvider.customBase(notesAddress)
+            return AIConfig(provider: p, base: base, textModel: textModel, voiceModel: voice.isEmpty ? nil : voice,
+                            voiceBase: voiceBase, customVoice: name.isEmpty ? nil : name,
+                            notesModel: notesModel.isEmpty || notesModel == textModel ? nil : notesModel,
+                            notesBase: notesBase == base ? nil : notesBase, notesOwnService: aiCustomNotesOwn,
+                            notesBadAddress: !notesAddress.isEmpty && notesBase == nil)
         default:
             return AIConfig(provider: p, base: p.base, textModel: aiModels[p.id.rawValue] ?? p.textModels.first?.id ?? "",
                             voiceModel: p.hasVoices ? aiVoiceModels[p.id.rawValue] ?? p.voiceModels.first?.id : nil, voiceBase: p.base)
@@ -258,6 +300,10 @@ final class AppSettings: ObservableObject {
     @Published var listenSource: String {
         didSet { save() }
     }
+    /// The microphone chosen beside 打开麦克风, by UID; empty is 自动. Never the system default's.
+    @Published var roomMicUID: String {
+        didSet { save() }
+    }
     /// Only the room: nothing is in a call on this Mac (the translation is read out of the speakers).
     var listensToRoom: Bool { listenSource == "room" }
     /// The room mic is open: 会议室 or 电脑和会议室.
@@ -285,12 +331,15 @@ final class AppSettings: ObservableObject {
         speakConfirmed = defaults.object(forKey: "speakConfirmed") as? Bool ?? defaults.bool(forKey: "speakEnabled")
         speakFrom = defaults.string(forKey: "speakFrom")
             ?? speakLocale(forLanguage: Cicada.myLanguage(systemLanguages: Locale.preferredLanguages))
+        speakHandsFree = defaults.bool(forKey: "speakHandsFree")
         speakTo = defaults.string(forKey: "speakTo") ?? "room"
         speakOutput = defaults.string(forKey: "speakOutput") ?? ""
         autoSystemMic = defaults.object(forKey: "autoSystemMic") as? Bool ?? true
         speakMic = defaults.string(forKey: "speakMic") ?? ""
         savedSystemInput = defaults.string(forKey: "savedSystemInput") ?? ""
         recordAudio = defaults.object(forKey: "recordAudio") as? Bool ?? true
+        exportOn = defaults.bool(forKey: "exportOn")
+        exportFolder = defaults.string(forKey: "exportFolder") ?? ""
         importLanguage = defaults.string(forKey: "importLanguage") ?? "auto"
         importNotes = defaults.object(forKey: "importNotes") as? Bool ?? true
         overlayAuto = defaults.object(forKey: "overlayAuto") as? Bool ?? true
@@ -307,6 +356,8 @@ final class AppSettings: ObservableObject {
         speechServer = defaults.bool(forKey: "speechServer")
         speechBase = defaults.string(forKey: "speechBase") ?? ""
         speechModel = defaults.string(forKey: "speechModel") ?? ""
+        speechEngine = defaults.bool(forKey: "speechEngine")
+        speechEngineModel = defaults.string(forKey: "speechEngineModel") ?? EngineModel.all[0].id
         sentenceTranslation = defaults.bool(forKey: "sentenceTranslation")
         sentenceBase = defaults.string(forKey: "sentenceBase") ?? ""
         sentenceModel = defaults.string(forKey: "sentenceModel") ?? ""
@@ -315,6 +366,8 @@ final class AppSettings: ObservableObject {
         audioModel = defaults.string(forKey: "audioModel") ?? ""
         audioFormat = defaults.string(forKey: "audioFormat") ?? "openai"
         aiCustomOnly = defaults.bool(forKey: "aiCustomOnly")
+        aiCustomNotesOwn = defaults.bool(forKey: "aiCustomNotesOwn")
+        aiCustomNotesBase = defaults.string(forKey: "aiCustomNotesBase") ?? ""
         displayMode = defaults.string(forKey: "displayMode") ?? "notes"
         speakVoices = defaults.dictionary(forKey: "speakVoices") as? [String: String] ?? [:]
         endWithApp = defaults.object(forKey: "endWithApp") as? Bool ?? true
@@ -322,6 +375,7 @@ final class AppSettings: ObservableObject {
         silenceEnd = defaults.string(forKey: "silenceEnd") ?? "prompt"
         silenceMinutes = defaults.object(forKey: "silenceMinutes") as? Double ?? 10
         listenSource = ["room", "both"].contains(defaults.string(forKey: "listenSource")) ? defaults.string(forKey: "listenSource")! : "system"
+        roomMicUID = defaults.string(forKey: "roomMicUID") ?? ""
         diagnostics = defaults.object(forKey: "diagnostics") as? Bool ?? DevBuild.isDev
         notesCapturable = defaults.bool(forKey: "notesCapturable")
         fixMisheard = defaults.object(forKey: "fixMisheard") as? Bool ?? true
@@ -362,12 +416,15 @@ final class AppSettings: ObservableObject {
         defaults.set(speakEnabled, forKey: "speakEnabled")
         defaults.set(speakConfirmed, forKey: "speakConfirmed")
         defaults.set(speakFrom, forKey: "speakFrom")
+        defaults.set(speakHandsFree, forKey: "speakHandsFree")
         defaults.set(speakTo, forKey: "speakTo")
         defaults.set(speakOutput, forKey: "speakOutput")
         defaults.set(autoSystemMic, forKey: "autoSystemMic")
         defaults.set(speakMic, forKey: "speakMic")
         defaults.set(savedSystemInput, forKey: "savedSystemInput")
         defaults.set(recordAudio, forKey: "recordAudio")
+        defaults.set(exportOn, forKey: "exportOn")
+        defaults.set(exportFolder, forKey: "exportFolder")
         defaults.set(importLanguage, forKey: "importLanguage")
         defaults.set(importNotes, forKey: "importNotes")
         defaults.set(overlayAuto, forKey: "overlayAuto")
@@ -384,6 +441,8 @@ final class AppSettings: ObservableObject {
         defaults.set(speechServer, forKey: "speechServer")
         defaults.set(speechBase, forKey: "speechBase")
         defaults.set(speechModel, forKey: "speechModel")
+        defaults.set(speechEngine, forKey: "speechEngine")
+        defaults.set(speechEngineModel, forKey: "speechEngineModel")
         defaults.set(sentenceTranslation, forKey: "sentenceTranslation")
         defaults.set(sentenceBase, forKey: "sentenceBase")
         defaults.set(sentenceModel, forKey: "sentenceModel")
@@ -392,6 +451,8 @@ final class AppSettings: ObservableObject {
         defaults.set(audioModel, forKey: "audioModel")
         defaults.set(audioFormat, forKey: "audioFormat")
         defaults.set(aiCustomOnly, forKey: "aiCustomOnly")
+        defaults.set(aiCustomNotesOwn, forKey: "aiCustomNotesOwn")
+        defaults.set(aiCustomNotesBase, forKey: "aiCustomNotesBase")
         defaults.set(displayMode, forKey: "displayMode")
         defaults.set(speakVoices, forKey: "speakVoices")
         defaults.set(endWithApp, forKey: "endWithApp")
@@ -399,6 +460,7 @@ final class AppSettings: ObservableObject {
         defaults.set(silenceEnd, forKey: "silenceEnd")
         defaults.set(silenceMinutes, forKey: "silenceMinutes")
         defaults.set(listenSource, forKey: "listenSource")
+        defaults.set(roomMicUID, forKey: "roomMicUID")
         defaults.set(diagnostics, forKey: "diagnostics")
         defaults.set(notesCapturable, forKey: "notesCapturable")
         defaults.set(speakerVoices, forKey: "speakerVoices")

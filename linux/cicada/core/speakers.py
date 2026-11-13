@@ -244,6 +244,12 @@ def label(number: int, shown: dict) -> str:
     return shown.get(number) or strings.LF("说话人 %lld", number)
 
 
+def says_who(s, nums: dict) -> bool:
+    """Whether lines say who spoke. An imported file has no "other side" to call 对方: its lines are
+    named only once its voices are told apart (TranscriptExport.named)."""
+    return s.sourceFile is None or bool(nums)
+
+
 def speaker_name(line, nums: dict, shown: dict) -> str:
     """你 · 同传 (said through 同声传译), a speaker, 对方 (no voices told apart) or 未识别 (a voice not on
     show) (TranscriptExport.speakerName)."""

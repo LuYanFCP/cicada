@@ -25,7 +25,8 @@ struct HomeTitle: View {
                         .font(.footnote.weight(.semibold).monospacedDigit())
                         .foregroundStyle(Ink.accentText)
                     }
-                    Text(L("会议室 · \(Pref.pairText(room.languagePair.source, room.languagePair.target))"))
+                    let pair = Pref.pairText(room.languagePair.source, room.languagePair.target)
+                    Text(room.speakerMode ? L("外放 · \(pair)") : L("会议室 · \(pair)"))
                         .font(.system(size: titleSize - 4, weight: .bold)).foregroundStyle(Ink.ink)
                         .lineLimit(1).minimumScaleFactor(0.7)
                 } else {
@@ -58,6 +59,7 @@ struct ListenBar: View {
     @EnvironmentObject var room: RoomListen
     @AppStorage(Pref.source) private var source = "en-US"
     @AppStorage(Pref.target) private var target = "system"
+    @AppStorage(Pref.hear) private var hear = "room"
     /// Glass on the ground (iPhone); white on the iPad's glass sidebar.
     var onGlass = false
 
@@ -80,6 +82,15 @@ struct ListenBar: View {
             Text("开始听").font(.headline).foregroundStyle(Ink.ink).padding(.leading, 18)
             Rectangle().fill(Ink.line).frame(width: 1, height: 20)
             Menu {
+                Section {
+                    Picker(selection: $hear) {
+                        Text("会议室").tag("room")
+                        Text("手机外放").tag("speaker")
+                    } label: { Text("声音来源") }
+                    .pickerStyle(.inline)
+                    // The one grey line: what 手机外放 needs, else what iPhone can't hear at all.
+                    Text(hear == "speaker" ? L("别戴耳机，字幕会浮在小窗里") : L("听不到其他 app 的声音，线上会议请用电脑版"))
+                }
                 Picker(selection: $source) {
                     ForEach(sourceLanguages, id: \.locale) { Text(Pref.name(of: $0)).tag($0.locale) }
                 } label: { Text("对方说") }
@@ -88,7 +99,7 @@ struct ListenBar: View {
                     ForEach(targetLanguages, id: \.code) { Text($0.name).tag($0.code) }
                 } label: { Text("翻译成") }
             } label: {
-                Text(verbatim: "\(Pref.sourceName) → \(targetName(Pref.targetCode))")
+                Text(verbatim: (hear == "speaker" ? L("外放") + " · " : "") + "\(Pref.sourceName) → \(targetName(Pref.targetCode))")
                     .font(.subheadline).foregroundStyle(Ink.secondary).lineLimit(1).minimumScaleFactor(0.75)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .frame(minHeight: 44)
@@ -177,6 +188,7 @@ struct LivePhone: View {
                 ScrollView { NotesPage(notes: notes.notes).padding(20) }
             }
         }
+        .background(alignment: .topLeading) { PiPHost(pip: model.pip).frame(width: 4, height: 4) }
         .background(Ink.ground)
         .overlay(alignment: .bottom) { FixToast(fixes: model.fixes).padding(.horizontal, 16).padding(.bottom, 8) }
         .animation(.snappy(duration: 0.2), value: model.fixes.toast)
@@ -281,6 +293,7 @@ struct LivePad: View {
             }
         }
         }
+        .background(alignment: .topLeading) { PiPHost(pip: model.pip).frame(width: 4, height: 4) }
         .background(Ink.ground)
         .overlay(alignment: .bottom) { FixToast(fixes: model.fixes).frame(maxWidth: 560).padding(.horizontal, 20).padding(.bottom, 12) }
         .animation(.snappy(duration: 0.2), value: model.fixes.toast)

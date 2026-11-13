@@ -522,6 +522,13 @@ struct SettingsView: View {
             }
             group(L("说话")) {
                 SettingsRow(title: L("按住说话")) { ShortcutField(model: model, role: .talk) }
+                // Hands-free runs only while listening, and pauses with the room mic on (`AppModel.handsFreeSetting`).
+                SettingsRow(title: L("不用按键"),
+                            detail: !settings.speakHandsFree ? L("开口就翻译，停顿 1 秒后说出去")
+                                : settings.hearsRoom ? L("打开麦克风时暂停") : model.running ? L("开口就翻译，停顿 1 秒后说出去") : L("开始听会议后生效")) {
+                    Toggle("不用按键", isOn: $settings.speakHandsFree)
+                        .toggleStyle(.switch).labelsHidden().controlSize(.small).tint(Palette.ink)
+                }
                 SettingsRow(title: L("说\(settings.speakFromLang.name)，对方听到")) {
                     PillMenu(value: settings.speakTo == "room" ? L("跟随对方（\(targetName(model.speak.targetCode))）") : targetName(settings.speakTo),
                              options: [("room", L("跟随对方"))] + targetLanguages.map { ($0.code, $0.name) }) {
@@ -749,6 +756,8 @@ struct SettingsView: View {
                     SoftButton(L("打开")) { NSWorkspace.shared.open(model.store.root) }
                 }
             }
+            Text("会后存一份").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.secondary).padding(.top, 4)
+            FolderExportSettings(model: model, settings: settings, exporter: model.folderExport)
             Text("导入的文件").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.secondary).padding(.top, 4)
             SettingsCard {
                 SettingsRow(title: L("文件里说的"), detail: L("译成“翻译成”里的语言")) {

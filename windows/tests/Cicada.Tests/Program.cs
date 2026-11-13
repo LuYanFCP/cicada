@@ -904,6 +904,15 @@ static class Tests
         Equal(2.0, next.Todos[0].T, "to-dos too");
     }
 
+    /// A heard form only a fix wrote ("platform" for 平台) isn't one: it would teach the translator
+    /// and the next fix the same mistake.
+    public static void NotesTermsKeepOnlyFormsTheRecognizerWrote()
+    {
+        var l = new TranscriptLine { Id = "a", Speaker = "them", Src = "我们 twoty 平台", SrcLang = "zh-CN", DstLang = "en", Fixes = [new LineFix("平台", "platform")] };
+        var terms = new List<NoteTerm> { new() { Name = "X平台", Note = "n", Heard = ["Xplatform", "platform", "Twoty"] } };
+        Equal("Twoty", string.Join("|", NotesEngine.HeardAsSaid(terms, [l]).First().Heard), "heard forms");
+    }
+
     public static void NotesAndExportNameSpeakersLikeTheMac()
     {
         // Two voices, five substantive lines each: 说话人 1 (voice 7) and 说话人 2 (voice 9).
@@ -1578,6 +1587,22 @@ static class Tests
         Equal(64, VirtualCable.PackageSha256.Length, "a full SHA-256 is pinned");
     }
 
+    public static void GivesTheSpeakerBackAfterTheCableInstall()
+    {
+        static bool cable(string id) => id.StartsWith("cable");
+        var before = new Dictionary<string, string> { ["0/0"] = "realtek", ["0/1"] = "realtek", ["0/2"] = "headset", ["1/0"] = "mic", ["1/2"] = "cable-out" };
+        var after = new Dictionary<string, string> { ["0/0"] = "cable-in", ["0/1"] = "cable-in", ["0/2"] = "headset", ["1/0"] = "cable-out", ["1/1"] = "cable-out", ["1/2"] = "cable-out" };
+        var back = CableDefaults.Restore(before, after, cable);
+        Equal("0/0=realtek 0/1=realtek 1/0=mic", string.Join(" ", back.Select(r => $"{r.Key}={r.Id}")),
+            "only the defaults the cable took from a real device; one already on the cable, or unknown before, stays");
+        Equal(0, CableDefaults.Restore(before, before, cable).Count, "nothing changed, nothing to do");
+        Equal("realtek", CableDefaults.Speaker([("cable-in", true), ("realtek", false)]), "the first real speaker");
+        Equal(null, CableDefaults.Speaker([("cable-in", true)]), "no real speaker");
+        Check(CableDefaults.ShouldNotify(true, false), "told once");
+        Check(!CableDefaults.ShouldNotify(true, true), "not again while it stays on the cable");
+        Check(!CableDefaults.ShouldNotify(false, false), "a real speaker: nothing to say");
+    }
+
     static SpeakEngine Speaker(LingClient ling, NoVoice voice, AppSettings? settings = null) =>
         new(ling, new Translator(ling, new Fake(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable))), new SessionStore(), settings ?? new AppSettings(), () => "en", () => null, voice);
 
@@ -1656,9 +1681,38 @@ static class Tests
             for (var i = 0; i < 30; i++) { log.Add(true); now += 0.1; }
             Check(await engine.Speak(Wav.Bytes(Tone(1)), new Sink()) is null && asked == 1, "pressed while the meeting played: not sent");
             Equal(Strings.L("对方在说话时说的，没有说出去"), engine.Problem, "and the bar says why");
+            // The same press through Windows' echo cancellation: the meeting is taken out, I am sent.
+            reply = "LANG: zh-CN\nORIGINAL: 我们周三能测完吗？\nTRANSLATION: Can we finish testing by Wednesday?";
+            engine.BeginRecording();
+            for (var i = 0; i < 30; i++) { log.Add(true); now += 0.1; }
+            Equal("Can we finish testing by Wednesday?", await engine.Speak(Wav.Bytes(Tone(1)), new Sink(), echoCancelled: true), "pressed while the meeting played, echo cancelled: sent");
+            Check(asked == 2 && engine.Problem is null, "and heard by the service");
+            // Echo cancellation doesn't let a silent press through.
+            engine.BeginRecording();
+            for (var i = 0; i < 30; i++) { log.Add(true); now += 0.1; }
+            Check(await engine.Speak(Wav.Bytes(new short[16000 * 3]), new Sink(), echoCancelled: true) is null && asked == 2, "a silent press still sends nothing");
         }
         finally { LingClient.Spacing = old; }
         Check(PressSpeech.Filler("嗯嗯。") && PressSpeech.Filler("Um, uh...") && !PressSpeech.Filler("嗯，好的。") && !PressSpeech.Filler("OK."), "fillers");
+        Check(PressSpeech.Filler("翻译结果：") && PressSpeech.Filler("Translation:") && !PressSpeech.Filler("我想补充三点：价格、时间和人手。"), "a bare heading is no sentence");
+    }
+
+    public static void EchoIsDroppedOnlyFromThePlainMic()
+    {
+        Check(SpeakEngine.EchoDrop(false, 0.51), "plain mic, meeting over half the press: dropped");
+        Check(!SpeakEngine.EchoDrop(false, 0.5), "half exactly: kept, as before");
+        Check(!SpeakEngine.EchoDrop(true, 1.0), "echo cancelled: never dropped as echo");
+        var aec = EchoCancel.Effect;
+        var ns = new Guid("6f64adbf-8211-11e2-8c70-2c27d7f001fa");
+        Check(!EchoCancel.InEffect(null), "no effects list (Windows 10): plain");
+        Check(!EchoCancel.InEffect([]), "nothing listed: plain");
+        Check(!EchoCancel.InEffect([new(ns, false, true)]), "noise suppression alone isn't echo cancellation");
+        Check(!EchoCancel.InEffect([new(aec, false, false)]), "AEC listed but off: plain");
+        Check(EchoCancel.InEffect([new(ns, false, true), new(aec, false, true)]), "AEC on: cancelled");
+        Check(EchoCancel.CanTurnOn([new(aec, true, false)]) && !EchoCancel.CanTurnOn([new(aec, false, false)]) && !EchoCancel.CanTurnOn([new(aec, true, true)]), "only an AEC that is off and may be set is turned on");
+        var m = PressSpeech.Measure(Wav.Bytes(Tone(1)));
+        Check(m.Spoken && m.Summary.StartsWith("voiced ") && m.Summary.Contains("dBFS"), $"the press measure is logged: {m.Summary}");
+        Check(!PressSpeech.Measure(Wav.Bytes(new short[100])).Spoken, "too short to measure");
     }
 
     public static async Task WhatISayGoesAheadOfTheMeeting()
@@ -1929,11 +1983,13 @@ static class Tests
     sealed class Service(Func<string, string, HttpResponseMessage> respond) : HttpMessageHandler
     {
         public readonly List<(string url, string body)> Sent = [];
+        /// The key each request carried ("Bearer …"), in the order of Sent.
+        public readonly List<string?> Auth = [];
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancel)
         {
             var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancel);
             var url = request.RequestUri!.ToString();
-            lock (Sent) Sent.Add((url, body));
+            lock (Sent) { Sent.Add((url, body)); Auth.Add(request.Headers.Authorization?.ToString()); }
             return respond(url, body);
         }
     }
@@ -2223,6 +2279,148 @@ static class Tests
             await ling.Chat("x", "Translate.", Priority.Translate);
             Check(fake.Sent.Single().body.Contains("chat_template_kwargs"), "the text server still gets it");
             Check(ling.Health.Translate is { Thinks: false } && !ling.Health.Slow, ling.Health.Summary);
+        }
+        finally { LingClient.Spacing = old; }
+    }
+
+    // MARK: Notes apart (LingTests.swift › Notes apart)
+
+    /// A custom service whose notes use "big"; with `own`, at notes.example with 另一个服务.
+    static (LingClient ling, AppSettings settings, Service fake) NotesClient(bool own, Func<string, string, HttpResponseMessage> respond, string? notesKey = null, GateClock? clock = null)
+    {
+        var s = new AppSettings
+        {
+            AiProvider = "custom", AiCustomBase = "https://main.example/v1", AiModels = { ["custom"] = "mt", ["custom.notes"] = "big" },
+            AiCustomNotesOwn = own, AiCustomNotesBase = own ? "https://notes.example/v1" : "",
+        };
+        var k = new AIKey(new PlainProtector(), service: () => s.AiProvider);
+        k.Remove(); k.Remove(LingClient.NotesKeyName);
+        k.Save("sk-main-1111111111");
+        if (notesKey is not null) k.Save(notesKey, LingClient.NotesKeyName);
+        var fake = new Service(respond);
+        return (new LingClient(k, fake, s.AIConfig, clock), s, fake);
+    }
+
+    public static async Task NotesGoToTheirModelAndServerTranslationStays()
+    {
+        var old = LingClient.Spacing; LingClient.Spacing = 0;
+        try
+        {
+            var (ling, _, fake) = NotesClient(true, (_, _) => Reply("{}"), notesKey: "sk-notes-222222222");
+            await ling.Chat("x", "Notes.", Priority.Notes, json: true);
+            await ling.Chat("y", "Translate.", Priority.Translate);
+            Equal("big,mt", string.Join(",", fake.Sent.Select(x => JsonNode.Parse(x.body)!["model"]!.GetValue<string>())), "models");
+            Equal("https://notes.example/v1/chat/completions,https://main.example/v1/chat/completions", string.Join(",", fake.Sent.Select(x => x.url)), "servers");
+            Equal("Bearer sk-notes-222222222,Bearer sk-main-1111111111", string.Join(",", fake.Auth), "keys");
+            // A live line's corrections ride at Notes priority but are translation's.
+            await ling.Chat("z", "JSON only.", Priority.Notes, notes: false);
+            Check(fake.Sent[^1].url.StartsWith("https://main.example/") && fake.Auth[^1] == "Bearer sk-main-1111111111", "corrections stay with translation");
+        }
+        finally { LingClient.Spacing = old; }
+    }
+
+    public static async Task NotesWithoutTheirOwnKeyUseTheTranslationKey()
+    {
+        var old = LingClient.Spacing; LingClient.Spacing = 0;
+        try
+        {
+            var (ling, _, fake) = NotesClient(true, (_, _) => Reply("{}"));
+            await ling.Chat("x", "Notes.", Priority.Notes);
+            Equal("Bearer sk-main-1111111111", fake.Auth[0], "不填就用上面的 key");
+            Check(!ling.NotesHasOwnKey, "no key of their own");
+            // The same service, another model: same address and key, even with a notes key file left over.
+            var (same, _, f2) = NotesClient(false, (_, _) => Reply("{}"), notesKey: "sk-notes-222222222");
+            await same.Chat("x", "Notes.", Priority.Notes);
+            Check(f2.Sent[0].url.StartsWith("https://main.example/") && f2.Auth[0] == "Bearer sk-main-1111111111", "same service: its key");
+            Equal("big", JsonNode.Parse(f2.Sent[0].body)!["model"]!.GetValue<string>(), "the notes model");
+            Check(!same.NotesHasOwnKey, "同一个服务 has no key of its own");
+            // 另一个服务 at an http address on the internet: notes aren't sent anywhere else instead.
+            var (bad, s3, f3) = NotesClient(true, (_, _) => Reply("{}"), notesKey: "sk-notes-222222222");
+            s3.AiCustomNotesBase = "http://notes.example/v1";
+            try { await bad.Chat("x", "Notes.", Priority.Notes); Check(false, "not sent"); } catch (LingException) { }
+            Equal(0, f3.Sent.Count, "nothing sent with a bad notes address");
+        }
+        finally { LingClient.Spacing = old; }
+    }
+
+    public static async Task ARefusedNotesKeyLeavesTranslationWorking()
+    {
+        var old = LingClient.Spacing; LingClient.Spacing = 0;
+        try
+        {
+            var (ling, _, _) = NotesClient(true, (_, body) => body.Contains("\"big\"") ? Status(401) : Reply("好"));
+            try { await ling.Chat("x", "Notes.", Priority.Notes); Check(false, "notes refused"); }
+            catch (LingException e) { Equal(LingException.Kind.InvalidKey, e.Failure, "refused"); }
+            Check(ling.KeyState != KeyState.Invalid, "translation's key isn't marked bad");
+            Equal(AICheck.Reason.InvalidKey, ling.Health.Notes?.Why, "the notes' result says so");
+            Check(ling.Health.Failure is null, "translation's steps untouched");
+            Equal("好", await ling.Chat("y", "Translate.", Priority.Translate), "translation still works");
+            Equal("%@ 不认上面的 key，给它单独填一个。".Replace("%@", "notes.example"), ling.Health.NotesLine("notes.example", "big", sharedKey: true), "wants a key of its own");
+        }
+        finally { LingClient.Spacing = old; }
+    }
+
+    public static async Task ANotesServerBusyDoesNotHoldTranslationBack()
+    {
+        var old = LingClient.Spacing; LingClient.Spacing = 0;
+        try
+        {
+            var clock = new FakeClock();
+            var (ling, _, fake) = NotesClient(true, (url, _) => url.Contains("notes.example") ? Busy("20") : Reply("好"), clock: clock);
+            try { await ling.Chat("x", "Notes.", Priority.Notes); Check(false, "busy"); }
+            catch (LingException e) { Equal(LingException.Kind.RateLimited, e.Failure, "notes gave up"); }
+            Check(clock.Now > clock.Start, "notes waited at their own gate");
+            // A translation fails at once while its server cools down; this one isn't.
+            Equal("好", await ling.Chat("y", "Translate.", Priority.Translate), "translation's gate isn't paused");
+            Check(ling.Health.Failure is null && !ling.Health.NotesFailed, "busy is no failure: " + ling.Health.Summary);
+        }
+        finally { LingClient.Spacing = old; }
+    }
+
+    public static void NotesFallBackToTranslationUntilSet()
+    {
+        const string b = "https://main.example/v1/";
+        var plain = new AIConfig(AIProvider.Custom, b, "mt", "");
+        Check(!plain.NotesApart && plain.ForNotes == plain, "nothing set: translation's");
+        var model = new AIConfig(AIProvider.Custom, b, "mt", "", NotesModel: "big");
+        Check(model.NotesApart && model.ForNotes.TextModel == "big" && model.ForNotes.Base == b, "another model, same address");
+        // Only the custom service splits.
+        var ling = new AIConfig(AIProvider.Ling, AIProvider.Ling.Base, "x", "", NotesModel: "big");
+        Check(!ling.NotesApart && ling.ForNotes.TextModel == "x", "Ling doesn't");
+        // From settings: the translation model named again is no model of its own; 另一个服务 off keeps
+        // the address but doesn't use it; an http address on the internet can't be used.
+        var s = new AppSettings { AiProvider = "custom", AiCustomBase = "https://main.example/v1", AiModels = { ["custom"] = "mt", ["custom.notes"] = "mt" } };
+        Check(!s.AIConfig().NotesApart, "same model: not apart");
+        s.AiCustomNotesBase = "https://notes.example/v1";
+        Check(!s.AIConfig().NotesApart && s.AIConfig().ForNotes.Base == b, "同一个服务: the address is kept, not used");
+        s.AiCustomNotesOwn = true;
+        Equal("https://notes.example/v1/", s.AIConfig().ForNotes.Base, "另一个服务");
+        Equal("mt", s.AIConfig().ForNotes.TextModel, "with the translation model");
+        s.AiCustomNotesBase = "http://notes.example/v1";
+        Check(s.AIConfig().NotesBadAddress && s.AIConfig().ForNotes.Base == b, "http to the internet");
+        s.AiCustomNotesBase = "";
+        Check(s.AIConfig().NotesApart && s.AIConfig().ForNotes.Base == b && !s.AIConfig().NotesBadAddress, "另一个服务, no address: the same one, its own key");
+    }
+
+    public static async Task ACheckTestsNotesApartWithoutFailingTranslation()
+    {
+        var old = LingClient.Spacing; LingClient.Spacing = 0;
+        try
+        {
+            // The notes model is gone from the notes server; translation's model, typed by hand, isn't listed but answers.
+            var (ling, _, fake) = NotesClient(true, (url, body) =>
+                url == "https://main.example/v1/models" ? Status(200, "{\"data\":[{\"id\":\"other\"}]}")
+                : url == "https://notes.example/v1/models" ? Status(200, "{\"data\":[{\"id\":\"n1\"},{\"id\":\"n2\"}]}")
+                : url.StartsWith("https://notes.example/") ? Status(404)
+                : Reply("周五发布。"), notesKey: "sk-notes-222222222");
+            await ling.Check();
+            var h = ling.Health;
+            Check(h[AICheck.StepId.Text].Kind == AICheck.Kind.Ok && h.Failure?.Step == AICheck.StepId.Hear, "translation passes (no hear model here): " + h.Summary);
+            Equal(AICheck.Reason.NoModel, h.Notes?.Why, "the notes fail on their own: " + h.Summary);
+            Check(h.NotesFailed && h.Summary.Contains("notes=fail(noModel 404)"), h.Summary);
+            Equal("n1,n2", string.Join(",", ling.NotesCatalog), "the notes server's models, for its menu");
+            Check(!fake.Sent.Any(x => x.url == "https://main.example/v1/chat/completions" && x.body.Contains("JSON object")), "no JSON test against translation");
+            Equal(KeyState.Ok, ling.KeyState, "translation's key is fine");
         }
         finally { LingClient.Spacing = old; }
     }
@@ -2685,6 +2883,12 @@ static class Tests
         var settings = new AppSettings { SpeakVoices = { ["en"] = "ming:US_Emma" } };
         Equal("cloud:Kore", VoiceCatalog.Chosen(settings, "en", zen, true), "a Ming voice isn't sent to ZenMux");
         Equal("ming:US_Emma", VoiceCatalog.Chosen(settings, "en", new AppSettings().AIConfig(), true), "and is used again on Ling");
+        // #22: Windows' voice saved for a language this PC has no voice for.
+        var system = new AppSettings { SpeakVoices = { ["en"] = "system" } };
+        var ling = new AppSettings().AIConfig();
+        Equal("system", VoiceCatalog.Chosen(system, "en", ling, true, windowsHasIt: true), "kept where Windows has it");
+        Equal("ming:US_Emma", VoiceCatalog.Chosen(system, "en", ling, true, windowsHasIt: false), "the service's voice where it doesn't");
+        Equal("ming:US_Emma", VoiceCatalog.Chosen(system, "en", ling, false, windowsHasIt: false), "even before the service is checked");
     }
 
     public static async Task HearingGoesToTheChosenHearModel()
@@ -2812,6 +3016,28 @@ static class Tests
         Equal(Correction.Verdict.Ask, Verdict("开布特", "Curve", 0.8), "开布特");
         Equal(Correction.Verdict.Ask, Verdict("Ero", "Euler", 0.85), "Ero");
         Equal(Correction.Verdict.Drop, Verdict("莫纳", "Morpho", 0.7), "莫纳");
+    }
+
+    /// A learned "S平 → X平" never reaches into "iOS平台"; on its own it still applies.
+    public static void FixLearnedWordsStayWhole()
+    {
+        Check(Correction.WordIn("S平", "iOS平台很好") < 0, "inside iOS");
+        Check(Correction.WordIn("A工", "DATA工具") < 0, "inside DATA");
+        Check(Correction.WordIn("S平", "在S平台上") >= 0, "on its own");
+        Check(Correction.WordIn("S平", "iOS平台和S平台") >= 0, "the second one");
+        Check(Correction.WordIn("莫拉", "解释这个莫拉的") >= 0, "Chinese edges");
+        Equal("iOS平台和X平台", Correction.Apply([new("S平", "X平")], "iOS平台和S平台").Text, "applied to the whole one");
+    }
+
+    /// A translation isn't a misheard name: one 对 to "X平台 → X platform" taught 平台 → platform.
+    public static void FixTranslationsAreNotAsked()
+    {
+        Equal(Correction.Verdict.Drop, Verdict("X平台", "X platform", 0.9), "X平台");
+        Equal(Correction.Verdict.Drop, Verdict("平台", "platform", 0.95), "平台");
+        Equal(Correction.Verdict.Drop, Verdict("respons", "responsible", 0.85), "respons");
+        Equal(Correction.Verdict.Ask, Verdict("GPT四", "GPT4", 0.85), "GPT四");
+        Check(Correction.Translation("平台", "platform"), "a translation");
+        Check(!Correction.Translation("莫拉", "Morpho"), "a name");
     }
 
     public static void FixConfirmedHeardFormIsApplied()
@@ -2977,6 +3203,15 @@ static class Tests
             Equal("All 2 places heard as 木娜 in this meeting", Strings.LF("整场听成 %@ 的 %lld 处都改", "木娜", 2), "positional");
         }
         finally { Strings.Load(Path.Combine(AppContext.BaseDirectory, "Resources"), "zh-Hans"); }
+    }
+
+    public static void VocabAYesNeverTeachesATranslation()
+    {
+        var v = new Vocabulary(null);
+        v.Confirm("平台", "platform");
+        Equal(0, v.Terms.Count, "a yes in a meeting");
+        v.Confirm("平台", "platform", source: "user");
+        Check(v.Knows("平台", "platform"), "the user's own");
     }
 
     public static void VocabImportLinesWithHeardForms()
@@ -3413,5 +3648,158 @@ static class Tests
         Check(await client.Revoke(shared!.Record, s.Id), "revoked");
         Equal(null, client.Store.Read(s.Id), "forgotten after revoke");
         Equal(2, server.Seen.Count(x => x == "POST /api/v1/devices"), "the device file is reused");
+    }
+
+    // MARK: 存到文件夹 (Tests/fixtures/folder-export is the contract, as in the Mac's FolderExportTests)
+
+    static string FolderFixture(string name) => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "folder-export", name));
+    static Session FolderSession() => Json.Read<Session>(FolderFixture("session.json"))!;
+    static JsonNode FolderCases() => JsonNode.Parse(FolderFixture("cases.json"))!;
+    static TimeZoneInfo FolderZone() => TimeZoneInfo.FindSystemTimeZoneById((string)FolderCases()["timeZone"]!);
+    static IEnumerable<(string, string)> Pairs(string key) => FolderCases()[key]!.AsArray().Select(p => ((string)p![0]!, (string)p[1]!));
+
+    public static void FolderExportFrontmatterBytes()
+    {
+        var got = FolderExportFormat.Frontmatter(FolderSession(), FolderZone());
+        Equal(FolderFixture("frontmatter.md"), got, "frontmatter bytes");
+        Check(!got.Contains('\r'), "\\n line ends on Windows too");
+    }
+
+    public static void FolderExportFileName()
+    {
+        var stem = FolderExportFormat.Stem(FolderSession(), FolderZone());
+        Equal((string)FolderCases()["fileName"]!, FolderExportFormat.FileName(stem, _ => false), "file name");
+    }
+
+    public static void FolderExportNames()
+    {
+        foreach (var (name, want) in Pairs("names")) Equal(want, FolderExportFormat.SafeName(name), $"safe name of «{name}»");
+        foreach (var (title, want) in Pairs("stems"))
+        {
+            var s = FolderSession();
+            s.Title = title;
+            Equal(want, FolderExportFormat.Stem(s, FolderZone()), $"stem of «{title}»");
+        }
+        foreach (var (text, want) in Pairs("escapes")) Equal(want, FolderExportFormat.Quote(text), $"quote of «{text}»");
+        foreach (var c in FolderCases()["collisions"]!.AsArray())
+        {
+            var taken = c!["taken"]!.AsArray().Select(t => (string)t!).ToList();
+            Equal((string)c["want"]!, FolderExportFormat.FileName((string)c["stem"]!, taken.Contains), $"collision with {taken.Count} taken");
+        }
+    }
+
+    /// The name: the user's title, else the notes', else the imported file's, never the display title.
+    public static void FolderExportNamePrecedence()
+    {
+        var s = FolderSession();
+        s.Renamed = false;
+        s.Title = SessionStore.DefaultTitle(s.StartedAt);
+        Equal("产品路线评审", FolderExportFormat.Name(s), "the notes' title");
+        s.Notes = null;
+        Equal("", FolderExportFormat.Name(s), "nothing");
+        s.SourceFile = "Weekly sync.m4a";
+        Equal("Weekly sync", FolderExportFormat.Name(s), "the file's name");
+        Check(FolderExportFormat.Frontmatter(s).Contains("source: \"file\"\nnotes: \"none\""), "an imported file without notes");
+        s.Renamed = null;
+        s.Title = "会议 11月6日 14:00";
+        Equal("Weekly sync", FolderExportFormat.Name(s), "an older record's default title isn't a name");
+    }
+
+    public static void FolderExportPaths()
+    {
+        var json = """{"vaults":{"a":{"path":"C:\\v\\old","ts":1},"b":{"path":"C:\\v\\new","ts":5,"open":true},"c":{"path":"D:\\gone","ts":9}}}""";
+        var vaults = FolderExportFormat.ObsidianVaults(json, p => p != @"D:\gone");
+        Equal(@"C:\v\new|C:\v\old", string.Join("|", vaults), "newest first, only ones that exist");
+        Equal(0, FolderExportFormat.ObsidianVaults("not json").Count, "unreadable");
+        Equal(@"C:\v\new", FolderExportFormat.Vault(@"c:\V\New\Cicada", vaults), "inside a vault, ignoring case");
+        Equal(null, FolderExportFormat.Vault(@"C:\v\newer\Cicada", vaults), "a neighbour isn't inside");
+        Equal("Documents › Cicada", FolderExportFormat.ShortPath(@"C:\Users\a\Documents\Cicada\"), "parent › folder");
+        Equal("D: › Cicada", FolderExportFormat.ShortPath(@"D:\Cicada"), "a drive's top folder");
+        Equal("文档 › Cicada", FolderExportFormat.ShortPath(@"C:\Users\a\Documents\Cicada", p => p.EndsWith("Documents") ? "文档" : null), "Explorer's names");
+        Equal(@"D:\", FolderExportFormat.Parent(@"D:\Cicada"), "the drive is the parent");
+        string[] roots = [@"C:\Users\a\OneDrive\Documents", @"C:\Users\a\Desktop"];
+        Check(FolderExportFormat.Protected(@"C:\Users\a\OneDrive\Documents\Cicada", roots), "Documents is protected");
+        Check(!FolderExportFormat.Protected(@"C:\Users\a\Notes\Cicada", roots), "elsewhere isn't");
+    }
+
+    public static async Task FolderExportWrites()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cicada-export-" + Guid.NewGuid().ToString("N"));
+        var folder = Path.Combine(dir, "Cicada");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new SessionStore();
+            var s = store.Begin(new DateTimeOffset(2026, 11, 6, 14, 0, 0, TimeSpan.Zero));
+            store.Append(s.Id, new TranscriptLine { Id = "l1", Src = "Hello", SrcLang = "en", Dst = "你好", DstLang = "zh", T = 3 });
+            store.End(s.Id, s.StartedAt.AddMinutes(30));
+            store.Rename(s.Id, "周会");
+            var settings = new AppSettings();
+            var index = Path.Combine(dir, "FolderExport.json");
+            var ex = new FolderExporter(store, settings, index) { Delay = TimeSpan.FromMilliseconds(20) };
+            var stem = FolderExportFormat.Stem(store.Get(s.Id)!);
+            // A file Cicada didn't write is never overwritten.
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, stem + ".md"), "mine");
+            ex.Choose(folder);
+            await ex.Idle();
+            Equal(null, ex.Trouble, "the folder can be written");
+            Check(ex.Unwritten.Any(x => x.Id == s.Id), "an earlier meeting waits for 也存一份");
+            ex.WriteAll();
+            await ex.Idle();
+            Equal(stem + " 2.md", Path.GetFileName(ex.FileFor(s.Id)), "the taken name gets 2");
+            Equal("mine", File.ReadAllText(Path.Combine(folder, stem + ".md")), "the user's file stays");
+            var text = File.ReadAllText(ex.FileFor(s.Id)!);
+            Check(text.StartsWith("---\ncicada: 1\n") && text.Contains("title: \"周会\""), "frontmatter, then the body");
+            Check(!Directory.GetFiles(folder, ".cicada*").Any(), "no temporary or check file left");
+            Check(Json.Read<FolderExporter.Index>(File.ReadAllText(index))!.Files.ContainsKey(s.Id), "the index keeps it");
+            // A new name moves the file.
+            store.Rename(s.Id, "周会改");
+            store.Flush();
+            ex.Saved(s.Id);
+            await Task.Delay(200);
+            await ex.Idle();
+            var moved = ex.FileFor(s.Id)!;
+            Check(Path.GetFileName(moved).EndsWith("周会改.md"), "renamed: " + Path.GetFileName(moved));
+            Check(!File.Exists(Path.Combine(folder, stem + " 2.md")), "the old file went");
+            // Unchanged content isn't written again.
+            var at = File.GetLastWriteTimeUtc(moved);
+            ex.Saved(s.Id);
+            await Task.Delay(200);
+            await ex.Idle();
+            Equal(at, File.GetLastWriteTimeUtc(moved), "unchanged");
+            // Deleting the record leaves its file.
+            ex.Deleted(s.Id);
+            Check(File.Exists(moved), "the file stays");
+            store.Delete(s.Id);
+            // A folder whose parent is gone isn't made.
+            ex.Choose(Path.Combine(dir, "gone", "Cicada"));
+            await ex.Idle();
+            Equal(FolderExporter.Kind.Missing, ex.Trouble?.Kind, "missing");
+            Check(!Directory.Exists(Path.Combine(dir, "gone")), "nothing made");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    // MARK: the talk key (#22: keyboards without right Ctrl)
+
+    public static void TalkKeyChoices()
+    {
+        Equal("rcontrol", new AppSettings().TalkKey, "right Ctrl by default");
+        Equal(0xA3, TalkKey.Named(null).Vk, "no name is right Ctrl");
+        Equal(0xA3, TalkKey.Named("nonsense").Vk, "an unknown name is right Ctrl");
+        Equal("f13", TalkKey.Choose(0x7C).Key?.Name, "F13 can be one");
+        Equal("capslock", TalkKey.Choose(0x14).Key?.Name, "Caps Lock can be one");
+        Equal("lcontrol", TalkKey.Choose(0xA2).Key?.Name, "left Ctrl can be one");
+        Check(TalkKey.Choose(0x41).Key is null && TalkKey.Choose(0x41).Refused is not null, "a letter is refused");
+        Check(TalkKey.Choose(0x20).Key is null, "space is refused");
+        Check(TalkKey.Choose(0xA5).Key is null, "right Alt is refused (AltGr, window menus)");
+        Check(TalkKey.Choose(0x5B).Key is null, "the Windows key is refused");
+        Check(TalkKey.All.Where(k => k.Modifier).All(k => k.Name.EndsWith("control") || k.Name.EndsWith("shift")), "only Ctrl and Shift pass through to other apps");
+        Equal(TalkKey.All.Count, TalkKey.All.Select(k => k.Vk).Distinct().Count(), "one key per code");
+        foreach (var k in TalkKey.All) Equal(k, TalkKey.Named(k.Name), $"{k.Name} round-trips");
+        var s = Json.Read<AppSettings>(Json.Write(new AppSettings { TalkKey = "f13" }))!;
+        Equal("f13", s.TalkKey, "kept in settings");
+        Equal("rcontrol", Json.Read<AppSettings>("{}")!.TalkKey, "settings from before it are right Ctrl");
     }
 }

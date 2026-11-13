@@ -127,8 +127,10 @@ class LiveFixes:
         out = list(fixes)
         for t in self.vocabulary.snapshot():
             for h in t.heard:
-                # A heard form two words claim (两个都留) is never fixed silently.
-                if len(h) < 2 or h not in src or _pair(h, t.word) in self._refused or self.vocabulary.owners(h, t.word):
+                # A heard form two words claim (两个都留) is never fixed silently. A translation a yes taught
+                # before that was refused (平台 → platform) isn't either; one the user typed is.
+                if len(h) < 2 or correction.word(h, src) < 0 or _pair(h, t.word) in self._refused \
+                        or (t.source != "user" and correction.translation(h, t.word)) or self.vocabulary.owners(h, t.word):
                     continue
                 if any(f.from_ == h or (f.applied and h in f.from_) or (f.off is True and f.from_ == h) for f in out):
                     continue

@@ -84,6 +84,39 @@ import Testing
         #expect(abs((s.last?.t ?? 0) - 14.4) < 0.01)
     }
 
+    /// 说话人识别 on an import: a line's voiceprint is cut from the decoded file by its times,
+    /// clipped to the file's end.
+    @Test func lineSoundIsCutFromTheFile() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("cicada-voices-\(UUID().uuidString).caf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
+        do {
+            let file = try AVAudioFile(forWriting: url, settings: format.settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+            let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 48_000)!
+            buf.frameLength = 48_000
+            for i in 0..<48_000 { buf.floatChannelData![0][i] = Float(i / 16_000) }   // second n holds n
+            try file.write(from: buf)
+        }
+        let file = try AVAudioFile(forReading: url)
+        let middle = try #require(ImportVoices.read(file, from: 1, to: 2))
+        #expect(middle.count == 16_000, "\(middle.count)")
+        #expect(middle.first == 1 && middle.last == 1, "\(middle.prefix(3)) … \(middle.suffix(3))")
+        #expect(ImportVoices.read(file, from: 2.5, to: 9)?.count == 8_000)
+        #expect(ImportVoices.read(file, from: 4, to: 5) == nil)
+    }
+
+    /// 重新转写 numbers the voices afresh: names given to the old ones go.
+    @Test @MainActor func retranscribingForgetsVoiceNames() {
+        let store = SessionStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("cicada-retry-\(UUID().uuidString)"))
+        let s = store.beginImport(file: URL(fileURLWithPath: "/tmp/a.m4a"), recordedAt: Date(), duration: 60)
+        store.append(TranscriptLine(id: "f1", t: 0, speaker: "them", src: "Hello there everyone", dst: nil, srcLang: "en", dstLang: "zh"), to: s.id)
+        store.setVoice(in: s.id, lineID: "f1", 0)
+        #expect(store.session(s.id)?.lines.first?.voice == 0)
+        store.setVoiceName(s.id, voice: 0, "Daniel")
+        store.restartImport(s.id)
+        #expect(store.session(s.id)?.voiceNames == nil && store.session(s.id)?.lines.isEmpty == true)
+    }
+
     @Test func missingTimesFallBack() {
         let s = FileImporter.sentences([("Hello there, everyone.", nil), (" How are you?", nil)], start: 7)
         #expect(s.map(\.t) == [7, 7])

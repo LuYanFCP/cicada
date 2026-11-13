@@ -47,7 +47,8 @@ class AiServiceActivity : Activity() {
         val c = ling.config()
         val p = c.provider
         val key = listOf(ling.keyState, ling.currentKey()?.takeLast(4), ling.aiCheck.summary, ling.aiCheck.at?.let { it / 60_000 }, ling.lastVoice?.first,
-                         ling.textCatalog.size, ling.hearCatalog.size, app.settings.toJson(), Strings.language, open).joinToString("|")
+                         ling.textCatalog.size, ling.hearCatalog.size, ling.notesCatalog.size, ling.notesHasOwnKey,
+                         app.settings.toJson(), Strings.language, open).joinToString("|")
         if (key == shown) return
         shown = key
         page.removeAllViews()
@@ -191,7 +192,7 @@ class AiServiceActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(16) }
         })
         val host = c.base?.let { Uri.parse(it).host } ?: L("你填的地址")
-        page.addView(ui.helper(LF("加密存在这台手机上，只发给 %@", host)).apply { setPadding(ui.dp(16), ui.dp(8), ui.dp(16), 0) })
+        page.addView(ui.helper(LF("加密存在这台手机上，只发给 %@", keyHosts(app, c))).apply { setPadding(ui.dp(16), ui.dp(8), ui.dp(16), 0) })
         // Never "按所选模型计费" here: the user runs it, or their provider bills it its own way.
         val nearby = c.base?.let(Providers::isNearby) ?: false
         val foot = (if (nearby) L("跑在你自己的机器上，不按量计费。") else L("费用以这个服务为准。")) +
@@ -214,10 +215,22 @@ class AiServiceActivity : Activity() {
 
     /// Where the custom service's audio and text go: one host when every use shares it. On a phone
     /// the hear model always listens, so its address always counts.
-    private fun customHosts(c: AIConfig): String {
-        val hosts = listOfNotNull(c.base, c.hearBase, c.voiceBase?.takeIf { c.hasVoices })
-            .map { Uri.parse(it).host }.toSet()
-        return hosts.singleOrNull() ?: L("你填的地址")
+    private fun customHosts(c: AIConfig): String =
+        hostsLine(listOfNotNull(c.base, c.forNotes.base?.takeIf { c.notesApart }, c.hearBase, c.voiceBase?.takeIf { c.hasVoices }))
+
+    /// Where the custom service's key is sent: every use's address, the notes' only while they share it.
+    private fun keyHosts(app: CicadaApp, c: AIConfig): String =
+        hostsLine(listOfNotNull(c.base, c.forNotes.base?.takeIf { c.notesApart && !app.ling.notesHasOwnKey }, c.hearBase,
+                                c.voiceBase?.takeIf { c.hasVoices }))
+
+    /// One host, "a 和 b", or 你填的地址 for more.
+    private fun hostsLine(bases: List<String>): String {
+        val hosts = bases.mapNotNull { Uri.parse(it).host }.distinct()
+        return when (hosts.size) {
+            1 -> hosts[0]
+            2 -> LF("%@ 和 %@", hosts[0], hosts[1])
+            else -> L("你填的地址")
+        }
     }
 
     /// A row that opens to its fields: a state dot, the use, what it runs on, and how it's doing.
@@ -250,30 +263,45 @@ class AiServiceActivity : Activity() {
 
     private val grey = android.graphics.Color.parseColor("#C4C7CE")
 
+    /// "192.168.1.20 · qwen-mt-turbo", then the notes' model, or their own server after a bar.
+    private fun textDetail(c: AIConfig, host: String): String {
+        if (host.isEmpty() || c.textModel.isEmpty()) return L("填上地址和模型")
+        val line = "$host · ${short(c.textModel)}"
+        if (!c.notesApart) return line
+        val n = c.forNotes
+        val notesHost = n.base?.let { Uri.parse(it).host }
+        if (notesHost != null && n.base != c.base) return line + " ｜ $notesHost · ${short(n.textModel)}"
+        return if (n.textModel == c.textModel) line else line + " · ${short(n.textModel)}"
+    }
+
+    /// 翻译和纪要 (AISettings.swift › textSection): 翻译's address, key and model, then 纪要 on the
+    /// same service (another model at most) or another one with its own address and key.
     private fun textSection(app: CicadaApp, c: AIConfig, open: MutableSet<String>, rows: MutableList<View>) {
         val ling = app.ling
         val s = app.settings
         val check = ling.aiCheck
         val host = c.base?.let { Uri.parse(it).host }.orEmpty()
-        val detail = if (host.isEmpty() || c.textModel.isEmpty()) L("填上地址和模型") else "$host · ${short(c.textModel)}"
         val secs = check.translate?.let { "%.1f".format(Strings.locale, it.seconds) }
         // The hear model's own failure shows on its row: the text model may be fine.
         val failed = check.textFailure != null
+        // Translation works but the notes' own model or server doesn't.
+        val notesDown = !failed && check.notesFailed
         val trailing = when {
             check.running -> L("正在检查…")
             failed && ling.hasKey -> status(app)
+            notesDown -> L("纪要写不了")
             else -> secs?.let { LF("翻一句 %@ 秒", it) }
         }
         val dot = when {
             !ling.hasKey -> grey
             check.running -> Palette.accent
             failed -> Palette.link
-            check.slow || check.busy -> AiCheckViews.warn
+            check.slow || check.busy || check.notesFailed -> AiCheckViews.warn
             check.at != null && check[AICheck.StepID.Text] is AICheck.State.Ok -> AiCheckViews.ok
             else -> grey
         }
-        rows.add(useRow("text", open, L("翻译和纪要"), detail, dot, trailing,
-            if (check.slow) AiCheckViews.warn else if (failed) Palette.link else Palette.tertiary))
+        rows.add(useRow("text", open, L("翻译和纪要"), textDetail(c, host), dot, trailing,
+            if (failed || notesDown) Palette.link else if (check.slow) AiCheckViews.warn else Palette.tertiary))
         if ("text" !in open) return
         val k = ling.currentKey()
         val keyLine = when {
@@ -281,24 +309,220 @@ class AiServiceActivity : Activity() {
             k.isEmpty() -> L("本机和局域网服务可不填")
             else -> AIKey.masked(k)
         }
-        val model = if (ling.textCatalog.isNotEmpty())
-            modelRow(L("模型"), null, emptyList(), ling.textCatalog, c.textModel) { app.setAiModel("text", it) }
-        else fieldRow(L("模型"), s.aiModels["custom"].orEmpty(), L("例如 qwen3:14b"), null) { app.setAiModel("text", it) }
+        val model = modelPicker(L("模型"), s.aiModels["custom"].orEmpty(), L("例如 qwen3:14b"), null, host,
+                                { ling.textCatalog }, { ling.fetchCatalog() }) { app.setAiModel("text", it) }
         val steps = k != null && (check.running || failed || (check.at != null && check.failure == null && !check.passed))
-        val facts = if (!steps && check.at != null && check[AICheck.StepID.Text] is AICheck.State.Ok)
+        val apart = c.notesApart && check.passed && check.translate != null
+        val facts = if (!steps && !apart && check.at != null && check[AICheck.StepID.Text] is AICheck.State.Ok)
             listOfNotNull(L("能写纪要"), check.translate?.let { if (it.thinks) L("会先思考") else L("不思考") }).joinToString(" · ") else null
-        rows.add(panel(
+        val views = mutableListOf<View?>(
+            groupTitle(L("翻译")),
             fieldRow(L("地址"), s.aiCustomBase, "http://192.168.1.20:8000/v1", null, shown = ::where) { s.aiCustomBase = it; s.save(); app.aiChanged() },
             badAddress(s.aiCustomBase),
-            model,
             ui.listRow("key", keyLine, trailing = if (!k.isNullOrEmpty()) ui.text(L("更换"), 15f, Palette.link, bold = true, lines = 1) else null) { editKey(this, ui) },
+            model,
+            ui.divider().apply { layoutParams = LinearLayout.LayoutParams(-1, 1).apply { topMargin = ui.dp(4); bottomMargin = ui.dp(4); leftMargin = ui.dp(16) } },
+        )
+        views.addAll(notesGroup(app, c, host))
+        views.addAll(listOf(
             ui.listRow(if (check.running) L("正在检查…") else L("重新检查"), null,
                 leading = ui.icon(R.drawable.i_restore, 22, if (check.running) Palette.tertiary else Palette.body), chevron = false,
                 onClick = if (check.running || k == null) null else ({ app.recheck() })),
             check.slowLine(app.translator.googleOff)?.let { note(it, AiCheckViews.warn) },
             if (steps) AiCheckViews.steps(this, ui, recheck = false) { editKey(this, ui) } else null,
             facts?.let { note(it, Palette.tertiary) },
+            if (apart && !steps) checkRows(c, check) else null,
         ))
+        rows.add(panel(*views.toTypedArray()))
+    }
+
+    private fun groupTitle(text: String) = ui.text(text, 13f, Palette.ink, bold = true, lines = 1).apply {
+        setPadding(ui.dp(16), ui.dp(12), ui.dp(16), ui.dp(2))
+        isAccessibilityHeading = true
+    }
+
+    /// 纪要: the same service as translation (another model at most), or another one with its own
+    /// address and key. Switching back keeps what was typed.
+    private fun notesGroup(app: CicadaApp, c: AIConfig, host: String): List<View?> {
+        val ling = app.ling
+        val s = app.settings
+        val own = s.aiCustomNotesOwn
+        val n = c.forNotes
+        val notesHost = n.base?.let { Uri.parse(it).host } ?: host
+        val shared = !ling.notesHasOwnKey
+        val elsewhere = n.base != c.base
+        val views = mutableListOf<View?>(
+            groupTitle(L("纪要")),
+            ui.segmented(listOf("same" to L("同一个服务"), "own" to L("另一个服务")), if (own) "own" else "same") { app.setNotesOwn(it == "own") }
+                .apply { layoutParams = LinearLayout.LayoutParams(-1, -2).apply { leftMargin = ui.dp(16); rightMargin = ui.dp(16); topMargin = ui.dp(4); bottomMargin = ui.dp(4) } },
+        )
+        if (own) {
+            val nk = if (shared) null else ling.notesKey()
+            views.add(fieldRow(L("地址"), s.aiCustomNotesBase, L("跟上面一样"), null, L("跟上面一样"), ::where) { app.setNotesBase(it) })
+            views.add(badAddress(s.aiCustomNotesBase))
+            views.add(ui.listRow("key", if (nk.isNullOrEmpty()) L("不填就用上面的 key") else AIKey.masked(nk),
+                trailing = if (!nk.isNullOrEmpty()) ui.text(L("更换"), 15f, Palette.link, bold = true, lines = 1) else null) { editNotesKey(app, notesHost) })
+        }
+        views.add(modelPicker(L("模型"), s.aiModels[Providers.NOTES_MODEL].orEmpty(), L("和翻译模型一样"), L("和翻译模型一样"), notesHost,
+            { if (elsewhere) ling.notesCatalog else ling.textCatalog }, { if (elsewhere) ling.fetchNotesCatalog() else ling.fetchCatalog() }) {
+            app.setAiModel("notes", it)
+        })
+        val problem = ling.aiCheck.notesLine(notesHost, n.textModel, sharedKey = shared)
+        views.add(if (problem != null) note(problem, Palette.link) else note(L("用来写实时纪要、识别说话人，默认和翻译用同一个"), Palette.tertiary))
+        return views
+    }
+
+    /// After a check with notes apart: one row each, what it runs and how it did.
+    private fun checkRows(c: AIConfig, check: AICheck): View {
+        val t = check.translate!!
+        val notes = check.notes
+        val notesText = when (notes) {
+            is AICheck.Notes.Ok -> LF("能写纪要 · %@ 秒", "%.1f".format(Strings.locale, notes.seconds))
+            is AICheck.Notes.Fail -> if (notes.why == AICheck.Reason.InvalidKey || notes.why == AICheck.Reason.MgmtKey) L("key 不对") else L("纪要写不了")
+            AICheck.Notes.Running -> L("正在检查…")
+            null -> ""
+        }
+        fun row(use: String, model: String, ok: Boolean, result: String) =
+            ui.listRow(use, short(model), leading = ui.dot(if (ok) AiCheckViews.ok else Palette.link),
+                       trailing = ui.text(result, 13f, if (ok) AiCheckViews.ok else Palette.link, lines = 1).apply { fontFeatureSettings = "tnum" }, chevron = false)
+        val translate = LF("翻一句 %@ 秒", "%.1f".format(Strings.locale, t.seconds)) + " · " + (if (t.thinks) L("会先思考") else L("不思考"))
+        return ui.stack(0,
+            row(L("翻译"), c.textModel, true, translate),
+            row(L("纪要"), c.forNotes.textModel, notes?.ok ?: true, notesText))
+    }
+
+    /// The notes' own key (另一个服务): paste, save, or remove it (back to the key above). It goes
+    /// only to the notes' address.
+    private fun editNotesKey(app: CicadaApp, host: String) {
+        lateinit var dialog: android.app.Dialog
+        lateinit var submit: () -> Unit
+        val status = ui.helper("")
+        val box = ui.keyField { submit() }.apply { hint = L("不填就用上面的 key") }
+        val field = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = ui.rounded(Palette.ground, 16)
+            setPadding(ui.dp(16), ui.dp(4), ui.dp(4), ui.dp(4))
+            addView(box, ui.weight())
+            addView(ui.button(L("粘贴"), "white", R.drawable.i_clipboard, height = 44) { SettingsActivity.paste(box) })
+        }
+        submit = submit@{
+            val text = box.text.toString().trim()
+            if (text.isEmpty()) { dialog.dismiss(); return@submit }
+            if (!app.setNotesKey(text)) { status.text = L("保存失败"); return@submit }
+            dialog.dismiss()
+        }
+        val body = ui.stack(10, field, status,
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(ui.button(L("取消"), "quiet") { dialog.dismiss() }, ui.weight())
+                addView(ui.button(L("保存"), "primary") { submit() }, ui.weight().apply { leftMargin = ui.dp(10) })
+            })
+        if (app.ling.notesHasOwnKey) body.addView(ui.textButton(L("移除"), Palette.link) { app.setNotesKey(null); dialog.dismiss() })
+        dialog = ui.sheet(this, LF("粘贴 %@ 的 key", host), body)
+        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE or android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        dialog.show()
+        box.requestFocus()
+    }
+
+    /// A custom service's model (AISettings.swift › ModelPicker): the row shows it; tapping opens
+    /// the names its `/models` lists, searchable, and takes a name it doesn't list (an alias, a
+    /// model it hides). Without a list the sheet is a plain field. `sameLabel`: a first choice
+    /// that clears the value (和翻译模型一样).
+    private fun modelPicker(label: String, current: String, placeholder: String, sameLabel: String?, host: String,
+                            catalog: () -> List<String>, refetch: () -> Unit, pick: (String) -> Unit) =
+        ui.listRow(label, null, trailing = value(if (current.isEmpty()) sameLabel ?: L("未填") else short(current))) {
+            pickModel(label, current, placeholder, sameLabel, host, catalog, refetch, pick)
+        }
+
+    private fun pickModel(title: String, current: String, placeholder: String, sameLabel: String?, host: String,
+                          catalog: () -> List<String>, refetch: () -> Unit, pick: (String) -> Unit) {
+        lateinit var d: android.app.Dialog
+        fun choose(id: String) { d.dismiss(); if (id != current) pick(id) }
+        val search = android.widget.EditText(this).apply {
+            setSingleLine()
+            // Model ids: ASCII, no autocorrect, the URL keyboard.
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+            imeHintLocales = android.os.LocaleList(java.util.Locale.US)
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE or android.view.inputmethod.EditorInfo.IME_FLAG_FORCE_ASCII
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f)
+            background = ui.rounded(Palette.ground, 16)
+            setPadding(ui.dp(16), 0, ui.dp(16), 0)
+            minHeight = ui.dp(52)
+        }
+        val list = ui.stack(0)
+        val scroll = android.widget.ScrollView(this).apply { addView(list) }
+        val foot = ui.helper("")
+        val buttons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(ui.button(L("取消"), "quiet") { d.dismiss() }, ui.weight())
+            addView(ui.button(L("保存"), "primary") { choose(search.text.toString().trim()) }, ui.weight().apply { leftMargin = ui.dp(10) })
+        }
+        fun row(text: String, on: Boolean, action: () -> Unit) = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = ui.dp(48)
+            setPadding(ui.dp(16), ui.dp(4), ui.dp(12), ui.dp(4))
+            addView(ui.text(text, 15f, Palette.ink, bold = on, lines = 2), ui.weight())
+            if (on) addView(ui.icon(R.drawable.i_check, 20, Palette.ink), LinearLayout.LayoutParams(ui.dp(20), ui.dp(20)))
+            contentDescription = text
+            isSelected = on
+            ui.tappable(this, 16, if (on) ui.rounded(Palette.ground, 16) else null) { action() }
+        }
+        var shape: Boolean? = null
+        var listed = false
+        fun render() {
+            val all = catalog()
+            val q = search.text.toString().trim()
+            listed = all.isNotEmpty()
+            if (shape != listed) {
+                // No list: a plain field, saved with 保存; a list: search it, or use what was typed.
+                shape = listed
+                search.hint = if (listed) L("搜索或输入模型") else placeholder
+                scroll.visibility = if (listed) View.VISIBLE else View.GONE
+                buttons.visibility = if (listed) View.GONE else View.VISIBLE
+            }
+            foot.text = if (listed) LF("%@ 列出 %lld 个模型", host, all.size) else L("这个地址没列出模型，直接填名字")
+            list.removeAllViews()
+            if (!listed) return
+            val matches = if (q.isEmpty()) all else all.filter { it.contains(q, ignoreCase = true) }
+            if (q.isNotEmpty() && q !in all) list.addView(row(LF("用 %@（列表里没有）", q), false) { choose(q) })
+            if (sameLabel != null && q.isEmpty()) list.addView(row(sameLabel, current.isEmpty()) { choose("") })
+            matches.take(300).forEach { id -> list.addView(row(id, id == current) { choose(id) }) }
+        }
+        search.setOnEditorActionListener { _, a, _ ->
+            if (a != android.view.inputmethod.EditorInfo.IME_ACTION_DONE) return@setOnEditorActionListener false
+            // Done: the only match, else exactly what was typed.
+            val q = search.text.toString().trim()
+            val matches = catalog().filter { it.contains(q, ignoreCase = true) }
+            if (listed && q.isNotEmpty() && matches.size == 1) choose(matches[0]) else if (q.isNotEmpty() || !listed) choose(q)
+            true
+        }
+        search.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(e: android.text.Editable?) { render() }
+        })
+        val again = ui.textButton(L("重新获取")) {
+            val app = cicada
+            app.background.execute { refetch(); app.main.post { if (d.isShowing) render() } }
+        }
+        val footer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(ui.dp(4), 0, ui.dp(4), 0)
+            addView(foot, ui.weight())
+            addView(again)
+        }
+        // Without a list the field holds the name to edit; with one it searches.
+        if (catalog().isEmpty()) search.setText(current)
+        render()
+        val body = ui.stack(10, search, scroll, footer, buttons)
+        (scroll.layoutParams as LinearLayout.LayoutParams).height = ui.dp(48 * 6)
+        d = ui.sheet(this, title, body)
+        d.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE or android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        d.show()
+        search.requestFocus()
     }
 
     /// 听对方: the hear model, which may run on its own server; its state is the check's hear step.
